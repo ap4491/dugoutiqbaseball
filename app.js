@@ -34,6 +34,45 @@ const loadSaved = () => {
     }
 };
 const saved0 = loadSaved();
+// License activation — verified once against the license server, then remembered
+// on this device forever. Activation never re-checks and never blocks offline use.
+const LICENSE_KEY_STORE = "dugoutiq-license-v1";
+const loadActivation = () => {
+    try {
+        return localStorage.getItem(LICENSE_KEY_STORE);
+    }
+    catch {
+        return null;
+    }
+};
+const persistActivation = (k) => {
+    try {
+        localStorage.setItem(LICENSE_KEY_STORE, k);
+    }
+    catch { }
+};
+const verifyLicense = async (key) => {
+    try {
+        const r = await fetch("/.netlify/functions/verify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ key: key.trim() }),
+        });
+        const data = await r.json().catch(() => null);
+        if (data && data.ok)
+            return { ok: true };
+        return {
+            ok: false,
+            message: (data && data.message) || "Key not recognized — check it against your receipt.",
+        };
+    }
+    catch {
+        return {
+            ok: false,
+            message: "Couldn't reach the license server — check your connection and try once; after activation the app works fully offline.",
+        };
+    }
+};
 // Saved roster store — persists on this device
 const ROSTERS_KEY = "dugoutiq-rosters-v1";
 const loadRosters = () => {
@@ -51,6 +90,31 @@ const persistRosters = (list) => {
     catch { }
 };
 function DugoutScorecard() {
+    const [licensed, setLicensed] = useState(() => !!loadActivation());
+    const [licenseKey, setLicenseKey] = useState("");
+    const [licenseBusy, setLicenseBusy] = useState(false);
+    const [licenseErr, setLicenseErr] = useState("");
+    const activate = async () => {
+        const k = licenseKey.trim();
+        if (!k || licenseBusy)
+            return;
+        setLicenseBusy(true);
+        setLicenseErr("");
+        try {
+            const res = await verifyLicense(k);
+            if (res && res.ok) {
+                persistActivation(k);
+                setLicensed(true);
+            }
+            else {
+                setLicenseErr((res && res.message) || "That key didn't verify — check it for typos.");
+            }
+        }
+        catch {
+            setLicenseErr("Couldn't reach the license server — check your connection and try again.");
+        }
+        setLicenseBusy(false);
+    };
     const [phase, setPhase] = useState((saved0 && saved0.phase) || "setup");
     const [teams, setTeams] = useState((saved0 && saved0.teams) || {
         away: { name: "VISITORS", lineup: freshLineup("Batter") },
@@ -1283,6 +1347,14 @@ function DugoutScorecard() {
         .limitcard { margin-top: 16px; }
         .limitrow { display: grid; grid-template-columns: 90px 1fr; gap: 10px; align-items: center; }
         .limithint { font-size: 13px; color: var(--powder); letter-spacing: .04em; }
+        .license-card { max-width: 420px; margin: 24px auto 0; }
+        .license-sub { color: var(--powder); font-size: 14px; margin: 4px 0 14px; line-height: 1.4; }
+        .license-in {
+          font-family: 'IBM Plex Mono', monospace; letter-spacing: .08em;
+          text-align: center; font-size: 14px; padding: 11px 8px;
+        }
+        .license-err { color: var(--red); font-size: 13px; margin-top: 8px; letter-spacing: .03em; }
+        .license-foot { color: var(--powder); font-size: 11px; text-align: center; margin-top: 12px; letter-spacing: .06em; }
         .setup-msg {
           text-align: center; font-size: 13px; color: var(--amberw);
           letter-spacing: .05em; margin-top: 8px;
@@ -1545,7 +1617,14 @@ function DugoutScorecard() {
         React.createElement("div", { className: "shell" },
             React.createElement("div", { className: "brand" },
                 React.createElement("img", { src: LOGO, alt: "DugoutIQ \u2014 Manage the Game", className: "brand-logo" })),
-            phase === "setup" && (React.createElement(React.Fragment, null,
+            !licensed && (React.createElement("div", { className: "setup-card license-card" },
+                React.createElement("h2", null, "Activate DugoutIQ"),
+                React.createElement("p", { className: "license-sub" }, "Enter the license key from your purchase receipt. You only do this once \u2014 after activation the app works fully offline."),
+                React.createElement("input", { className: "dg-in license-in", value: licenseKey, onChange: (e) => setLicenseKey(e.target.value), onKeyDown: (e) => e.key === "Enter" && activate(), placeholder: "XXXXXXXX-XXXXXXXX-XXXXXXXX", "aria-label": "License key", autoComplete: "off" }),
+                licenseErr && React.createElement("div", { className: "license-err" }, licenseErr),
+                React.createElement("button", { className: "dg hit", style: { width: "100%", fontSize: 17, padding: "12px 0", marginTop: 10 }, onClick: activate, disabled: licenseBusy || !licenseKey.trim() }, licenseBusy ? "Verifying…" : "Activate"),
+                React.createElement("p", { className: "license-foot" }, "Your license key is in your purchase receipt \u2014 activate once, works offline forever"))),
+            licensed && phase === "setup" && (React.createElement(React.Fragment, null,
                 React.createElement("div", { className: "setup-grid" }, ["away", "home"].map((side) => (React.createElement("div", { className: "setup-card", key: side },
                     React.createElement("h2", null, side === "away" ? "Visiting Club" : "Home Club"),
                     React.createElement("input", { className: "dg-in teamname-in", value: teams[side].name, onChange: (e) => setTeamName(side, e.target.value), "aria-label": `${side} team name` }),
@@ -1584,7 +1663,7 @@ function DugoutScorecard() {
                 setupMsg && React.createElement("div", { className: "setup-msg" }, setupMsg),
                 React.createElement("div", { style: { marginTop: 10 } },
                     React.createElement("button", { className: "dg hit", style: { width: "100%", fontSize: 20, padding: "14px 0" }, onClick: playBall }, "\u26BE Play Ball")))),
-            phase === "game" && game && (React.createElement(React.Fragment, null,
+            licensed && phase === "game" && game && (React.createElement(React.Fragment, null,
                 game.over && React.createElement("div", { className: "final-banner" }, "Final"),
                 React.createElement("div", { className: "board" },
                     React.createElement("div", { className: `team-cell ${battingSide === "away" && !game.over ? "atbat" : ""}` },
@@ -1805,7 +1884,7 @@ function DugoutScorecard() {
             confirmNew && (React.createElement("div", { className: "modal-back", onClick: () => setConfirmNew(false) },
                 React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
                     React.createElement("h3", null, "Start a new game?"),
-                    React.createElement("p", null, "The current game \u2014 score, stats, pitch counts, and play-by-play \u2014 will be cleared. This can't be undone."),
+                    React.createElement("p", null, "The current game \u2014 score, stats, pitch counts, and play-by-play \u2014 will be cleared. \"Fresh lineups\" also resets both rosters (your saved teams in \uD83D\uDCC2 My Teams are kept). This can't be undone."),
                     React.createElement("div", { className: "btnrow" },
                         React.createElement("button", { className: "dg hit", onClick: () => {
                                 setHistory([]);
@@ -1813,11 +1892,15 @@ function DugoutScorecard() {
                                 playBall();
                             } }, "Rematch \u2014 same lineups (double-header)"),
                         React.createElement("button", { className: "dg outb", onClick: () => {
+                                setTeams({
+                                    away: { name: "VISITORS", lineup: freshLineup("Batter") },
+                                    home: { name: "HOME", lineup: freshLineup("Batter") },
+                                });
                                 setPhase("setup");
                                 setGame(null);
                                 setHistory([]);
                                 setConfirmNew(false);
-                            } }, "New game \u2014 edit lineups"),
+                            } }, "New game \u2014 fresh lineups"),
                         React.createElement("button", { className: "dg ghost", onClick: () => setConfirmNew(false) }, "Keep current game"))))),
             baseMenu && game && (React.createElement("div", { className: "modal-back", onClick: () => setBaseMenu(null) },
                 React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
