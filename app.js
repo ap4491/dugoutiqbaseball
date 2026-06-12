@@ -298,7 +298,8 @@ function DugoutScorecard() {
             outs: 0,
             bases: emptyBases(),
             card: { away: [], home: [] }, // scorebook cells: {b, inning, res, base 0-4}
-            openHit: null, // {b: batter idx, log: PA log index} of the just-recorded hit
+            openHit: null,
+            openK: null, // {b} — just-recorded strikeout where a dropped 3rd strike is legal // {b: batter idx, log: PA log index} of the just-recorded hit
             batter: { away: 0, home: 0 },
             stats: {
                 away: freshStats(teams.away.lineup.length),
@@ -356,6 +357,7 @@ function DugoutScorecard() {
         g.outs = 0;
         g.bases = emptyBases();
         g.openHit = null;
+        g.openK = null;
         if (g.half === "top") {
             g.half = "bottom";
             const row = g.linescore[g.inning - 1];
@@ -526,6 +528,7 @@ function DugoutScorecard() {
     /* --- count buttons --- */
     const tapBall = () => mutate((g) => {
         addPitch(g);
+        g.openK = null;
         g.openHit = null;
         if (g.balls === 3) {
             const st = g.stats[battingSide][g.batter[battingSide]];
@@ -546,6 +549,7 @@ function DugoutScorecard() {
     });
     const tapStrike = () => mutate((g) => {
         addPitch(g);
+        g.openK = null;
         g.openHit = null;
         if (g.strikes === 2) {
             const st = g.stats[battingSide][g.batter[battingSide]];
@@ -554,12 +558,16 @@ function DugoutScorecard() {
             chargeP(g, "k");
             chargeP(g, "outs");
             cardMark(g, g.batter[battingSide], "K", 0);
+            const d3kLegal = !g.bases.first || g.outs === 2;
+            const kBatter = g.batter[battingSide];
             closePA(g, "strikeout", `${currentBatterName()} strikes out`);
             const flipped = recordOut(g);
             if (!flipped)
                 nextBatter(g);
             else
                 advanceOrder(g);
+            if (d3kLegal)
+                g.openK = { b: kBatter };
         }
         else {
             g.strikes += 1;
@@ -568,6 +576,7 @@ function DugoutScorecard() {
     });
     const tapHBP = () => mutate((g) => {
         addPitch(g);
+        g.openK = null;
         g.openHit = null;
         const bIdx = g.batter[battingSide];
         const st = g.stats[battingSide][bIdx];
@@ -583,6 +592,7 @@ function DugoutScorecard() {
     });
     const tapFoul = () => mutate((g) => {
         addPitch(g);
+        g.openK = null;
         g.openHit = null;
         if (g.strikes < 2)
             g.strikes += 1;
@@ -596,6 +606,7 @@ function DugoutScorecard() {
     /* --- play outcomes (one tap, auto baserunning) --- */
     const playHit = (basesTaken, label) => mutate((g) => {
         addPitch(g);
+        g.openK = null;
         const bIdxForHit = g.batter[battingSide];
         const st = g.stats[battingSide][g.batter[battingSide]];
         const name = currentBatterName();
@@ -616,6 +627,7 @@ function DugoutScorecard() {
     });
     const playError = () => mutate((g) => {
         addPitch(g);
+        g.openK = null;
         g.openHit = null;
         const st = g.stats[battingSide][g.batter[battingSide]];
         const name = currentBatterName();
@@ -630,6 +642,7 @@ function DugoutScorecard() {
     });
     const playOut = (label, isK) => mutate((g) => {
         addPitch(g);
+        g.openK = null;
         g.openHit = null;
         const st = g.stats[battingSide][g.batter[battingSide]];
         const name = currentBatterName();
@@ -640,18 +653,23 @@ function DugoutScorecard() {
         if (isK)
             chargeP(g, "k");
         cardMark(g, g.batter[battingSide], isK ? "K" : label === "groundout" ? "GO" : "FO", 0);
+        const d3kLegal = isK && (!g.bases.first || g.outs === 2);
+        const kBatter = g.batter[battingSide];
         closePA(g, label, `${name}: ${label}`);
         const flipped = recordOut(g);
         if (!flipped)
             nextBatter(g);
         else
             advanceOrder(g);
+        if (d3kLegal)
+            g.openK = { b: kBatter };
     });
     // Fielder's choice: batter reaches, the selected runner is forced out.
     // Remaining runners + batter advance on the force.
     const playFC = (outBase) => {
         mutate((g) => {
             addPitch(g);
+            g.openK = null;
             g.openHit = null;
             const bIdx = g.batter[battingSide];
             const st = g.stats[battingSide][bIdx];
@@ -679,6 +697,7 @@ function DugoutScorecard() {
     const playFCBatterOut = () => {
         mutate((g) => {
             addPitch(g);
+            g.openK = null;
             g.openHit = null;
             const bIdx = g.batter[battingSide];
             const st = g.stats[battingSide][bIdx];
@@ -707,6 +726,7 @@ function DugoutScorecard() {
     const playSac = (kind) => {
         mutate((g) => {
             addPitch(g);
+            g.openK = null;
             g.openHit = null;
             const bIdx = g.batter[battingSide];
             const st = g.stats[battingSide][bIdx];
@@ -743,6 +763,66 @@ function DugoutScorecard() {
                 advanceOrder(g);
         });
         setSacMenu(false);
+    };
+    // Dropped 3rd strike: rewind to the pre-K snapshot and replay it as
+    // "strikeout, batter safe at 1st". K still counts for pitcher & batter; the out doesn't.
+    const d3kReach = () => {
+        if (!history.length || !game || !game.openK)
+            return;
+        const g = snapshot(history[history.length - 1]); // state before the 3rd strike
+        const side = g.half === "top" ? "away" : "home";
+        const fSide = side === "away" ? "home" : "away";
+        const bIdx = g.batter[side];
+        const name = teams[side].lineup[bIdx].name;
+        const pit = g.pitchers[fSide][g.pitchers[fSide].length - 1];
+        pit.pitches += 1; // the 3rd strike
+        pit.k += 1;
+        const st = g.stats[side][bIdx];
+        st.ab += 1;
+        st.k += 1;
+        if (!g.card)
+            g.card = { away: [], home: [] };
+        g.card[side].push({ b: bIdx, inning: g.inning, res: "K", base: 1 });
+        // close the plate appearance in the log
+        if (g.openPA == null || !g.log[g.openPA] || g.log[g.openPA].result) {
+            g.log.push({ type: "pa", i: g.inning, h: g.half, batter: name, seq: [], result: null });
+            g.openPA = g.log.length - 1;
+        }
+        g.log[g.openPA].result = "strikeout — safe at 1st (dropped 3rd strike)";
+        g.openPA = null;
+        g.lastPlay = `${name} strikes out but reaches 1st — dropped 3rd strike`;
+        // batter takes 1st; with 2 outs and 1st occupied, runners are forced up
+        if (!g.bases.first) {
+            g.bases.first = { b: bIdx };
+        }
+        else {
+            if (g.bases.second) {
+                if (g.bases.third) {
+                    const sc = g.bases.third;
+                    if (sc && sc.b != null)
+                        g.stats[side][sc.b].r += 1;
+                    const row = g.linescore[g.inning - 1];
+                    row[side] = (row[side] || 0) + 1;
+                    pit.r += 1;
+                    const list = g.card[side];
+                    for (let i = list.length - 1; i >= 0; i--) {
+                        if (sc && list[i].b === sc.b && list[i].base < 4) {
+                            list[i].base = 4;
+                            break;
+                        }
+                    }
+                }
+                g.bases.third = g.bases.second;
+            }
+            g.bases.second = g.bases.first;
+            g.bases.first = { b: bIdx };
+        }
+        g.balls = 0;
+        g.strikes = 0;
+        g.batter[side] = (bIdx + 1) % teams[side].lineup.length;
+        g.openK = null;
+        g.openHit = null;
+        setGame(g); // history untouched: Undo returns to the pre-K state
     };
     /* --- diamond interactions: tap = menu/place, drag = move runner --- */
     const svgRef = useRef(null);
@@ -1754,6 +1834,13 @@ function DugoutScorecard() {
         .atbat-card .statline { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--powder); white-space: nowrap; }
 
         /* ---- opposing pitcher strip ---- */
+        button.d3k-banner {
+          width: 100%; margin-bottom: 8px; padding: 10px 8px;
+          background: transparent; border: 1px dashed var(--amberw); border-radius: 8px;
+          color: var(--amberw); font-family: 'Saira Condensed', sans-serif;
+          font-size: 14px; letter-spacing: .04em; cursor: pointer;
+        }
+        button.d3k-banner strong { font-weight: 700; }
         button.pstrip {
           width: 100%; display: flex; justify-content: space-between; align-items: baseline;
           gap: 10px; flex-wrap: wrap; cursor: pointer; text-align: left;
@@ -2037,6 +2124,9 @@ function DugoutScorecard() {
                             const s = game.stats[battingSide][game.batter[battingSide]];
                             return `${s.h}-${s.ab} · ${s.r} R · ${s.rbi} RBI · ${s.bb} BB`;
                         })())),
+                    game.openK && !game.over && (React.createElement("button", { className: "d3k-banner", onClick: d3kReach },
+                        "Dropped 3rd strike? ",
+                        React.createElement("strong", null, "Batter safe at 1st \u2014 tap here"))),
                     (() => {
                         const p = curP(game, fieldingSide);
                         const status = pitchStatus(p.pitches);
