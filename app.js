@@ -134,6 +134,8 @@ function DugoutScorecard() {
         catch { }
     }, [phase, teams, game, pitchLimit]);
     const [fcMenu, setFcMenu] = useState(false);
+    const [sacMenu, setSacMenu] = useState(false);
+    const [bookChoose, setBookChoose] = useState(false);
     const [confirmNew, setConfirmNew] = useState(false);
     const [shareOpen, setShareOpen] = useState(false);
     const [recapPreview, setRecapPreview] = useState(null); // {dataUrl, canShare}
@@ -295,6 +297,7 @@ function DugoutScorecard() {
             strikes: 0,
             outs: 0,
             bases: emptyBases(),
+            card: { away: [], home: [] }, // scorebook cells: {b, inning, res, base 0-4}
             openHit: null, // {b: batter idx, log: PA log index} of the just-recorded hit
             batter: { away: 0, home: 0 },
             stats: {
@@ -441,8 +444,29 @@ function DugoutScorecard() {
     // Bases hold runner identity: false = empty, { b: lineupIdx | null } = runner
     // (b is null for manually-placed runners we can't attribute).
     const creditRun = (g, runner) => {
-        if (runner && runner.b != null)
+        if (runner && runner.b != null) {
             g.stats[battingSide][runner.b].r += 1;
+            cardAdvance(g, runner, 4);
+        }
+    };
+    /* --- scorebook card tracking --- */
+    const cardMark = (g, bIdx, res, base) => {
+        if (!g.card)
+            g.card = { away: [], home: [] }; // resumed older save
+        g.card[battingSide].push({ b: bIdx, inning: g.inning, res, base });
+    };
+    // a runner moved up: update how far their scorebook diamond is drawn
+    const cardAdvance = (g, runner, base) => {
+        if (!g.card || !runner || runner.b == null)
+            return;
+        const list = g.card[battingSide];
+        for (let i = list.length - 1; i >= 0; i--) {
+            if (list[i].b === runner.b && list[i].base < 4) {
+                if (base > list[i].base)
+                    list[i].base = base;
+                return;
+            }
+        }
     };
     // All runners advance n bases (station-to-station); batter (by lineup index)
     // takes base n. Returns runs scored.
@@ -464,8 +488,10 @@ function DugoutScorecard() {
                 runs += 1;
                 creditRun(g, runner);
             }
-            else
+            else {
                 next[slot(target)] = runner;
+                cardAdvance(g, runner, target);
+            }
         }
         if (batterIdx != null) {
             if (n >= 4) {
@@ -488,8 +514,10 @@ function DugoutScorecard() {
                     runs += 1;
                     creditRun(g, g.bases.third);
                 }
+                cardAdvance(g, g.bases.second, 3);
                 g.bases.third = g.bases.second;
             }
+            cardAdvance(g, g.bases.first, 2);
             g.bases.second = g.bases.first;
         }
         g.bases.first = { b: batterIdx };
@@ -503,6 +531,7 @@ function DugoutScorecard() {
             const st = g.stats[battingSide][g.batter[battingSide]];
             st.bb += 1;
             chargeP(g, "bb");
+            cardMark(g, g.batter[battingSide], "BB", 1);
             const runs = forceAdvance(g, g.batter[battingSide]);
             addRuns(g, runs);
             st.rbi += runs; // bases-loaded walk
@@ -524,6 +553,7 @@ function DugoutScorecard() {
             st.k += 1;
             chargeP(g, "k");
             chargeP(g, "outs");
+            cardMark(g, g.batter[battingSide], "K", 0);
             closePA(g, "strikeout", `${currentBatterName()} strikes out`);
             const flipped = recordOut(g);
             if (!flipped)
@@ -543,6 +573,7 @@ function DugoutScorecard() {
         const st = g.stats[battingSide][bIdx];
         st.bb += 1; // HBP counted with walks in the BB column
         chargeP(g, "bb");
+        cardMark(g, bIdx, "HP", 1);
         const runs = forceAdvance(g, bIdx);
         addRuns(g, runs);
         st.rbi += runs;
@@ -574,6 +605,7 @@ function DugoutScorecard() {
         chargeP(g, "h");
         if (basesTaken >= 4)
             chargeP(g, "hr");
+        cardMark(g, bIdxForHit, ["1B", "2B", "3B", "HR"][Math.min(basesTaken, 4) - 1], Math.min(basesTaken, 4));
         const runs = advanceAll(g, basesTaken, g.batter[battingSide]);
         addRuns(g, runs);
         st.rbi += runs;
@@ -589,6 +621,7 @@ function DugoutScorecard() {
         const name = currentBatterName();
         st.ab += 1;
         g.errors[fieldingSide] += 1;
+        cardMark(g, g.batter[battingSide], "E", 1);
         const runs = forceAdvance(g, g.batter[battingSide]);
         addRuns(g, runs); // unearned, no RBI
         chargeP(g, "r", runs);
@@ -606,6 +639,7 @@ function DugoutScorecard() {
         chargeP(g, "outs");
         if (isK)
             chargeP(g, "k");
+        cardMark(g, g.batter[battingSide], isK ? "K" : label === "groundout" ? "GO" : "FO", 0);
         closePA(g, label, `${name}: ${label}`);
         const flipped = recordOut(g);
         if (!flipped)
@@ -625,6 +659,7 @@ function DugoutScorecard() {
             st.ab += 1;
             chargeP(g, "outs");
             g.bases[outBase] = false;
+            cardMark(g, bIdx, "FC", 1);
             closePA(g, `fielder's choice — runner from ${baseLabel(outBase)} forced out`, `${name}: fielder's choice — runner from ${baseLabel(outBase)} forced out`);
             const flipped = recordOut(g);
             if (!flipped) {
@@ -639,6 +674,75 @@ function DugoutScorecard() {
                 advanceOrder(g);
         });
         setFcMenu(false);
+    };
+    // FC variant: the OUT is the batter at 1st; everyone else moves up
+    const playFCBatterOut = () => {
+        mutate((g) => {
+            addPitch(g);
+            g.openHit = null;
+            const bIdx = g.batter[battingSide];
+            const st = g.stats[battingSide][bIdx];
+            const name = currentBatterName();
+            st.ab += 1;
+            chargeP(g, "outs");
+            cardMark(g, bIdx, "GO", 0);
+            const willPlay = g.outs < 2; // runners only advance if this isn't the 3rd out
+            closePA(g, willPlay ? "out at 1st — runners advance" : "out at 1st", `${name}: out at 1st${willPlay ? ", runners advance" : ""}`);
+            const flipped = recordOut(g);
+            if (!flipped) {
+                const runs = advanceAll(g, 1, null); // station-to-station, no batter
+                addRuns(g, runs);
+                st.rbi += runs; // productive out — RBI credited
+                chargeP(g, "r", runs);
+                if (runs)
+                    logPlay(g, "Run scores on the play", "info");
+                nextBatter(g);
+            }
+            else
+                advanceOrder(g);
+        });
+        setFcMenu(false);
+    };
+    // Sacrifice bunt / fly: out recorded but NO at-bat charged
+    const playSac = (kind) => {
+        mutate((g) => {
+            addPitch(g);
+            g.openHit = null;
+            const bIdx = g.batter[battingSide];
+            const st = g.stats[battingSide][bIdx];
+            const name = currentBatterName();
+            chargeP(g, "outs");
+            const willPlay = g.outs < 2;
+            const flyScores = kind === "fly" && willPlay && g.bases.third;
+            cardMark(g, bIdx, kind === "fly" ? "SF" : "SAC", 0);
+            closePA(g, kind === "fly"
+                ? `sac fly${flyScores ? " — run scores" : ""}`
+                : `sac bunt${willPlay ? " — runners advance" : ""}`, kind === "fly"
+                ? `${name}: sacrifice fly${flyScores ? " — run scores" : ""}`
+                : `${name}: sacrifice bunt`);
+            const flipped = recordOut(g);
+            if (!flipped) {
+                if (kind === "fly") {
+                    if (g.bases.third) {
+                        creditRun(g, g.bases.third);
+                        g.bases.third = false;
+                        addRuns(g, 1);
+                        st.rbi += 1;
+                        chargeP(g, "r", 1);
+                    }
+                }
+                else {
+                    const runs = advanceAll(g, 1, null);
+                    addRuns(g, runs);
+                    st.rbi += runs;
+                    chargeP(g, "r", runs);
+                }
+                nextBatter(g);
+            }
+            else
+                advanceOrder(g);
+        });
+        setSacMenu(false);
     };
     /* --- diamond interactions: tap = menu/place, drag = move runner --- */
     const svgRef = useRef(null);
@@ -692,6 +796,7 @@ function DugoutScorecard() {
         mutate((g) => {
             g.bases[to] = g.bases[from];
             g.bases[from] = false;
+            cardAdvance(g, g.bases[to], to === "second" ? 2 : to === "third" ? 3 : 1);
             if (g.openHit != null) {
                 amendOpenHit(g, `${who} to ${baseLabel(to)}`, `${who} takes ${baseLabel(to)} on the play`);
             }
@@ -805,6 +910,7 @@ function DugoutScorecard() {
         mutate((g) => {
             g.bases[target] = g.bases[base];
             g.bases[base] = false;
+            cardAdvance(g, g.bases[target], target === "second" ? 2 : 3);
             logPlay(g, `${who} steals ${baseLabel(target)}`);
         });
         setBaseMenu(null);
@@ -1023,6 +1129,212 @@ function DugoutScorecard() {
         img.onerror = () => finish(null);
         img.src = LOGO;
     });
+    // Classic paper-scorebook page: batters down, innings across, a diamond per cell
+    const drawScorebookCanvas = (side) => new Promise((resolve) => {
+        const lineup = teams[side].lineup;
+        const entries = (game.card && game.card[side]) || [];
+        const maxInn = 12;
+        const allInns = Math.max(game.linescore.length, 7);
+        const innCount = Math.min(allInns, maxInn);
+        const skipped = Math.max(0, game.linescore.length - innCount);
+        const W = 1080;
+        const nameW = 200;
+        const statW = 44;
+        const statCols = ["AB", "R", "H", "BB"];
+        const gridX = 40 + nameW;
+        const cellW = (W - 40 - nameW - statCols.length * statW - 40) / innCount;
+        const cellH = 92;
+        const headerH = 190;
+        const rowsTop = headerH + 56;
+        const H = rowsTop + lineup.length * cellH + 120;
+        const c = document.createElement("canvas");
+        c.width = W;
+        c.height = H;
+        const ctx = c.getContext("2d");
+        const finish = (logoImg) => {
+            // paper
+            ctx.fillStyle = "#FAF6EC";
+            ctx.fillRect(0, 0, W, H);
+            // header band
+            ctx.fillStyle = "#1D2D5C";
+            ctx.fillRect(0, 0, W, headerH);
+            if (logoImg) {
+                const lw = 200;
+                const lh = (logoImg.height / logoImg.width) * lw;
+                ctx.drawImage(logoImg, 40, (headerH - lh) / 2, lw, lh);
+            }
+            ctx.fillStyle = "#FFFFFF";
+            ctx.font = "700 44px 'Saira Condensed', sans-serif";
+            ctx.textAlign = "left";
+            ctx.fillText("OFFICIAL SCORECARD", 270, 80);
+            ctx.font = "600 30px 'Saira Condensed', sans-serif";
+            ctx.fillStyle = "#A9C5E8";
+            ctx.fillText(`${teams[side].name.toUpperCase().slice(0, 18)}  ·  ${side === "away" ? "VISITORS" : "HOME"}`, 270, 124);
+            ctx.fillText(`${teams.away.name} ${totals("away")} — ${teams.home.name} ${totals("home")}  ·  ${game.over ? "FINAL" : "IN PROGRESS"}  ·  ${new Date().toLocaleDateString()}`, 270, 160);
+            const ink = "#1D2D5C";
+            const grid = "#9A938A";
+            // column headers
+            ctx.textAlign = "center";
+            ctx.font = "700 26px 'IBM Plex Mono', monospace";
+            ctx.fillStyle = "#4A443C";
+            for (let i = 0; i < innCount; i++) {
+                ctx.fillText(String(skipped + i + 1), gridX + cellW * i + cellW / 2, rowsTop - 18);
+            }
+            statCols.forEach((h, i) => {
+                ctx.fillText(h, gridX + cellW * innCount + statW * i + statW / 2, rowsTop - 18);
+            });
+            // rows
+            lineup.forEach((p, r) => {
+                const y = rowsTop + r * cellH;
+                // name cell
+                ctx.textAlign = "left";
+                ctx.fillStyle = ink;
+                ctx.font = "700 28px 'Saira Condensed', sans-serif";
+                ctx.fillText(`${r + 1}. ${p.name.slice(0, 14)}`, 48, y + 40);
+                ctx.font = "500 20px 'Saira Condensed', sans-serif";
+                ctx.fillStyle = "#7A746B";
+                ctx.fillText(p.pos || "", 48, y + 68);
+                // inning cells with diamonds
+                for (let i = 0; i < innCount; i++) {
+                    const cx = gridX + cellW * i + cellW / 2;
+                    const cy = y + cellH / 2 + 4;
+                    const rR = Math.min(24, cellW * 0.32);
+                    const pts = {
+                        home: [cx, cy + rR],
+                        first: [cx + rR, cy],
+                        second: [cx, cy - rR],
+                        third: [cx - rR, cy],
+                    };
+                    // faint diamond outline
+                    ctx.strokeStyle = "#CFC8BC";
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.moveTo(...pts.home);
+                    ctx.lineTo(...pts.first);
+                    ctx.lineTo(...pts.second);
+                    ctx.lineTo(...pts.third);
+                    ctx.closePath();
+                    ctx.stroke();
+                    const cell = entries.filter((e) => e.b === r && e.inning === skipped + i + 1);
+                    if (cell.length) {
+                        const e0 = cell[0];
+                        if (e0.base >= 4) {
+                            // scored: fill the diamond
+                            ctx.fillStyle = ink;
+                            ctx.beginPath();
+                            ctx.moveTo(...pts.home);
+                            ctx.lineTo(...pts.first);
+                            ctx.lineTo(...pts.second);
+                            ctx.lineTo(...pts.third);
+                            ctx.closePath();
+                            ctx.fill();
+                        }
+                        else if (e0.base > 0) {
+                            // bold the basepaths travelled
+                            const path = [pts.home, pts.first, pts.second, pts.third, pts.home];
+                            ctx.strokeStyle = ink;
+                            ctx.lineWidth = 4;
+                            ctx.beginPath();
+                            ctx.moveTo(...path[0]);
+                            for (let b = 1; b <= e0.base; b++)
+                                ctx.lineTo(...path[b]);
+                            ctx.stroke();
+                        }
+                        // result notation
+                        ctx.fillStyle = e0.base === 0 ? "#8A4A3C" : ink;
+                        ctx.font = "700 22px 'IBM Plex Mono', monospace";
+                        ctx.textAlign = "center";
+                        if (e0.base === 0) {
+                            ctx.fillText(e0.res, cx, cy + 8);
+                        }
+                        else {
+                            ctx.fillText(e0.res, cx - rR - 2, y + cellH - 12);
+                        }
+                        if (cell.length > 1) {
+                            ctx.font = "700 18px 'IBM Plex Mono', monospace";
+                            ctx.fillText("+" + (cell.length - 1), cx + rR + 6, y + 22);
+                        }
+                    }
+                }
+                // stat columns
+                const st = game.stats[side][r] || { ab: 0, r: 0, h: 0, bb: 0 };
+                ctx.fillStyle = ink;
+                ctx.font = "700 24px 'IBM Plex Mono', monospace";
+                ctx.textAlign = "center";
+                [st.ab, st.r, st.h, st.bb].forEach((v, i) => {
+                    ctx.fillText(String(v), gridX + cellW * innCount + statW * i + statW / 2, y + cellH / 2 + 8);
+                });
+            });
+            // grid lines
+            ctx.strokeStyle = grid;
+            ctx.lineWidth = 1.5;
+            for (let r = 0; r <= lineup.length; r++) {
+                const y = rowsTop + r * cellH;
+                ctx.beginPath();
+                ctx.moveTo(40, y);
+                ctx.lineTo(W - 40, y);
+                ctx.stroke();
+            }
+            for (let i = 0; i <= innCount; i++) {
+                const x = gridX + cellW * i;
+                ctx.beginPath();
+                ctx.moveTo(x, rowsTop);
+                ctx.lineTo(x, rowsTop + lineup.length * cellH);
+                ctx.stroke();
+            }
+            for (let i = 1; i <= statCols.length; i++) {
+                const x = gridX + cellW * innCount + statW * i;
+                ctx.beginPath();
+                ctx.moveTo(x, rowsTop);
+                ctx.lineTo(x, rowsTop + lineup.length * cellH);
+                ctx.stroke();
+            }
+            ctx.beginPath();
+            ctx.moveTo(40, rowsTop);
+            ctx.lineTo(40, rowsTop + lineup.length * cellH);
+            ctx.stroke();
+            // runs-by-inning footer
+            const fy = rowsTop + lineup.length * cellH + 44;
+            ctx.textAlign = "left";
+            ctx.fillStyle = ink;
+            ctx.font = "700 26px 'Saira Condensed', sans-serif";
+            ctx.fillText("RUNS", 48, fy);
+            ctx.textAlign = "center";
+            ctx.font = "700 26px 'IBM Plex Mono', monospace";
+            for (let i = 0; i < innCount; i++) {
+                const rv = game.linescore[skipped + i] ? game.linescore[skipped + i][side] : null;
+                ctx.fillText(rv === null || rv === undefined ? "-" : String(rv), gridX + cellW * i + cellW / 2, fy);
+            }
+            ctx.fillStyle = "#7A746B";
+            ctx.font = "600 20px 'Saira Condensed', sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText("DUGOUTIQ — YOUR SCOREBOOK JUST UPGRADED", W / 2, H - 28);
+            resolve(c);
+        };
+        const img = new Image();
+        img.onload = () => finish(img);
+        img.onerror = () => finish(null);
+        img.src = LOGO;
+    });
+    const shareScorebook = async (side) => {
+        setBookChoose(false);
+        try {
+            const c = await drawScorebookCanvas(side);
+            const dataUrl = c.toDataURL("image/png");
+            const blob = await new Promise((res) => c.toBlob(res, "image/png"));
+            const file = new File([blob], `dugoutiq-scorebook-${side}.png`, { type: "image/png" });
+            const canShare = !!(navigator.canShare && navigator.canShare({ files: [file] }));
+            setRecapPreview({
+                dataUrl,
+                canShare,
+                title: `${teams[side].name} — scorebook page`,
+                fname: `dugoutiq-scorebook-${side}.png`,
+            });
+        }
+        catch {
+            mutate((g) => (g.lastPlay = "Couldn't create the scorebook on this device"));
+        }
+    };
     const shareImageRecap = async () => {
         setShareOpen(false);
         try {
@@ -1042,7 +1354,7 @@ function DugoutScorecard() {
             return;
         try {
             const blob = await (await fetch(recapPreview.dataUrl)).blob();
-            const file = new File([blob], "dugoutiq-recap.png", { type: "image/png" });
+            const file = new File([blob], (recapPreview && recapPreview.fname) || "dugoutiq-recap.png", { type: "image/png" });
             await navigator.share({
                 files: [file],
                 title: `${teams.away.name} ${totals("away")}, ${teams.home.name} ${totals("home")} — DugoutIQ`,
@@ -1061,7 +1373,7 @@ function DugoutScorecard() {
             return;
         const a = document.createElement("a");
         a.href = recapPreview.dataUrl;
-        a.download = "dugoutiq-recap.png";
+        a.download = (recapPreview && recapPreview.fname) || "dugoutiq-recap.png";
         document.body.appendChild(a);
         a.click();
         a.remove();
@@ -1465,6 +1777,8 @@ function DugoutScorecard() {
         .r4 { grid-template-columns: repeat(4, 1fr); }
         .r5 { grid-template-columns: repeat(5, 1fr); }
         .r5 button.dg { font-size: 14px; padding: 12px 2px; }
+        .r6 { grid-template-columns: repeat(6, 1fr); gap: 5px; }
+        .r6 button.dg { font-size: 12px; padding: 12px 2px; letter-spacing: .02em; }
         button.dg {
           font-family: 'Saira Condensed', sans-serif; font-weight: 700;
           font-size: 16px; letter-spacing: .08em; text-transform: uppercase;
@@ -1766,11 +2080,12 @@ function DugoutScorecard() {
                         React.createElement("button", { className: "dg hit", onClick: () => playHit(2, "double") }, "2B"),
                         React.createElement("button", { className: "dg hit", onClick: () => playHit(3, "triple") }, "3B"),
                         React.createElement("button", { className: "dg hit", onClick: () => playHit(4, "HOME RUN") }, "HR")),
-                    React.createElement("div", { className: "btnrow r5" },
-                        React.createElement("button", { className: "dg outb", onClick: () => playOut("groundout", false) }, "Ground"),
+                    React.createElement("div", { className: "btnrow r6" },
+                        React.createElement("button", { className: "dg outb", onClick: () => playOut("groundout", false) }, "Gnd"),
                         React.createElement("button", { className: "dg outb", onClick: () => playOut("flyout", false) }, "Fly"),
                         React.createElement("button", { className: "dg outb", onClick: () => playOut("strikeout", true) }, "K"),
                         React.createElement("button", { className: "dg outb", onClick: () => setFcMenu(true), disabled: !game.bases.first && !game.bases.second && !game.bases.third }, "FC"),
+                        React.createElement("button", { className: "dg outb", onClick: () => setSacMenu(true), disabled: !game.bases.first && !game.bases.second && !game.bases.third }, "Sac"),
                         React.createElement("button", { className: "dg", onClick: playError }, "Error")),
                     React.createElement("div", { className: "btnrow r4" },
                         React.createElement("button", { className: "dg ghost", onClick: () => adjustRun(1) }, "+ Run"),
@@ -1871,10 +2186,26 @@ function DugoutScorecard() {
                         React.createElement("button", { className: "dg hit", onClick: shareImageRecap }, "\uD83D\uDDBC Score graphic (image)"),
                         React.createElement("button", { className: "dg", onClick: shareGameStory }, "\uD83D\uDCF0 Game story (narrative)"),
                         React.createElement("button", { className: "dg", onClick: shareRecap }, "\uD83D\uDCC4 Full recap (text)"),
+                        React.createElement("button", { className: "dg", onClick: () => {
+                                setShareOpen(false);
+                                setBookChoose(true);
+                            } }, "\uD83D\uDCD2 Scorebook page (classic)"),
                         React.createElement("button", { className: "dg ghost", onClick: () => setShareOpen(false) }, "Cancel"))))),
+            bookChoose && game && (React.createElement("div", { className: "modal-back", onClick: () => setBookChoose(false) },
+                React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
+                    React.createElement("h3", null, "Scorebook page"),
+                    React.createElement("p", null, "The classic paper card, filled in automatically. Which team?"),
+                    React.createElement("div", { className: "btnrow" },
+                        React.createElement("button", { className: "dg", onClick: () => shareScorebook("away") },
+                            teams.away.name,
+                            " (visitors)"),
+                        React.createElement("button", { className: "dg", onClick: () => shareScorebook("home") },
+                            teams.home.name,
+                            " (home)"),
+                        React.createElement("button", { className: "dg ghost", onClick: () => setBookChoose(false) }, "Cancel"))))),
             recapPreview && (React.createElement("div", { className: "modal-back", onClick: () => setRecapPreview(null) },
                 React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
-                    React.createElement("h3", null, "Score graphic"),
+                    React.createElement("h3", null, recapPreview.title || "Score graphic"),
                     React.createElement("img", { src: recapPreview.dataUrl, alt: "Game recap graphic", className: "recap-img" }),
                     React.createElement("p", { className: "recap-hint" }, "On iPhone you can also long-press the image \u2192 Save Image"),
                     React.createElement("div", { className: "btnrow" },
@@ -1922,13 +2253,22 @@ function DugoutScorecard() {
             fcMenu && game && (React.createElement("div", { className: "modal-back", onClick: () => setFcMenu(false) },
                 React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
                     React.createElement("h3", null, "Fielder's choice"),
-                    React.createElement("p", null, "Batter reaches \u2014 which runner was forced out?"),
+                    React.createElement("p", null, "Who was out on the play?"),
                     React.createElement("div", { className: "btnrow" },
                         ["third", "second", "first"].map((b) => game.bases[b] && (React.createElement("button", { key: b, className: "dg outb", onClick: () => playFC(b) },
                             "Runner from ",
                             baseLabel(b),
-                            " out"))),
+                            " out \u2014 batter reaches"))),
+                        React.createElement("button", { className: "dg outb", onClick: playFCBatterOut }, "Batter out at 1st \u2014 runners advance"),
                         React.createElement("button", { className: "dg ghost", onClick: () => setFcMenu(false) }, "Cancel"))))),
+            sacMenu && game && (React.createElement("div", { className: "modal-back", onClick: () => setSacMenu(false) },
+                React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
+                    React.createElement("h3", null, "Sacrifice"),
+                    React.createElement("p", null, "Batter is out; no at-bat charged."),
+                    React.createElement("div", { className: "btnrow" },
+                        React.createElement("button", { className: "dg outb", onClick: () => playSac("fly"), disabled: !game.bases.third }, "Sac fly \u2014 runner on 3rd scores (RBI)"),
+                        React.createElement("button", { className: "dg outb", onClick: () => playSac("bunt") }, "Sac bunt \u2014 runners advance"),
+                        React.createElement("button", { className: "dg ghost", onClick: () => setSacMenu(false) }, "Cancel"))))),
             pitchMenuSide && game && (React.createElement("div", { className: "modal-back", onClick: () => setPitchMenuSide(null) },
                 React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
                     React.createElement("h3", null, "Pitching log"),
