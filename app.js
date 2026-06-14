@@ -33,15 +33,11 @@ catch {
     return null;
 } };
 const saved0 = loadSaved();
-// migrate older saves forward so a game in progress never breaks on update
 if (saved0 && saved0.game) {
     const g = saved0.game;
     if (!g.lineup && saved0.teams) {
         try {
-            g.lineup = {
-                away: saved0.teams.away.lineup.map((p) => ({ name: p.name, pos: p.pos || "" })),
-                home: saved0.teams.home.lineup.map((p) => ({ name: p.name, pos: p.pos || "" })),
-            };
+            g.lineup = { away: saved0.teams.away.lineup.map((p) => ({ name: p.name, pos: p.pos || "" })), home: saved0.teams.home.lineup.map((p) => ({ name: p.name, pos: p.pos || "" })) };
         }
         catch { }
     }
@@ -67,10 +63,7 @@ const persistActivation = (k) => { try {
 catch { } };
 const verifyLicense = async (key) => {
     try {
-        const r = await fetch("/.netlify/functions/verify", {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ key: key.trim() }),
-        });
+        const r = await fetch("/.netlify/functions/verify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: key.trim() }) });
         const data = await r.json().catch(() => null);
         if (data && data.ok)
             return { ok: true };
@@ -128,12 +121,10 @@ function DugoutScorecard() {
     const [pitchLimit, setPitchLimit] = useState(saved0 && saved0.pitchLimit != null ? saved0.pitchLimit : 85); // 0 = off
     const [incomingName, setIncomingName] = useState("");
     const [showLog, setShowLog] = useState(false);
-    useEffect(() => {
-        try {
-            localStorage.setItem(SAVE_KEY, JSON.stringify({ phase, teams, game, pitchLimit }));
-        }
-        catch { }
-    }, [phase, teams, game, pitchLimit]);
+    useEffect(() => { try {
+        localStorage.setItem(SAVE_KEY, JSON.stringify({ phase, teams, game, pitchLimit }));
+    }
+    catch { } }, [phase, teams, game, pitchLimit]);
     const [fcMenu, setFcMenu] = useState(false);
     const [sacMenu, setSacMenu] = useState(false);
     const [dpMenu, setDpMenu] = useState(false);
@@ -1009,6 +1000,34 @@ function DugoutScorecard() {
         });
         setSubMenu(false);
         setSubSlot(null);
+        setSubName("");
+        setSubPos("");
+    };
+    // Correct a name or position in place — NOT a substitution.
+    // Stats stay exactly where they are; nothing is retired.
+    const editLineup = (side, slot, newName, newPos) => {
+        mutate((g) => {
+            const cur = g.lineup[side][slot];
+            const nm = (newName || "").trim() || cur.name;
+            g.lineup[side][slot] = { name: nm, pos: (newPos || "").trim() };
+            logPlay(g, `Lineup corrected (${teams[side].name}): ${nm}`, "info");
+        });
+        setSubMenu(false);
+        setSubSlot(null);
+        setSubName("");
+        setSubPos("");
+    };
+    // Add a batter to the end of the order (e.g. a player who arrived late).
+    // Appends a fresh slot + stat line; existing slots, runners and the
+    // current batter are untouched.
+    const addBatter = (side) => {
+        const newIdx = game.lineup[side].length;
+        mutate((g) => {
+            g.lineup[side].push({ name: `Batter ${g.lineup[side].length + 1}`, pos: "" });
+            g.stats[side].push({ ab: 0, h: 0, r: 0, rbi: 0, bb: 0, k: 0 });
+            logPlay(g, `${teams[side].name}: batter added to the order`, "info");
+        });
+        setSubSlot(newIdx);
         setSubName("");
         setSubPos("");
     };
@@ -2104,6 +2123,8 @@ function DugoutScorecard() {
         .sub-tag { font-size: 12px; color: var(--amberw); font-weight: 700; white-space: nowrap; }
         .sub-form { display: flex; gap: 6px; align-items: stretch; margin-bottom: 6px; }
         .sub-form .dg-in { flex: 1; }
+        .sub-hint { font-size: 11.5px; color: var(--powder); opacity: .85; margin: 7px 0 0; line-height: 1.35; }
+        .sub-hint b { color: var(--white); font-weight: 700; }
         .pn-wrap { display: flex; align-items: center; gap: 5px; }
         .pn-wrap .dg-in { max-width: 96px; }
         b.dtag {
@@ -2482,7 +2503,7 @@ function DugoutScorecard() {
                                 setSubSide(battingSide);
                                 setSubSlot(null);
                                 setSubMenu(true);
-                            } }, "Subs"),
+                            } }, "Lineup"),
                         React.createElement("button", { className: "dg ghost", onClick: undo, disabled: !history.length }, "Undo"),
                         React.createElement("button", { className: "dg ghost", onClick: manualEndHalf }, "End half")))),
                 React.createElement("div", { className: "btnrow r3", style: { marginTop: 4 } },
@@ -2721,12 +2742,12 @@ function DugoutScorecard() {
                     setSubSlot(null);
                 } },
                 React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
-                    React.createElement("h3", null, "Substitutions"),
+                    React.createElement("h3", null, "Lineup & subs"),
                     React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr", marginBottom: 10 } }, ["away", "home"].map((sd) => (React.createElement("button", { key: sd, className: `dg ${subSide === sd ? "" : "ghost"}`, onClick: () => {
                             setSubSide(sd);
                             setSubSlot(null);
                         } }, teams[sd].name.slice(0, 12))))),
-                    React.createElement("p", { style: { marginTop: 0 } }, "Tap a spot to replace the player. The new player bats in that same order slot; the original keeps their stats in the box score."),
+                    React.createElement("p", { style: { marginTop: 0 } }, "Tap a spot to fix a name or position, swap in a sub, or add a late arrival. Your game data stays put."),
                     React.createElement("div", { className: "sub-list" }, game.lineup[subSide].map((p, i) => {
                         const onBase = ["first", "second", "third"].find((b) => subSide === battingSide &&
                             game.bases[b] &&
@@ -2734,7 +2755,7 @@ function DugoutScorecard() {
                         const atBat = subSide === battingSide && i === game.batter[battingSide];
                         return (React.createElement("button", { key: i, className: `sub-row ${subSlot === i ? "sel" : ""}`, onClick: () => {
                                 setSubSlot(i);
-                                setSubName("");
+                                setSubName(p.name);
                                 setSubPos(p.pos || "");
                             } },
                             React.createElement("span", { className: "sub-n" },
@@ -2754,11 +2775,21 @@ function DugoutScorecard() {
                                 " ",
                                 "\u2192 PR"))));
                     })),
-                    subSlot != null && (React.createElement("div", { className: "sub-form" },
-                        React.createElement("input", { className: "dg-in", placeholder: "New player name", value: subName, onChange: (e) => setSubName(e.target.value) }),
-                        React.createElement("input", { className: "dg-in", placeholder: "Pos", style: { maxWidth: 84 }, value: subPos, onChange: (e) => setSubPos(e.target.value) }),
-                        React.createElement("button", { className: "dg hit", disabled: !subName.trim(), onClick: () => substitute(subSide, subSlot, subName, subPos) }, "Confirm"))),
-                    React.createElement("div", { className: "btnrow", style: { marginTop: 10 } },
+                    subSlot != null && (React.createElement("div", { className: "sub-form-wrap" },
+                        React.createElement("div", { className: "sub-form" },
+                            React.createElement("input", { className: "dg-in", placeholder: "Player name", value: subName, onChange: (e) => setSubName(e.target.value) }),
+                            React.createElement("input", { className: "dg-in", placeholder: "Pos", style: { maxWidth: 84 }, value: subPos, onChange: (e) => setSubPos(e.target.value) })),
+                        React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr", marginTop: 6 } },
+                            React.createElement("button", { className: "dg", disabled: !subName.trim(), onClick: () => editLineup(subSide, subSlot, subName, subPos) }, "Save edit"),
+                            React.createElement("button", { className: "dg hit", disabled: !subName.trim(), onClick: () => substitute(subSide, subSlot, subName, subPos) }, "Sub \u2014 new player")),
+                        React.createElement("p", { className: "sub-hint" },
+                            React.createElement("b", null, "Save edit"),
+                            " fixes a name or position \u2014 stats untouched.",
+                            " ",
+                            React.createElement("b", null, "Sub"),
+                            " swaps in a new player; the original keeps their stats."))),
+                    React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr", marginTop: 10 } },
+                        React.createElement("button", { className: "dg ghost", onClick: () => addBatter(subSide) }, "+ Add batter"),
                         React.createElement("button", { className: "dg ghost", onClick: () => {
                                 setSubMenu(false);
                                 setSubSlot(null);
