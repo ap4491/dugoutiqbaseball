@@ -45,6 +45,8 @@ if (saved0 && saved0.game) {
         g.subs = { away: [], home: [] };
     if (!g.decisions)
         g.decisions = { w: null, l: null, s: null };
+    if (!g.orderLocked)
+        g.orderLocked = { away: false, home: false };
     if (g.pitchers) {
         ["away", "home"].forEach((sd) => (g.pitchers[sd] || []).forEach((pp) => { if (pp.uer == null)
             pp.uer = 0; }));
@@ -312,6 +314,7 @@ function DugoutScorecard() {
                 home: teams.home.lineup.map((p) => ({ name: p.name, pos: p.pos || "" })),
             },
             subs: { away: [], home: [] },
+            orderLocked: { away: false, home: false }, // locks once the order turns over once
             decisions: { w: null, l: null, s: null }, // {side, idx} pitcher of record
             linescore: [{ away: 0, home: null }],
             hits: { away: 0, home: 0 },
@@ -354,8 +357,11 @@ function DugoutScorecard() {
         row[battingSide] = (row[battingSide] || 0) + n;
     };
     const nextBatter = (g) => {
+        const wrapped = (g.batter[battingSide] + 1) % g.lineup[battingSide].length === 0;
         g.batter[battingSide] =
             (g.batter[battingSide] + 1) % g.lineup[battingSide].length;
+        if (wrapped && g.orderLocked)
+            g.orderLocked[battingSide] = true;
         g.balls = 0;
         g.strikes = 0;
     };
@@ -617,8 +623,11 @@ function DugoutScorecard() {
     });
     // advance batting order without resetting the (already reset) count
     const advanceOrder = (g) => {
+        const wrapped = (g.batter[battingSide] + 1) % g.lineup[battingSide].length === 0;
         g.batter[battingSide] =
             (g.batter[battingSide] + 1) % g.lineup[battingSide].length;
+        if (wrapped && g.orderLocked)
+            g.orderLocked[battingSide] = true;
     };
     /* --- play outcomes (one tap, auto baserunning) --- */
     const playHit = (basesTaken, label) => mutate((g) => {
@@ -1020,7 +1029,66 @@ function DugoutScorecard() {
     // Add a batter to the end of the order (e.g. a player who arrived late).
     // Appends a fresh slot + stat line; existing slots, runners and the
     // current batter are untouched.
+    const orderOpen = (side) => !(game && game.orderLocked && game.orderLocked[side]);
+    const slotRemovable = (side, slot) => {
+        if (!game || !game.lineup)
+            return false;
+        if (!orderOpen(side))
+            return false;
+        if (game.lineup[side].length <= 2)
+            return false;
+        const st = game.stats[side][slot];
+        if (st.ab || st.h || st.r || st.rbi || st.bb || st.k)
+            return false;
+        if (game.card && game.card[side].some((c) => c.b === slot))
+            return false;
+        if (side === battingSide) {
+            if (slot === game.batter[battingSide])
+                return false;
+            if (["first", "second", "third"].some((b) => game.bases[b] && game.bases[b].b === slot))
+                return false;
+        }
+        return true;
+    };
+    // Remove an unused order slot (only before the order turns over). Splices the
+    // slot out and shifts every higher index in the batter pointer, runners,
+    // scorecard and sub ledger so attribution stays correct.
+    const removeBatter = (side, slot) => {
+        if (!slotRemovable(side, slot))
+            return;
+        mutate((g) => {
+            g.lineup[side].splice(slot, 1);
+            g.stats[side].splice(slot, 1);
+            if (g.batter[side] > slot)
+                g.batter[side] -= 1;
+            (g.card[side] || []).forEach((c) => {
+                if (c.b > slot)
+                    c.b -= 1;
+            });
+            (g.subs[side] || []).forEach((c) => {
+                if (c.slot > slot)
+                    c.slot -= 1;
+            });
+            const bs = g.half === "top" ? "away" : "home";
+            if (side === bs) {
+                ["first", "second", "third"].forEach((b) => {
+                    if (g.bases[b] && g.bases[b].b > slot)
+                        g.bases[b].b -= 1;
+                });
+                [g.openHit, g.openK, g.openTag].forEach((o) => {
+                    if (o && o.b != null && o.b > slot)
+                        o.b -= 1;
+                });
+            }
+            logPlay(g, `${teams[side].name}: spot removed from the order`, "info");
+        });
+        setSubSlot(null);
+        setSubName("");
+        setSubPos("");
+    };
     const addBatter = (side) => {
+        if (!orderOpen(side))
+            return;
         const newIdx = game.lineup[side].length;
         mutate((g) => {
             g.lineup[side].push({ name: `Batter ${g.lineup[side].length + 1}`, pos: "" });
@@ -2125,6 +2193,8 @@ function DugoutScorecard() {
         .sub-form .dg-in { flex: 1; }
         .sub-hint { font-size: 11.5px; color: var(--powder); opacity: .85; margin: 7px 0 0; line-height: 1.35; }
         .sub-hint b { color: var(--white); font-weight: 700; }
+        .order-state { font-size: 12px; color: var(--amberw); margin: 0 0 8px; letter-spacing: .02em; }
+        button.rm-spot { width: 100%; margin-top: 8px; color: var(--red); border-color: var(--line); font-size: 13px; }
         .pn-wrap { display: flex; align-items: center; gap: 5px; }
         .pn-wrap .dg-in { max-width: 96px; }
         b.dtag {
@@ -2748,6 +2818,9 @@ function DugoutScorecard() {
                             setSubSlot(null);
                         } }, teams[sd].name.slice(0, 12))))),
                     React.createElement("p", { style: { marginTop: 0 } }, "Tap a spot to fix a name or position, swap in a sub, or add a late arrival. Your game data stays put."),
+                    React.createElement("p", { className: "order-state" }, orderOpen(subSide)
+                        ? "Order open — add or remove spots until it turns over once."
+                        : "Order set — first time through the order is complete."),
                     React.createElement("div", { className: "sub-list" }, game.lineup[subSide].map((p, i) => {
                         const onBase = ["first", "second", "third"].find((b) => subSide === battingSide &&
                             game.bases[b] &&
@@ -2787,9 +2860,13 @@ function DugoutScorecard() {
                             " fixes a name or position \u2014 stats untouched.",
                             " ",
                             React.createElement("b", null, "Sub"),
-                            " swaps in a new player; the original keeps their stats."))),
-                    React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr", marginTop: 10 } },
-                        React.createElement("button", { className: "dg ghost", onClick: () => addBatter(subSide) }, "+ Add batter"),
+                            " swaps in a new player; the original keeps their stats."),
+                        slotRemovable(subSide, subSlot) && (React.createElement("button", { className: "dg ghost rm-spot", onClick: () => removeBatter(subSide, subSlot) }, "Remove this spot from the order")))),
+                    React.createElement("div", { className: "btnrow", style: {
+                            gridTemplateColumns: orderOpen(subSide) ? "1fr 1fr" : "1fr",
+                            marginTop: 10,
+                        } },
+                        orderOpen(subSide) && (React.createElement("button", { className: "dg ghost", onClick: () => addBatter(subSide) }, "+ Add batter")),
                         React.createElement("button", { className: "dg ghost", onClick: () => {
                                 setSubMenu(false);
                                 setSubSlot(null);
