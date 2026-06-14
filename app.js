@@ -136,6 +136,9 @@ function DugoutScorecard() {
     const [subSlot, setSubSlot] = useState(null);
     const [subName, setSubName] = useState("");
     const [subPos, setSubPos] = useState("");
+    const [batterMenu, setBatterMenu] = useState(false);
+    const [batName, setBatName] = useState("");
+    const [batPos, setBatPos] = useState("");
     const [decisionsOpen, setDecisionsOpen] = useState(false);
     const [bookChoose, setBookChoose] = useState(false);
     const [confirmNew, setConfirmNew] = useState(false);
@@ -1005,7 +1008,7 @@ function DugoutScorecard() {
             });
             g.stats[side][slot] = { ab: 0, h: 0, r: 0, rbi: 0, bb: 0, k: 0 };
             g.lineup[side][slot] = { name: nm, pos: ((newPos || cur.pos) || "").trim() };
-            logPlay(g, `Substitution (${teams[side].name}): ${nm} in for ${cur.name}`, "info");
+            g.lastPlay = `Sub: ${nm} in for ${cur.name}`;
         });
         setSubMenu(false);
         setSubSlot(null);
@@ -1019,7 +1022,7 @@ function DugoutScorecard() {
             const cur = g.lineup[side][slot];
             const nm = (newName || "").trim() || cur.name;
             g.lineup[side][slot] = { name: nm, pos: (newPos || "").trim() };
-            logPlay(g, `Lineup corrected (${teams[side].name}): ${nm}`, "info");
+            g.lastPlay = `Lineup updated: ${nm}`;
         });
         setSubMenu(false);
         setSubSlot(null);
@@ -1080,7 +1083,7 @@ function DugoutScorecard() {
                         o.b -= 1;
                 });
             }
-            logPlay(g, `${teams[side].name}: spot removed from the order`, "info");
+            g.lastPlay = `${teams[side].name}: spot removed`;
         });
         setSubSlot(null);
         setSubName("");
@@ -1093,11 +1096,20 @@ function DugoutScorecard() {
         mutate((g) => {
             g.lineup[side].push({ name: `Batter ${g.lineup[side].length + 1}`, pos: "" });
             g.stats[side].push({ ab: 0, h: 0, r: 0, rbi: 0, bb: 0, k: 0 });
-            logPlay(g, `${teams[side].name}: batter added to the order`, "info");
+            g.lastPlay = `${teams[side].name}: batter added`;
         });
         setSubSlot(newIdx);
         setSubName("");
         setSubPos("");
+    };
+    // Quick options for the batter at the plate (tap the at-bat card).
+    const openBatterMenu = () => {
+        if (!game || !game.lineup)
+            return;
+        const p = game.lineup[battingSide][game.batter[battingSide]];
+        setBatName(p.name);
+        setBatPos(p.pos || "");
+        setBatterMenu(true);
     };
     /* --- diamond interactions: tap = menu/place, drag = move runner --- */
     const svgRef = useRef(null);
@@ -2164,7 +2176,11 @@ function DugoutScorecard() {
           background: var(--navy-deep); border: 1px solid var(--line);
           border-radius: 6px; padding: 12px 14px; margin-bottom: 12px;
           display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+          width: 100%; cursor: pointer; text-align: left; color: inherit;
+          font-family: inherit;
         }
+        .atbat-card:active { border-color: var(--powder); }
+        .atbat-edit { color: var(--powder); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; flex-shrink: 0; align-self: center; }
         .atbat-card .who { font-size: 20px; font-weight: 700; letter-spacing: .04em; }
         .atbat-card .who small { color: var(--powder); font-weight: 500; margin-left: 6px; }
         .atbat-card .statline { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--powder); white-space: nowrap; }
@@ -2180,7 +2196,7 @@ function DugoutScorecard() {
         button.d3k-banner.tagup { border-color: var(--powder); color: var(--powder); }
         table.lineup tr.retired td { color: var(--powder); opacity: .7; font-style: italic; }
         table.lineup tr.retired em { font-style: normal; opacity: .8; }
-        .sub-list { display: flex; flex-direction: column; gap: 5px; max-height: 46vh; overflow-y: auto; margin-bottom: 8px; }
+        .sub-list { display: flex; flex-direction: column; gap: 5px; max-height: 30vh; overflow-y: auto; margin-bottom: 8px; }
         button.sub-row {
           display: flex; justify-content: space-between; align-items: center; gap: 8px;
           background: #18295A; border: 1px solid var(--line); border-radius: 6px;
@@ -2361,11 +2377,13 @@ function DugoutScorecard() {
         /* ---- modal ---- */
         .modal-back {
           position: fixed; inset: 0; background: rgba(8,14,36,.8);
-          display: flex; align-items: center; justify-content: center; z-index: 50; padding: 16px;
+          display: flex; align-items: center; justify-content: center; z-index: 50;
+          padding: 16px; overflow-y: auto;
         }
         .modal {
           background: var(--navy-deep); border: 1px solid var(--white);
           border-radius: 8px; padding: 18px; width: 100%; max-width: 400px; text-align: center;
+          max-height: 90vh; overflow-y: auto; margin: auto;
         }
         .modal h3 { margin: 0 0 4px; font-size: 20px; letter-spacing: .06em; }
         .modal p { margin: 0 0 14px; color: var(--powder); font-size: 13px; letter-spacing: .12em; text-transform: uppercase; }
@@ -2490,7 +2508,7 @@ function DugoutScorecard() {
                             React.createElement("td", { className: "rhe" }, game.errors[side]))))))),
                 React.createElement("div", { className: "ticker" }, game.lastPlay),
                 !game.over && (React.createElement(React.Fragment, null,
-                    React.createElement("div", { className: "atbat-card" },
+                    React.createElement("button", { className: "atbat-card", onClick: openBatterMenu },
                         React.createElement("div", { className: "who" },
                             currentBatterName(),
                             React.createElement("small", null, (game.lineup || teams)[battingSide]
@@ -2501,7 +2519,8 @@ function DugoutScorecard() {
                         React.createElement("div", { className: "statline" }, (() => {
                             const s = game.stats[battingSide][game.batter[battingSide]];
                             return `${s.h}-${s.ab} · ${s.r} R · ${s.rbi} RBI · ${s.bb} BB`;
-                        })())),
+                        })()),
+                        React.createElement("span", { className: "atbat-edit" }, "edit \u203A")),
                     game.openK && !game.over && (React.createElement("button", { className: "d3k-banner", onClick: d3kReach },
                         "Dropped 3rd strike? ",
                         React.createElement("strong", null, "Batter safe at 1st \u2014 tap here"))),
@@ -2807,6 +2826,34 @@ function DugoutScorecard() {
                     React.createElement("p", { className: "dec-note" }, "Auto-filled from the final line. Tap to change; tap again to clear."),
                     React.createElement("div", { className: "btnrow", style: { marginTop: 8 } },
                         React.createElement("button", { className: "dg ghost", onClick: () => setDecisionsOpen(false) }, "Done"))))),
+            batterMenu && game && game.lineup && (React.createElement("div", { className: "modal-back", onClick: () => setBatterMenu(false) },
+                React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
+                    React.createElement("h3", null, "At the plate"),
+                    React.createElement("p", null,
+                        currentBatterName(),
+                        " \u2014 spot ",
+                        game.batter[battingSide] + 1,
+                        " in the order"),
+                    React.createElement("div", { className: "sub-form" },
+                        React.createElement("input", { className: "dg-in", placeholder: "Batter name", value: batName, onChange: (e) => setBatName(e.target.value) }),
+                        React.createElement("input", { className: "dg-in", placeholder: "Pos", style: { maxWidth: 84 }, value: batPos, onChange: (e) => setBatPos(e.target.value) })),
+                    React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr", marginTop: 6 } },
+                        React.createElement("button", { className: "dg", disabled: !batName.trim(), onClick: () => {
+                                editLineup(battingSide, game.batter[battingSide], batName, batPos);
+                                setBatterMenu(false);
+                            } }, "Save name"),
+                        React.createElement("button", { className: "dg hit", disabled: !batName.trim(), onClick: () => {
+                                substitute(battingSide, game.batter[battingSide], batName, batPos);
+                                setBatterMenu(false);
+                            } }, "Pinch hitter")),
+                    React.createElement("p", { className: "sub-hint" },
+                        React.createElement("b", null, "Save name"),
+                        " fixes a typo \u2014 stats untouched.",
+                        " ",
+                        React.createElement("b", null, "Pinch hitter"),
+                        " subs in a new batter; the original keeps their stats."),
+                    React.createElement("div", { className: "btnrow", style: { marginTop: 10 } },
+                        React.createElement("button", { className: "dg ghost", onClick: () => setBatterMenu(false) }, "Close"))))),
             subMenu && game && game.lineup && (React.createElement("div", { className: "modal-back", onClick: () => {
                     setSubMenu(false);
                     setSubSlot(null);
