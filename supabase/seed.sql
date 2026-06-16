@@ -1,0 +1,13 @@
+-- Seed data for local development.
+--
+-- NOTE: Profiles and subscriptions are created automatically by the
+-- on_auth_user_created trigger when a user signs up. To seed videos you must
+-- first create a user via Supabase Auth, then replace the user id below.
+--
+-- Example: insert a few sample videos for an existing user.
+--
+-- insert into public.videos (user_id, prompt, aspect_ratio, duration, style, camera_movement, audio, captions, status, provider, video_url, thumbnail_url)
+-- values
+--   ('00000000-0000-0000-0000-000000000000', 'A cinematic drone shot over a misty mountain range at sunrise', '16:9', 10, 'cinematic', 'drone', 'cinematic', false, 'completed', 'mock', 'https://example.com/video1.mp4', 'https://example.com/thumb1.jpg'),
+--   ('00000000-0000-0000-0000-000000000000', 'Product demo of a sleek wireless headphone rotating on a pedestal', '1:1', 5, 'product-demo', 'orbit', 'upbeat', true, 'processing', 'mock', null, null),
+--   ('00000000-0000-0000-0000-000000000000', 'High energy sports commercial of a runner crossing the finish line', '9:16', 15, 'sports-commercial', 'tracking-shot', 'sports-crowd', true, 'completed', 'mock', 'https://example.com/video3.mp4', 'https://example.com/thumb3.jpg');
