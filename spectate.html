@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>DugoutIQ — Live Game</title>
+<style>
+  :root{ --navy:#14204A; --navy2:#1D2D5C; --royal:#134A8E; --line:#2B5AA0;
+         --powder:#A9C5E8; --red:#E8291C; --amber:#F5C518; --white:#F5F7FA; }
+  *{ box-sizing:border-box; }
+  body{ margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+        background:linear-gradient(180deg,var(--navy) 0%, var(--navy2) 100%); color:var(--white);
+        min-height:100vh; padding:18px 16px 40px; }
+  .wrap{ max-width:520px; margin:0 auto; }
+  .top{ display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; }
+  .brand{ display:flex; align-items:center; gap:8px; font-weight:800; letter-spacing:.5px; }
+  .brand img{ height:30px; }
+  .live{ font-size:12px; font-weight:700; display:flex; align-items:center; gap:6px; color:var(--powder); }
+  .dot{ width:9px; height:9px; border-radius:50%; background:#3ad07a; box-shadow:0 0 0 0 rgba(58,208,122,.6); animation:p 1.6s infinite; }
+  @keyframes p{0%{box-shadow:0 0 0 0 rgba(58,208,122,.55)}70%{box-shadow:0 0 0 8px rgba(58,208,122,0)}100%{box-shadow:0 0 0 0 rgba(58,208,122,0)}}
+  .dot.stale{ background:#888; animation:none; }
+  .card{ background:rgba(255,255,255,.05); border:1px solid var(--line); border-radius:16px; padding:16px; margin-bottom:14px; }
+  .score{ display:grid; grid-template-columns:1fr auto; gap:6px 10px; align-items:center; }
+  .team{ font-size:22px; font-weight:700; }
+  .runs{ font-size:34px; font-weight:800; text-align:right; min-width:50px; }
+  .bat{ color:var(--amber); }
+  .meta{ display:flex; gap:14px; align-items:center; justify-content:center; margin:6px 0 2px; color:var(--powder); font-size:14px; }
+  .countbar{ display:flex; justify-content:center; gap:22px; margin:14px 0 6px; }
+  .cnt{ text-align:center; }
+  .cnt b{ display:block; font-size:12px; color:var(--powder); letter-spacing:1px; }
+  .pips{ display:flex; gap:5px; justify-content:center; margin-top:4px; }
+  .pip{ width:14px; height:14px; border-radius:50%; border:2px solid var(--line); }
+  .pip.on{ background:var(--amber); border-color:var(--amber); }
+  .pip.out.on{ background:var(--red); border-color:var(--red); }
+  .diamond{ width:120px; height:120px; margin:8px auto 2px; position:relative; }
+  .base{ width:30px; height:30px; background:transparent; border:2px solid var(--line); position:absolute; transform:rotate(45deg); }
+  .base.on{ background:var(--amber); border-color:var(--amber); }
+  .b1{ right:0; top:45px; } .b2{ left:45px; top:0; } .b3{ left:0; top:45px; } .bh{ left:45px; bottom:0; border-color:var(--powder); }
+  .play{ text-align:center; font-size:16px; margin-top:10px; min-height:22px; }
+  .names{ text-align:center; color:var(--powder); font-size:14px; margin-top:6px; }
+  .ls{ width:100%; border-collapse:collapse; margin-top:6px; font-size:13px; }
+  .ls th,.ls td{ border:1px solid var(--line); padding:4px 6px; text-align:center; }
+  .ls th:first-child,.ls td:first-child{ text-align:left; }
+  .msg{ text-align:center; padding:40px 10px; color:var(--powder); }
+  .foot{ text-align:center; color:var(--powder); font-size:12px; margin-top:18px; opacity:.7; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="brand"><img src="logo.png" alt="DugoutIQ" onerror="this.style.display='none'"/>DugoutIQ</div>
+    <div class="live"><span class="dot" id="dot"></span><span id="status">Connecting…</span></div>
+  </div>
+  <div id="content"><div class="msg">Loading the game…</div></div>
+  <div class="foot">Live view · updates automatically · powered by DugoutIQ</div>
+</div>
+<script>
+  const code = new URLSearchParams(location.search).get("g");
+  const $ = (id)=>document.getElementById(id);
+  let lastUpdated = 0;
+
+  function pips(n,total,cls){ let s=""; for(let i=0;i<total;i++) s+=`<span class="pip ${cls} ${i<n?'on':''}"></span>`; return s; }
+
+  function render(s){
+    const half = s.half === "top" ? "▲ Top" : "▼ Bot";
+    const battingAway = s.half === "top";
+    const ls = (s.linescore||[]).map((r,i)=>`<th>${i+1}</th>`).join("");
+    const lsA = (s.linescore||[]).map(r=>`<td>${r.away==null?"":r.away}</td>`).join("");
+    const lsH = (s.linescore||[]).map(r=>`<td>${r.home==null?"·":r.home}</td>`).join("");
+    $("content").innerHTML = `
+      <div class="card">
+        <div class="score">
+          <div class="team ${battingAway?'bat':''}">${esc(s.away.name)}</div><div class="runs">${s.away.runs}</div>
+          <div class="team ${!battingAway?'bat':''}">${esc(s.home.name)}</div><div class="runs">${s.home.runs}</div>
+        </div>
+        <div class="meta">${s.over ? "● FINAL" : half+" "+s.inning} &nbsp;·&nbsp; H ${s.away.hits}-${s.home.hits} &nbsp;·&nbsp; E ${s.away.errors}-${s.home.errors}</div>
+        <div class="diamond">
+          <div class="base b2 ${s.bases.second?'on':''}"></div>
+          <div class="base b3 ${s.bases.third?'on':''}"></div>
+          <div class="base b1 ${s.bases.first?'on':''}"></div>
+          <div class="base bh"></div>
+        </div>
+        <div class="countbar">
+          <div class="cnt"><b>BALLS</b><div class="pips">${pips(s.balls,3,'')}</div></div>
+          <div class="cnt"><b>STRIKES</b><div class="pips">${pips(s.strikes,2,'')}</div></div>
+          <div class="cnt"><b>OUTS</b><div class="pips">${pips(s.outs,2,'out')}</div></div>
+        </div>
+        <div class="play">${esc(s.lastPlay||"")}</div>
+        <div class="names">${s.batter?("⚾ At bat: "+esc(s.batter)):""}${s.pitcher?("  ·  P: "+esc(s.pitcher)):""}</div>
+      </div>
+      <div class="card">
+        <table class="ls"><tr><th>Inn</th>${ls}<th>R</th></tr>
+          <tr><td>${esc(s.away.name)}</td>${lsA}<td><b>${s.away.runs}</b></td></tr>
+          <tr><td>${esc(s.home.name)}</td>${lsH}<td><b>${s.home.runs}</b></td></tr>
+        </table>
+      </div>`;
+  }
+  function esc(t){ return String(t).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+  async function poll(){
+    if(!code){ $("content").innerHTML='<div class="msg">No game code in the link.</div>'; return; }
+    try{
+      const r = await fetch(`/.netlify/functions/game?code=${encodeURIComponent(code)}`, {cache:"no-store"});
+      if(r.status===404){ $("status").textContent="Waiting for game…"; $("dot").classList.add("stale"); return; }
+      const d = await r.json();
+      if(d.ok && d.snap){ lastUpdated = d.snap.updated || Date.now(); render(d.snap); }
+    }catch(e){ /* keep last view; mark stale below */ }
+    tickStatus();
+  }
+  function tickStatus(){
+    const dot=$("dot"), st=$("status");
+    if(!lastUpdated){ return; }
+    const ago = Math.round((Date.now()-lastUpdated)/1000);
+    if(ago>20){ dot.classList.add("stale"); st.textContent="Paused — reopen to refresh"; }
+    else { dot.classList.remove("stale"); st.textContent = "LIVE · "+(ago<3?"just now":ago+"s ago"); }
+  }
+  poll(); setInterval(poll, 4000); setInterval(tickStatus, 1000);
+</script>
+</body>
+</html>

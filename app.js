@@ -29,7 +29,7 @@ const SAVE_KEY = "dugoutiq-save-v1";
 const loadSaved = () => { try {
     return JSON.parse(localStorage.getItem(SAVE_KEY) || "null");
 }
-catch {
+catch (_a) {
     return null;
 } };
 const saved0 = loadSaved();
@@ -39,7 +39,7 @@ if (saved0 && saved0.game) {
         try {
             g.lineup = { away: saved0.teams.away.lineup.map((p) => ({ name: p.name, pos: p.pos || "" })), home: saved0.teams.home.lineup.map((p) => ({ name: p.name, pos: p.pos || "" })) };
         }
-        catch { }
+        catch (_a) { }
     }
     if (!g.subs)
         g.subs = { away: [], home: [] };
@@ -56,13 +56,13 @@ const LICENSE_KEY_STORE = "dugoutiq-license-v1";
 const loadActivation = () => { try {
     return localStorage.getItem(LICENSE_KEY_STORE);
 }
-catch {
+catch (_a) {
     return null;
 } };
 const persistActivation = (k) => { try {
     localStorage.setItem(LICENSE_KEY_STORE, k);
 }
-catch { } };
+catch (_a) { } };
 const verifyLicense = async (key) => {
     try {
         const r = await fetch("/.netlify/functions/verify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: key.trim() }) });
@@ -71,7 +71,7 @@ const verifyLicense = async (key) => {
             return { ok: true };
         return { ok: false, message: (data && data.message) || "Key not recognized — check it against your receipt." };
     }
-    catch {
+    catch (_a) {
         return { ok: false, message: "Couldn't reach the license server — check your connection and try once; after activation the app works fully offline." };
     }
 };
@@ -79,13 +79,13 @@ const ROSTERS_KEY = "dugoutiq-rosters-v1";
 const loadRosters = () => { try {
     return JSON.parse(localStorage.getItem(ROSTERS_KEY) || "[]");
 }
-catch {
+catch (_a) {
     return [];
 } };
 const persistRosters = (list) => { try {
     localStorage.setItem(ROSTERS_KEY, JSON.stringify(list));
 }
-catch { } };
+catch (_a) { } };
 function DugoutScorecard() {
     const [licensed, setLicensed] = useState(() => !!loadActivation());
     const [licenseKey, setLicenseKey] = useState("");
@@ -107,7 +107,7 @@ function DugoutScorecard() {
                 setLicenseErr((res && res.message) || "That key didn't verify — check it for typos.");
             }
         }
-        catch {
+        catch (_a) {
             setLicenseErr("Couldn't reach the license server — check your connection and try again.");
         }
         setLicenseBusy(false);
@@ -126,7 +126,7 @@ function DugoutScorecard() {
     useEffect(() => { try {
         localStorage.setItem(SAVE_KEY, JSON.stringify({ phase, teams, game, pitchLimit }));
     }
-    catch { } }, [phase, teams, game, pitchLimit]);
+    catch (_a) { } }, [phase, teams, game, pitchLimit]);
     const [fcMenu, setFcMenu] = useState(false);
     const [sacMenu, setSacMenu] = useState(false);
     const [dpMenu, setDpMenu] = useState(false);
@@ -143,16 +143,19 @@ function DugoutScorecard() {
     const [bookChoose, setBookChoose] = useState(false);
     const [confirmNew, setConfirmNew] = useState(false);
     const [shareOpen, setShareOpen] = useState(false);
+    const [liveCode, setLiveCode] = useState(null); // spectator share code
+    const [liveOpen, setLiveOpen] = useState(false);
+    const [liveCopied, setLiveCopied] = useState(false);
     const [recapPreview, setRecapPreview] = useState(null); // {dataUrl, canShare}
     const [importOpen, setImportOpen] = useState(false);
     const [importText, setImportText] = useState("");
     const [setupMsg, setSetupMsg] = useState("");
     const [history, setHistory] = useState([]);
     /* ---------------- setup helpers ---------------- */
-    const setTeamName = (side, name) => setTeams((t) => ({ ...t, [side]: { ...t[side], name } }));
+    const setTeamName = (side, name) => setTeams((t) => (Object.assign(Object.assign({}, t), { [side]: Object.assign(Object.assign({}, t[side]), { name }) })));
     const setPlayer = (side, idx, field, value) => setTeams((t) => {
-        const lineup = t[side].lineup.map((p, i) => i === idx ? { ...p, [field]: value } : p);
-        return { ...t, [side]: { ...t[side], lineup } };
+        const lineup = t[side].lineup.map((p, i) => i === idx ? Object.assign(Object.assign({}, p), { [field]: value }) : p);
+        return Object.assign(Object.assign({}, t), { [side]: Object.assign(Object.assign({}, t[side]), { lineup }) });
     });
     const addPlayer = (side) => setTeams((t) => {
         if (t[side].lineup.length >= MAX_BATTERS)
@@ -161,13 +164,13 @@ function DugoutScorecard() {
             ...t[side].lineup,
             { name: `Batter ${t[side].lineup.length + 1}`, pos: "" },
         ];
-        return { ...t, [side]: { ...t[side], lineup } };
+        return Object.assign(Object.assign({}, t), { [side]: Object.assign(Object.assign({}, t[side]), { lineup }) });
     });
     const removePlayer = (side, idx) => setTeams((t) => {
         if (t[side].lineup.length <= MIN_BATTERS)
             return t;
         const lineup = t[side].lineup.filter((_, i) => i !== idx);
-        return { ...t, [side]: { ...t[side], lineup } };
+        return Object.assign(Object.assign({}, t), { [side]: Object.assign(Object.assign({}, t[side]), { lineup }) });
     });
     /* --- My Teams: saved roster library --- */
     const [rosters, setRosters] = useState(loadRosters);
@@ -184,10 +187,7 @@ function DugoutScorecard() {
         const r = rosters[idx];
         if (!r)
             return;
-        setTeams((t) => ({
-            ...t,
-            [side]: { name: r.name, lineup: snapshot(r.lineup) },
-        }));
+        setTeams((t) => (Object.assign(Object.assign({}, t), { [side]: { name: r.name, lineup: snapshot(r.lineup) } })));
         setTeamPickSide(null);
         setSetupMsg(`Loaded "${r.name}" into the ${side === "away" ? "visiting" : "home"} lineup`);
     };
@@ -208,7 +208,7 @@ function DugoutScorecard() {
         const lineup = [...t[side].lineup];
         const [moved] = lineup.splice(from, 1);
         lineup.splice(to, 0, moved);
-        return { ...t, [side]: { ...t[side], lineup } };
+        return Object.assign(Object.assign({}, t), { [side]: Object.assign(Object.assign({}, t[side]), { lineup }) });
     });
     const orderTarget = (d, len) => Math.max(0, Math.min(len - 1, d.from + Math.round(d.dy / ROW_H)));
     const rowHandleDown = (side, idx) => (e) => {
@@ -220,7 +220,7 @@ function DugoutScorecard() {
         const d = rowDragRef.current;
         if (!d)
             return;
-        setRowDragBoth({ ...d, dy: e.clientY - d.startY });
+        setRowDragBoth(Object.assign(Object.assign({}, d), { dy: e.clientY - d.startY }));
     };
     const rowHandleUp = () => {
         const d = rowDragRef.current;
@@ -255,7 +255,7 @@ function DugoutScorecard() {
             await navigator.clipboard.writeText(code);
             setSetupMsg("Lineups copied — paste them on any device running DugoutIQ");
         }
-        catch {
+        catch (_a) {
             setSetupMsg("Couldn't access the clipboard on this device");
         }
     };
@@ -284,7 +284,7 @@ function DugoutScorecard() {
             setImportText("");
             setSetupMsg("Lineups imported");
         }
-        catch {
+        catch (_a) {
             setSetupMsg("That didn't look like a DugoutIQ lineup code — copy it with Export Lineups first");
             setImportOpen(false);
             setImportText("");
@@ -1196,7 +1196,7 @@ function DugoutScorecard() {
         e.stopPropagation();
         const p = svgPoint(e);
         const moved = d.moved || Math.hypot(e.clientX - d.sx, e.clientY - d.sy) > 8;
-        setDragBoth({ ...d, x: p.x, y: p.y, moved });
+        setDragBoth(Object.assign(Object.assign({}, d), { x: p.x, y: p.y, moved }));
     };
     const basePointerUp = (e) => {
         const d = dragRef.current;
@@ -1399,6 +1399,57 @@ function DugoutScorecard() {
         logPlay(g, "Final", "info");
     });
     const totals = (side) => game.linescore.reduce((sum, r) => sum + (r[side] || 0), 0);
+    /* ---------------- live spectator (view-only) ---------------- */
+    const LIVE_ENDPOINT = "/.netlify/functions/game";
+    const liveLink = () => liveCode ? `${location.origin}/spectate.html?g=${liveCode}` : "";
+    const buildLiveSnap = () => {
+        const g = game;
+        const nm = (side) => (teams[side].name || "").trim() || (side === "away" ? "Visitors" : "Home");
+        const bat = g.lineup[battingSide][g.batter[battingSide]];
+        const fp = curP(g, fieldingSide);
+        return {
+            v: 1,
+            over: !!g.over,
+            away: { name: nm("away"), runs: totals("away"), hits: g.hits.away, errors: g.errors.away },
+            home: { name: nm("home"), runs: totals("home"), hits: g.hits.home, errors: g.errors.home },
+            inning: g.inning,
+            half: g.half,
+            balls: g.balls,
+            strikes: g.strikes,
+            outs: g.outs,
+            bases: {
+                first: !!g.bases.first,
+                second: !!g.bases.second,
+                third: !!g.bases.third,
+            },
+            batter: bat ? bat.name : "",
+            pitcher: fp ? fp.name : "",
+            lastPlay: g.lastPlay || "",
+            linescore: g.linescore.map((r) => ({ away: r.away, home: r.home })),
+        };
+    };
+    const startLive = () => {
+        let code = liveCode;
+        if (!code) {
+            code = Math.random().toString(36).slice(2, 8).toUpperCase();
+            setLiveCode(code);
+        }
+        setShareOpen(false);
+        setLiveOpen(true);
+    };
+    // Push the current game state to the relay whenever it changes (debounced).
+    useEffect(() => {
+        if (!liveCode || !game || phase !== "game")
+            return;
+        const id = setTimeout(() => {
+            fetch(LIVE_ENDPOINT, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ code: liveCode, snap: buildLiveSnap() }),
+            }).catch(() => { });
+        }, 600);
+        return () => clearTimeout(id);
+    }, [game, liveCode, phase]);
     const setBatterIndex = (idx) => mutate((g) => {
         g.batter[battingSide] = idx;
         g.balls = 0;
@@ -1759,7 +1810,7 @@ function DugoutScorecard() {
                 fname: `dugoutiq-scorebook-${side}.png`,
             });
         }
-        catch {
+        catch (_a) {
             mutate((g) => (g.lastPlay = "Couldn't create the scorebook on this device"));
         }
     };
@@ -1773,7 +1824,7 @@ function DugoutScorecard() {
             const canShare = !!(navigator.canShare && navigator.canShare({ files: [file] }));
             setRecapPreview({ dataUrl, canShare });
         }
-        catch {
+        catch (_a) {
             mutate((g) => (g.lastPlay = "Couldn't create the score graphic on this device"));
         }
     };
@@ -1869,7 +1920,7 @@ function DugoutScorecard() {
                 const score = st.h * 10 + st.rbi * 5 + st.r;
                 if (st.h >= 2 || st.rbi >= 2) {
                     if (!best || score > bi) {
-                        best = { ...st, i };
+                        best = Object.assign(Object.assign({}, st), { i });
                         bi = score;
                     }
                 }
@@ -1930,7 +1981,7 @@ function DugoutScorecard() {
             await navigator.clipboard.writeText(text);
             mutate((g) => (g.lastPlay = "Game story copied — paste into any message"));
         }
-        catch {
+        catch (_a) {
             mutate((g) => (g.lastPlay = "Sharing isn't available on this device"));
         }
     };
@@ -1953,7 +2004,7 @@ function DugoutScorecard() {
             await navigator.clipboard.writeText(text);
             mutate((g) => (g.lastPlay = "Recap copied — paste into any message"));
         }
-        catch {
+        catch (_a) {
             mutate((g) => (g.lastPlay = "Sharing isn't available on this device"));
         }
     };
@@ -2714,7 +2765,36 @@ function DugoutScorecard() {
                                 setShareOpen(false);
                                 setBookChoose(true);
                             } }, "\uD83D\uDCD2 Scorebook page (classic)"),
+                        React.createElement("button", { className: "dg", onClick: startLive }, "\uD83D\uDCE1 Live game link (spectators)"),
                         React.createElement("button", { className: "dg ghost", onClick: () => setShareOpen(false) }, "Cancel"))))),
+            liveOpen && (React.createElement("div", { className: "modal-back", onClick: () => setLiveOpen(false) },
+                React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
+                    React.createElement("h3", null, "Live spectator link"),
+                    React.createElement("p", null, "Share this link. Anyone who opens it watches the game update live \u2014 view only, no controls. It refreshes itself every few seconds."),
+                    React.createElement("input", { readOnly: true, value: liveLink(), onFocus: (e) => e.target.select(), style: {
+                            width: "100%",
+                            padding: "10px",
+                            borderRadius: "8px",
+                            border: "1px solid #2B5AA0",
+                            background: "#0E1A3A",
+                            color: "#fff",
+                            fontSize: "13px",
+                            marginBottom: "10px",
+                        } }),
+                    React.createElement("div", { className: "btnrow" },
+                        React.createElement("button", { className: "dg hit", onClick: async () => {
+                                try {
+                                    await navigator.clipboard.writeText(liveLink());
+                                    setLiveCopied(true);
+                                    setTimeout(() => setLiveCopied(false), 1500);
+                                }
+                                catch (_a) { }
+                            } }, liveCopied ? "Copied!" : "Copy link"),
+                        typeof navigator !== "undefined" && navigator.share && (React.createElement("button", { className: "dg", onClick: () => navigator
+                                .share({ title: "DugoutIQ — live game", url: liveLink() })
+                                .catch(() => { }) }, "Share\u2026")),
+                        React.createElement("button", { className: "dg ghost", onClick: () => setLiveOpen(false) }, "Done")),
+                    React.createElement("p", { style: { fontSize: "12px", opacity: 0.7, marginTop: "10px" } }, "Live sharing needs an internet connection. Scoring still works offline \u2014 viewers just see updates when you have signal.")))),
             bookChoose && game && (React.createElement("div", { className: "modal-back", onClick: () => setBookChoose(false) },
                 React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
                     React.createElement("h3", null, "Scorebook page"),

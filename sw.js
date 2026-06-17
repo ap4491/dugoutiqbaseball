@@ -1,5 +1,5 @@
 /* DugoutIQ service worker — app shell cache for offline scorekeeping */
-const CACHE = "dugoutiq-v33";
+const CACHE = "dugoutiq-v34";
 const ASSETS = [
   "./",
   "./index.html",
@@ -28,6 +28,8 @@ self.addEventListener("activate", (e) => {
 });
 
 self.addEventListener("fetch", (e) => {
+  // Never cache the live relay — spectators must always get fresh data.
+  if (e.request.url.includes("/.netlify/functions/")) return;
   e.respondWith(
     caches.match(e.request).then(
       (hit) =>
