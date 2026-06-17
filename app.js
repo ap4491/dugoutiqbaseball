@@ -1416,6 +1416,10 @@ function DugoutScorecard() {
         const g = game;
         const nm = (side) => (teams[side].name || "").trim() || (side === "away" ? "Visitors" : "Home");
         const bat = g.lineup[battingSide][g.batter[battingSide]];
+        const lu = g.lineup[battingSide];
+        const onDeck = lu && lu.length
+            ? lu[(g.batter[battingSide] + 1) % lu.length]
+            : null;
         const fp = curP(g, fieldingSide);
         return {
             v: 1,
@@ -1433,6 +1437,8 @@ function DugoutScorecard() {
                 third: !!g.bases.third,
             },
             batter: bat ? bat.name : "",
+            onDeck: onDeck ? onDeck.name : "",
+            pitches: fp ? fp.pitches || 0 : 0,
             pitcher: fp ? fp.name : "",
             lastPlay: g.lastPlay || "",
             linescore: g.linescore.map((r) => ({ away: r.away, home: r.home })),

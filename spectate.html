@@ -73,7 +73,7 @@
           <div class="team ${battingAway?'bat':''}">${esc(s.away.name)}</div><div class="runs">${s.away.runs}</div>
           <div class="team ${!battingAway?'bat':''}">${esc(s.home.name)}</div><div class="runs">${s.home.runs}</div>
         </div>
-        <div class="meta">${s.over ? "● FINAL" : half+" "+s.inning} &nbsp;·&nbsp; H ${s.away.hits}-${s.home.hits} &nbsp;·&nbsp; E ${s.away.errors}-${s.home.errors}</div>
+        <div class="meta">${s.over ? "● FINAL" : half+" "+s.inning}</div>
         <div class="diamond">
           <div class="base b2 ${s.bases.second?'on':''}"></div>
           <div class="base b3 ${s.bases.third?'on':''}"></div>
@@ -86,7 +86,8 @@
           <div class="cnt"><b>OUTS</b><div class="pips">${pips(s.outs,2,'out')}</div></div>
         </div>
         <div class="play">${esc(s.lastPlay||"")}</div>
-        <div class="names">${s.batter?("⚾ At bat: "+esc(s.batter)):""}${s.pitcher?("  ·  P: "+esc(s.pitcher)):""}</div>
+        <div class="names">${s.batter?("At bat: <b>"+esc(s.batter)+"</b>"):""}${s.onDeck?("&nbsp;&nbsp;·&nbsp;&nbsp;On deck: "+esc(s.onDeck)):""}</div>
+        <div class="names">${s.pitcher?("Pitching: "+esc(s.pitcher)+((s.pitches!=null)?(" &nbsp;·&nbsp; <b>"+s.pitches+"</b> pitches"):"")):""}</div>
       </div>
       <div class="card">
         <table class="ls"><tr><th>Inn</th>${ls}<th>R</th></tr>
