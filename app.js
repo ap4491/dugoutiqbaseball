@@ -143,7 +143,17 @@ function DugoutScorecard() {
     const [bookChoose, setBookChoose] = useState(false);
     const [confirmNew, setConfirmNew] = useState(false);
     const [shareOpen, setShareOpen] = useState(false);
-    const [liveCode, setLiveCode] = useState(null); // spectator share code
+    const LIVE_KEY = "dugoutiq-live-v1";
+    const loadLive = () => {
+        try {
+            return JSON.parse(localStorage.getItem(LIVE_KEY) || "null") || {};
+        }
+        catch (_a) {
+            return {};
+        }
+    };
+    const [liveCode, setLiveCode] = useState(() => loadLive().code || null); // spectator share code
+    const [liveOn, setLiveOn] = useState(() => !!loadLive().on); // broadcasting?
     const [liveOpen, setLiveOpen] = useState(false);
     const [liveCopied, setLiveCopied] = useState(false);
     const [recapPreview, setRecapPreview] = useState(null); // {dataUrl, canShare}
@@ -1434,22 +1444,41 @@ function DugoutScorecard() {
             code = Math.random().toString(36).slice(2, 8).toUpperCase();
             setLiveCode(code);
         }
+        setLiveOn(true);
         setShareOpen(false);
         setLiveOpen(true);
     };
-    // Push the current game state to the relay whenever it changes (debounced).
+    const stopLive = () => {
+        setLiveOn(false);
+    };
+    // Persist the code + on-flag so a reload or accidental close keeps the same link.
     useEffect(() => {
-        if (!liveCode || !game || phase !== "game")
+        try {
+            if (liveCode)
+                localStorage.setItem(LIVE_KEY, JSON.stringify({ code: liveCode, on: liveOn }));
+        }
+        catch (_a) { }
+    }, [liveCode, liveOn]);
+    // Broadcast the game state: once on every change (debounced), plus a heartbeat
+    // every few seconds so the viewer stays "live" during quiet stretches and
+    // re-seeds instantly after a backgrounded tab or a signal blip.
+    useEffect(() => {
+        if (!liveOn || !liveCode || !game || phase !== "game")
             return;
-        const id = setTimeout(() => {
+        const send = () => {
             fetch(LIVE_ENDPOINT, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ code: liveCode, snap: buildLiveSnap() }),
             }).catch(() => { });
-        }, 600);
-        return () => clearTimeout(id);
-    }, [game, liveCode, phase]);
+        };
+        const id = setTimeout(send, 600); // publish this change
+        const hb = setInterval(send, 5000); // heartbeat
+        return () => {
+            clearTimeout(id);
+            clearInterval(hb);
+        };
+    }, [game, liveOn, liveCode, phase]);
     const setBatterIndex = (idx) => mutate((g) => {
         g.batter[battingSide] = idx;
         g.balls = 0;
@@ -2770,7 +2799,18 @@ function DugoutScorecard() {
             liveOpen && (React.createElement("div", { className: "modal-back", onClick: () => setLiveOpen(false) },
                 React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
                     React.createElement("h3", null, "Live spectator link"),
-                    React.createElement("p", null, "Share this link. Anyone who opens it watches the game update live \u2014 view only, no controls. It refreshes itself every few seconds."),
+                    React.createElement("p", { style: { marginBottom: "6px" } },
+                        React.createElement("span", { style: {
+                                display: "inline-block",
+                                width: "9px",
+                                height: "9px",
+                                borderRadius: "50%",
+                                background: liveOn ? "#3ad07a" : "#888",
+                                marginRight: "7px",
+                            } }),
+                        liveOn ? "Broadcasting live" : "Paused",
+                        " \u00B7 this link stays the same even if you close or reload the app."),
+                    React.createElement("p", null, "Share it. Anyone who opens it watches the game update live \u2014 view only, no controls. It refreshes itself every few seconds."),
                     React.createElement("input", { readOnly: true, value: liveLink(), onFocus: (e) => e.target.select(), style: {
                             width: "100%",
                             padding: "10px",
@@ -2793,6 +2833,7 @@ function DugoutScorecard() {
                         typeof navigator !== "undefined" && navigator.share && (React.createElement("button", { className: "dg", onClick: () => navigator
                                 .share({ title: "DugoutIQ — live game", url: liveLink() })
                                 .catch(() => { }) }, "Share\u2026")),
+                        liveOn ? (React.createElement("button", { className: "dg ghost", onClick: stopLive }, "Stop sharing")) : (React.createElement("button", { className: "dg", onClick: () => setLiveOn(true) }, "Resume sharing")),
                         React.createElement("button", { className: "dg ghost", onClick: () => setLiveOpen(false) }, "Done")),
                     React.createElement("p", { style: { fontSize: "12px", opacity: 0.7, marginTop: "10px" } }, "Live sharing needs an internet connection. Scoring still works offline \u2014 viewers just see updates when you have signal.")))),
             bookChoose && game && (React.createElement("div", { className: "modal-back", onClick: () => setBookChoose(false) },
