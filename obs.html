@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DugoutIQ — Broadcast Overlay</title>
+<style>
+  :root{ --navy:#14204A; --line:#2B5AA0; --powder:#A9C5E8; --red:#E8291C; --amber:#F5C518; --white:#FFFFFF; }
+  html,body{ margin:0; padding:0; background:transparent; overflow:hidden;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif; }
+  /* corner placement via ?pos=tl|tr|bl|br (default tl) */
+  #bug{ position:fixed; top:40px; left:40px; display:none; }
+  body.tr #bug{ top:40px; right:40px; left:auto; }
+  body.bl #bug{ bottom:40px; left:40px; top:auto; }
+  body.br #bug{ bottom:40px; right:40px; top:auto; left:auto; }
+
+  .bug{ display:flex; align-items:stretch; height:90px;
+    background:rgba(20,32,74,.94); border:1px solid var(--line); border-radius:12px;
+    box-shadow:0 6px 22px rgba(0,0,0,.45); overflow:hidden;
+    font-variant-numeric:tabular-nums; }
+  .teams{ display:flex; flex-direction:column; justify-content:center; padding:0 6px; min-width:188px; }
+  .trow{ display:flex; align-items:center; height:45px; }
+  .acc{ width:5px; height:30px; border-radius:3px; background:transparent; margin-right:9px; }
+  .trow.bat .acc{ background:var(--amber); }
+  .olg{ height:24px; width:24px; object-fit:contain; margin-right:7px; border-radius:3px; }
+  .tname{ color:var(--white); font-weight:800; font-size:22px; letter-spacing:.5px;
+    text-transform:uppercase; max-width:118px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  .trun{ margin-left:auto; color:var(--white); font-weight:800; font-size:26px; min-width:34px; text-align:right; padding-right:4px; }
+  .trow.bat .trun{ color:var(--amber); }
+  .sep{ width:1px; background:var(--line); margin:10px 0; }
+  .mid{ display:flex; flex-direction:column; align-items:center; justify-content:center; min-width:64px; gap:6px; }
+  .inn{ color:var(--powder); font-weight:800; font-size:17px; letter-spacing:.5px; }
+  .count{ color:var(--white); font-weight:800; font-size:22px; }
+  .right{ display:flex; flex-direction:column; align-items:center; justify-content:center; min-width:86px; gap:8px; padding:0 8px; }
+  .dia{ position:relative; width:46px; height:46px; }
+  .b{ position:absolute; width:15px; height:15px; transform:rotate(45deg); border:2px solid var(--line); background:transparent; }
+  .b.on{ background:var(--amber); border-color:var(--amber); }
+  .b2{ left:15px; top:0; } .b1{ right:0; top:15px; } .b3{ left:0; top:15px; }
+  .outs{ display:flex; gap:6px; }
+  .o{ width:11px; height:11px; border-radius:50%; border:2px solid var(--line); }
+  .o.on{ background:var(--red); border-color:var(--red); }
+  .final{ color:var(--amber); font-weight:800; font-size:18px; letter-spacing:1px; padding:0 14px;
+    display:flex; align-items:center; }
+</style>
+</head>
+<body>
+  <div id="bug"></div>
+<script>
+  const params = new URLSearchParams(location.search);
+  const code = params.get("g");
+  const pos = (params.get("pos")||"tl").toLowerCase();
+  if(["tr","bl","br"].includes(pos)) document.body.classList.add(pos);
+  const bug = document.getElementById("bug");
+  let last = null;
+
+  function esc(t){ return String(t).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+  function dots(n,total){ let s=""; for(let i=0;i<total;i++) s+=`<span class="o ${i<n?'on':''}"></span>`; return s; }
+
+  function render(s){
+    const battingAway = s.half === "top";
+    if(s.over){
+      bug.innerHTML = `<div class="bug">
+        <div class="teams">
+          <div class="trow "><span class="acc" style="background:${s.away.color||'#2B5AA0'}"></span>${s.away.logo?`<img class="olg" src="${s.away.logo}">`:""}<span class="tname">${esc(s.away.name)}</span><span class="trun">${s.away.runs}</span></div>
+          <div class="trow "><span class="acc" style="background:${s.home.color||'#2B5AA0'}"></span>${s.home.logo?`<img class="olg" src="${s.home.logo}">`:""}<span class="tname">${esc(s.home.name)}</span><span class="trun">${s.home.runs}</span></div>
+        </div>
+        <div class="sep"></div>
+        <div class="final">FINAL</div>
+      </div>`;
+      bug.style.display="block"; return;
+    }
+    const arrow = battingAway ? "▲" : "▼";
+    bug.innerHTML = `<div class="bug">
+      <div class="teams">
+        <div class="trow ${battingAway?'bat':''}"><span class="acc" style="background:${s.away.color||'#2B5AA0'}"></span>${s.away.logo?`<img class="olg" src="${s.away.logo}">`:""}<span class="tname">${esc(s.away.name)}</span><span class="trun">${s.away.runs}</span></div>
+        <div class="trow ${!battingAway?'bat':''}"><span class="acc" style="background:${s.home.color||'#2B5AA0'}"></span>${s.home.logo?`<img class="olg" src="${s.home.logo}">`:""}<span class="tname">${esc(s.home.name)}</span><span class="trun">${s.home.runs}</span></div>
+      </div>
+      <div class="sep"></div>
+      <div class="mid">
+        <div class="inn">${arrow} ${s.inning}</div>
+        <div class="count">${s.balls}-${s.strikes}</div>
+      </div>
+      <div class="sep"></div>
+      <div class="right">
+        <div class="dia">
+          <div class="b b2 ${s.bases.second?'on':''}"></div>
+          <div class="b b3 ${s.bases.third?'on':''}"></div>
+          <div class="b b1 ${s.bases.first?'on':''}"></div>
+        </div>
+        <div class="outs">${dots(s.outs,3)}</div>
+      </div>
+    </div>`;
+    bug.style.display="block";
+  }
+
+  async function poll(){
+    if(!code) return;
+    try{
+      const r = await fetch(`/.netlify/functions/game?code=${encodeURIComponent(code)}`, {cache:"no-store"});
+      if(r.status===404) return;          // no game yet: stay invisible
+      const d = await r.json();
+      if(d.ok && d.snap){ last = d.snap; render(d.snap); }
+    }catch(e){ /* keep last frame on a blip */ }
+  }
+  poll(); setInterval(poll, 3000);
+</script>
+</body>
+</html>

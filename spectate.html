@@ -22,6 +22,7 @@
   .card{ background:rgba(255,255,255,.05); border:1px solid var(--line); border-radius:16px; padding:16px; margin-bottom:14px; }
   .score{ display:grid; grid-template-columns:1fr auto; gap:6px 10px; align-items:center; }
   .team{ font-size:22px; font-weight:700; }
+  .tlogo{ height:26px; width:26px; object-fit:contain; vertical-align:middle; margin-right:9px; border-radius:5px; }
   .runs{ font-size:34px; font-weight:800; text-align:right; min-width:50px; }
   .bat{ color:var(--amber); }
   .meta{ display:flex; gap:14px; align-items:center; justify-content:center; margin:6px 0 2px; color:var(--powder); font-size:14px; }
@@ -70,8 +71,8 @@
     $("content").innerHTML = `
       <div class="card">
         <div class="score">
-          <div class="team ${battingAway?'bat':''}">${esc(s.away.name)}</div><div class="runs">${s.away.runs}</div>
-          <div class="team ${!battingAway?'bat':''}">${esc(s.home.name)}</div><div class="runs">${s.home.runs}</div>
+          <div class="team ${battingAway?'bat':''}" style="${s.away.color?('color:'+s.away.color):''}">${s.away.logo?`<img class="tlogo" src="${s.away.logo}">`:""}${esc(s.away.name)}</div><div class="runs">${s.away.runs}</div>
+          <div class="team ${!battingAway?'bat':''}" style="${s.home.color?('color:'+s.home.color):''}">${s.home.logo?`<img class="tlogo" src="${s.home.logo}">`:""}${esc(s.home.name)}</div><div class="runs">${s.home.runs}</div>
         </div>
         <div class="meta">${s.over ? "● FINAL" : half+" "+s.inning}</div>
         <div class="diamond">

@@ -114,8 +114,8 @@ function DugoutScorecard() {
     };
     const [phase, setPhase] = useState((saved0 && saved0.phase) || "setup");
     const [teams, setTeams] = useState((saved0 && saved0.teams) || {
-        away: { name: "VISITORS", lineup: freshLineup("Batter") },
-        home: { name: "HOME", lineup: freshLineup("Batter") },
+        away: { name: "VISITORS", color: "#134A8E", logo: "", lineup: freshLineup("Batter") },
+        home: { name: "HOME", color: "#B91C1C", logo: "", lineup: freshLineup("Batter") },
     });
     const [game, setGame] = useState((saved0 && saved0.game) || null);
     const [baseMenu, setBaseMenu] = useState(null); // which occupied base was tapped
@@ -156,6 +156,18 @@ function DugoutScorecard() {
     const [liveOn, setLiveOn] = useState(() => !!loadLive().on); // broadcasting?
     const [liveOpen, setLiveOpen] = useState(false);
     const [liveCopied, setLiveCopied] = useState(false);
+    const [themeColor, setThemeColor] = useState(() => { try {
+        return localStorage.getItem("dugoutiq-theme-color") || "#1B57A0";
+    }
+    catch (_a) {
+        return "#1B57A0";
+    } });
+    const [themeLogo, setThemeLogo] = useState(() => { try {
+        return localStorage.getItem("dugoutiq-theme-logo") || "";
+    }
+    catch (_a) {
+        return "";
+    } });
     const [recapPreview, setRecapPreview] = useState(null); // {dataUrl, canShare}
     const [importOpen, setImportOpen] = useState(false);
     const [importText, setImportText] = useState("");
@@ -163,6 +175,72 @@ function DugoutScorecard() {
     const [history, setHistory] = useState([]);
     /* ---------------- setup helpers ---------------- */
     const setTeamName = (side, name) => setTeams((t) => (Object.assign(Object.assign({}, t), { [side]: Object.assign(Object.assign({}, t[side]), { name }) })));
+    const PRESET_TEAM_COLORS = [
+        "#134A8E", "#1D4ED8", "#0E7490", "#15803D",
+        "#B91C1C", "#C2410C", "#7E22CE", "#0F172A",
+    ];
+    const teamColor = (side) => (teams[side] && teams[side].color) || (side === "away" ? "#134A8E" : "#B91C1C");
+    const setTeamColor = (side, color) => setTeams((t) => (Object.assign(Object.assign({}, t), { [side]: Object.assign(Object.assign({}, t[side]), { color }) })));
+    const setTeamLogo = (side, logo) => setTeams((t) => (Object.assign(Object.assign({}, t), { [side]: Object.assign(Object.assign({}, t[side]), { logo: logo || "" }) })));
+    const onLogoPick = (side, e) => {
+        const file = e.target.files && e.target.files[0];
+        e.target.value = "";
+        if (!file)
+            return;
+        const reader = new FileReader();
+        reader.onload = () => {
+            const img = new Image();
+            img.onload = () => {
+                const max = 96; // resize so logos stay small in storage / broadcasts
+                const scale = Math.min(max / img.width, max / img.height, 1);
+                const w = Math.max(1, Math.round(img.width * scale));
+                const h = Math.max(1, Math.round(img.height * scale));
+                const cv = document.createElement("canvas");
+                cv.width = w;
+                cv.height = h;
+                cv.getContext("2d").drawImage(img, 0, 0, w, h);
+                try {
+                    setTeamLogo(side, cv.toDataURL("image/png"));
+                }
+                catch (_a) { }
+            };
+            img.src = reader.result;
+        };
+        reader.readAsDataURL(file);
+    };
+    const onThemeLogoPick = (e) => {
+        const file = e.target.files && e.target.files[0];
+        e.target.value = "";
+        if (!file)
+            return;
+        const reader = new FileReader();
+        reader.onload = () => {
+            const img = new Image();
+            img.onload = () => {
+                const max = 160;
+                const scale = Math.min(max / img.width, max / img.height, 1);
+                const w = Math.max(1, Math.round(img.width * scale));
+                const h = Math.max(1, Math.round(img.height * scale));
+                const cv = document.createElement("canvas");
+                cv.width = w;
+                cv.height = h;
+                cv.getContext("2d").drawImage(img, 0, 0, w, h);
+                try {
+                    setThemeLogo(cv.toDataURL("image/png"));
+                }
+                catch (_a) { }
+            };
+            img.src = reader.result;
+        };
+        reader.readAsDataURL(file);
+    };
+    useEffect(() => {
+        try {
+            localStorage.setItem("dugoutiq-theme-color", themeColor);
+            localStorage.setItem("dugoutiq-theme-logo", themeLogo);
+        }
+        catch (_a) { }
+    }, [themeColor, themeLogo]);
     const setPlayer = (side, idx, field, value) => setTeams((t) => {
         const lineup = t[side].lineup.map((p, i) => i === idx ? Object.assign(Object.assign({}, p), { [field]: value }) : p);
         return Object.assign(Object.assign({}, t), { [side]: Object.assign(Object.assign({}, t[side]), { lineup }) });
@@ -1424,8 +1502,8 @@ function DugoutScorecard() {
         return {
             v: 1,
             over: !!g.over,
-            away: { name: nm("away"), runs: totals("away"), hits: g.hits.away, errors: g.errors.away },
-            home: { name: nm("home"), runs: totals("home"), hits: g.hits.home, errors: g.errors.home },
+            away: { name: nm("away"), runs: totals("away"), hits: g.hits.away, errors: g.errors.away, color: teamColor("away"), logo: teams.away.logo || "" },
+            home: { name: nm("home"), runs: totals("home"), hits: g.hits.home, errors: g.errors.home, color: teamColor("home"), logo: teams.home.logo || "" },
             inning: g.inning,
             half: g.half,
             balls: g.balls,
@@ -1577,17 +1655,18 @@ function DugoutScorecard() {
             // teams + scores
             const aWin = totals("away") > totals("home");
             const hWin = totals("home") > totals("away");
-            const teamRow = (name, score, win, ty) => {
+            const teamRow = (name, score, win, ty, accent) => {
                 ctx.textAlign = "left";
-                ctx.fillStyle = win && game.over ? "#F5C518" : "#FFFFFF";
+                ctx.fillStyle = win && game.over ? "#F5C518" : (accent || "#FFFFFF");
                 ctx.font = "700 58px 'Saira Condensed', sans-serif";
                 ctx.fillText(name.toUpperCase().slice(0, 16), 110, ty);
                 ctx.textAlign = "right";
                 ctx.font = "700 96px 'IBM Plex Mono', monospace";
+                ctx.fillStyle = win && game.over ? "#F5C518" : "#FFFFFF";
                 ctx.fillText(String(score), W - 110, ty + 10);
             };
-            teamRow(teams.away.name, totals("away"), aWin, y + 60);
-            teamRow(teams.home.name, totals("home"), hWin, y + 180);
+            teamRow(teams.away.name, totals("away"), aWin, y + 60, teamColor("away"));
+            teamRow(teams.home.name, totals("home"), hWin, y + 180, teamColor("home"));
             y += 250;
             // linescore grid
             const maxInn = 12;
@@ -2047,6 +2126,7 @@ function DugoutScorecard() {
     const Lamp = ({ on, color, mini }) => (React.createElement("span", { className: `lamp ${mini ? "mini" : ""} ${on ? "on " + color : ""}`, "aria-hidden": "true" }));
     const Diamond = () => (React.createElement("svg", { ref: svgRef, viewBox: "0 -12 200 186", className: "diamond", role: "group", "aria-label": "Baserunners \u2014 tap a base for options, drag a runner to move them" },
         React.createElement("path", { d: "M100 158 L172 86 L100 14 L28 86 Z", fill: "rgba(255,255,255,0.04)", stroke: "#3D6FB4", strokeWidth: "2" }),
+        themeLogo && (React.createElement("image", { href: themeLogo, x: "68", y: "54", width: "64", height: "64", opacity: "0.45", preserveAspectRatio: "xMidYMid meet", style: { pointerEvents: "none" } })),
         [
             { base: "first", x: 172, y: 86, lx: 152, ly: 91, anchor: "end" },
             { base: "second", x: 100, y: 14, lx: 100, ly: 46, anchor: "middle" },
@@ -2064,7 +2144,7 @@ function DugoutScorecard() {
             React.createElement("path", { d: "M-11 -6 L11 -6 L11 2 L0 11 L-11 2 Z", "data-base": "home", fill: "#FFFFFF", opacity: drag && drag.moved ? "1" : "0.85", className: drag && drag.moved ? "home-hot" : "" })),
         drag && drag.moved && drag.occupied && (React.createElement("circle", { cx: drag.x, cy: drag.y, r: "11", className: "ghost-runner" }))));
     /* ---------------- render ---------------- */
-    return (React.createElement("div", { className: "dg-root" },
+    return (React.createElement("div", { className: "dg-root", style: { "--accent": themeColor } },
         React.createElement("style", null, `
         @import url('https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;700;800&family=IBM+Plex+Mono:wght@500;700&display=swap');
 
@@ -2077,9 +2157,10 @@ function DugoutScorecard() {
           --powder: #A9C5E8;
           --red: #E8291C;
           --amberw: #F5C518;
+          --accent: #1B57A0;
           min-height: 100vh;
           background:
-            radial-gradient(1200px 600px at 50% -10%, #1B57A0 0%, var(--navy) 55%, var(--navy-deep) 100%);
+            radial-gradient(1200px 600px at 50% -10%, var(--accent) 0%, var(--navy) 55%, var(--navy-deep) 100%);
           color: var(--white);
           font-family: 'Saira Condensed', system-ui, sans-serif;
           padding: 16px 12px 48px;
@@ -2111,6 +2192,17 @@ function DugoutScorecard() {
           text-shadow: 0 0 18px rgba(169,197,232,.45);
         }
         .team-cell.atbat { border-color: var(--white); }
+        .team-custom { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-bottom:10px; }
+        .team-custom .swatch { width:22px; height:22px; border-radius:50%; border:2px solid rgba(255,255,255,.25); padding:0; cursor:pointer; }
+        .team-custom .swatch.sel { border-color:#fff; box-shadow:0 0 0 2px rgba(255,255,255,.4); }
+        .team-custom .swatch-custom { width:30px; height:26px; padding:0; border:none; background:none; cursor:pointer; }
+        .team-custom .logo-btn { display:inline-flex; align-items:center; justify-content:center; min-width:60px; height:30px; padding:0 8px; border:1px dashed var(--line); border-radius:8px; color:var(--powder); font-size:13px; cursor:pointer; }
+        .team-custom .logo-btn img { height:24px; width:24px; object-fit:contain; border-radius:4px; }
+        .team-custom .logo-rm { width:24px; height:24px; border-radius:50%; border:none; background:rgba(51,65,85,.6); color:#fff; cursor:pointer; }
+        .tlogo { height:22px; width:22px; object-fit:contain; vertical-align:middle; margin-right:6px; border-radius:4px; }
+        .theme-bar { display:flex; align-items:center; gap:12px; flex-wrap:wrap; background:rgba(255,255,255,.05); border:1px solid var(--line); border-radius:12px; padding:10px 14px; margin-bottom:14px; }
+        .theme-bar .theme-label { font-weight:700; color:var(--white); font-size:15px; }
+        .theme-bar .theme-swatches { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
         .inning-cell {
           display: flex; flex-direction: column; justify-content: center;
           align-items: center; padding: 0 14px;
@@ -2504,9 +2596,25 @@ function DugoutScorecard() {
                 React.createElement("button", { className: "dg hit", style: { width: "100%", fontSize: 17, padding: "12px 0", marginTop: 10 }, onClick: activate, disabled: licenseBusy || !licenseKey.trim() }, licenseBusy ? "Verifying…" : "Activate"),
                 React.createElement("p", { className: "license-foot" }, "Your license key is in your purchase receipt \u2014 activate once, works offline forever"))),
             licensed && phase === "setup" && (React.createElement(React.Fragment, null,
+                React.createElement("div", { className: "theme-bar" },
+                    React.createElement("span", { className: "theme-label" }, "\uD83C\uDFA8 Your team look"),
+                    React.createElement("div", { className: "theme-swatches" },
+                        PRESET_TEAM_COLORS.map((c) => (React.createElement("button", { key: c, type: "button", className: `swatch ${themeColor === c ? "sel" : ""}`, style: { background: c }, onClick: () => setThemeColor(c), "aria-label": "Set app theme color" }))),
+                        React.createElement("input", { type: "color", className: "swatch-custom", value: themeColor, onChange: (e) => setThemeColor(e.target.value), "aria-label": "Custom app theme color" }),
+                        React.createElement("label", { className: "logo-btn" },
+                            themeLogo ? React.createElement("img", { src: themeLogo, alt: "team logo" }) : "＋ Logo",
+                            React.createElement("input", { type: "file", accept: "image/*", onChange: onThemeLogoPick, style: { display: "none" } })),
+                        themeLogo && (React.createElement("button", { type: "button", className: "logo-rm", onClick: () => setThemeLogo(""), "aria-label": "Remove logo" }, "\u2715")))),
                 React.createElement("div", { className: "setup-grid" }, ["away", "home"].map((side) => (React.createElement("div", { className: "setup-card", key: side },
                     React.createElement("h2", null, side === "away" ? "Visiting Club" : "Home Club"),
                     React.createElement("input", { className: "dg-in teamname-in", value: teams[side].name, onChange: (e) => setTeamName(side, e.target.value), "aria-label": `${side} team name` }),
+                    React.createElement("div", { className: "team-custom" },
+                        PRESET_TEAM_COLORS.map((c) => (React.createElement("button", { key: c, type: "button", className: `swatch ${teamColor(side) === c ? "sel" : ""}`, style: { background: c }, onClick: () => setTeamColor(side, c), "aria-label": `Set ${side} team color` }))),
+                        React.createElement("input", { type: "color", className: "swatch-custom", value: teamColor(side), onChange: (e) => setTeamColor(side, e.target.value), "aria-label": `Custom ${side} team color` }),
+                        React.createElement("label", { className: "logo-btn" },
+                            teams[side].logo ? (React.createElement("img", { src: teams[side].logo, alt: "team logo" })) : ("＋ Logo"),
+                            React.createElement("input", { type: "file", accept: "image/*", onChange: (e) => onLogoPick(side, e), style: { display: "none" } })),
+                        teams[side].logo && (React.createElement("button", { type: "button", className: "logo-rm", onClick: () => setTeamLogo(side, ""), "aria-label": "Remove logo" }, "\u2715"))),
                     React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr", marginBottom: 10 } },
                         React.createElement("button", { className: "dg ghost rosterbtn", onClick: () => saveRoster(side) }, "\uD83D\uDCBE Save roster"),
                         React.createElement("button", { className: "dg ghost rosterbtn", onClick: () => setTeamPickSide(side), disabled: !rosters.length },
@@ -2545,15 +2653,19 @@ function DugoutScorecard() {
             licensed && phase === "game" && game && (React.createElement(React.Fragment, null,
                 game.over && React.createElement("div", { className: "final-banner" }, "Final"),
                 React.createElement("div", { className: "board" },
-                    React.createElement("div", { className: `team-cell ${battingSide === "away" && !game.over ? "atbat" : ""}` },
-                        React.createElement("div", { className: "tname" }, teams.away.name),
+                    React.createElement("div", { className: `team-cell ${battingSide === "away" && !game.over ? "atbat" : ""}`, style: battingSide === "away" && !game.over ? { borderColor: teamColor("away") } : undefined },
+                        React.createElement("div", { className: "tname", style: { color: teamColor("away") } },
+                            teams.away.logo && React.createElement("img", { src: teams.away.logo, className: "tlogo", alt: "" }),
+                            teams.away.name),
                         React.createElement("div", { className: "tscore" }, totals("away"))),
                     React.createElement("div", { className: "inning-cell" },
                         React.createElement("div", { className: "arrow" }, game.half === "top" ? "▲" : "▽"),
                         React.createElement("div", { className: "num" }, game.inning),
                         React.createElement("div", { className: "lbl" }, game.half === "top" ? "TOP" : "BOT")),
-                    React.createElement("div", { className: `team-cell ${battingSide === "home" && !game.over ? "atbat" : ""}` },
-                        React.createElement("div", { className: "tname" }, teams.home.name),
+                    React.createElement("div", { className: `team-cell ${battingSide === "home" && !game.over ? "atbat" : ""}`, style: battingSide === "home" && !game.over ? { borderColor: teamColor("home") } : undefined },
+                        React.createElement("div", { className: "tname", style: { color: teamColor("home") } },
+                            teams.home.logo && React.createElement("img", { src: teams.home.logo, className: "tlogo", alt: "" }),
+                            teams.home.name),
                         React.createElement("div", { className: "tscore" }, totals("home")))),
                 React.createElement("div", { className: "diamond-card" },
                     React.createElement("div", { className: "diamond-hint" }, "Drag runner \u00B7 home = scores \u00B7 tap = options"),
