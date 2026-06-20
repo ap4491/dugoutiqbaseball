@@ -87,6 +87,17 @@ const persistRosters = (list) => { try {
     localStorage.setItem(ROSTERS_KEY, JSON.stringify(list));
 }
 catch (_a) { } };
+const GAMES_KEY = "dugoutiq-games-v1";
+const loadGames = () => { try {
+    return JSON.parse(localStorage.getItem(GAMES_KEY) || "[]");
+}
+catch (_a) {
+    return [];
+} };
+const persistGames = (list) => { try {
+    localStorage.setItem(GAMES_KEY, JSON.stringify(list));
+}
+catch (_a) { } };
 function DugoutScorecard() {
     const [licensed, setLicensed] = useState(() => !!loadActivation());
     const [licenseKey, setLicenseKey] = useState("");
@@ -264,6 +275,62 @@ function DugoutScorecard() {
     /* --- My Teams: saved roster library --- */
     const [rosters, setRosters] = useState(loadRosters);
     const [teamPickSide, setTeamPickSide] = useState(null); // which side to load into
+    const [confirmRosterDel, setConfirmRosterDel] = useState(null);
+    /* --- Saved Games: finished-game archive --- */
+    const [games, setGames] = useState(loadGames);
+    const [gamesOpen, setGamesOpen] = useState(false);
+    const [confirmGameDel, setConfirmGameDel] = useState(null);
+    const archivedIdRef = useRef(null);
+    const archiveGame = (g) => {
+        if (!g)
+            return;
+        const sumRuns = (side) => g.linescore.reduce((s, r) => s + (r[side] || 0), 0);
+        const record = {
+            id: g.id || Date.now(),
+            savedAt: Date.now(),
+            away: { name: teams.away.name, color: teams.away.color || "", logo: teams.away.logo || "" },
+            home: { name: teams.home.name, color: teams.home.color || "", logo: teams.home.logo || "" },
+            awayRuns: sumRuns("away"),
+            homeRuns: sumRuns("home"),
+            snapshot: { teams: snapshot(teams), game: snapshot(g), pitchLimit },
+        };
+        setGames((list) => {
+            const next = [record, ...list.filter((x) => x.id !== record.id)].slice(0, 100);
+            persistGames(next);
+            return next;
+        });
+    };
+    const reopenGame = (record) => {
+        const snap = record.snapshot || {};
+        if (snap.teams)
+            setTeams(snapshot(snap.teams));
+        if (snap.game)
+            setGame(snapshot(snap.game));
+        if (typeof snap.pitchLimit !== "undefined")
+            setPitchLimit(snap.pitchLimit);
+        archivedIdRef.current = record.id; // already saved — don't re-archive on the over-effect
+        setHistory([]);
+        setPhase("game");
+        setGamesOpen(false);
+    };
+    const deleteGame = (id) => {
+        setGames((list) => {
+            const next = list.filter((x) => x.id !== id);
+            persistGames(next);
+            return next;
+        });
+    };
+    // Auto-save a game to the archive the moment it goes final.
+    useEffect(() => {
+        if (game && game.over && game.id && archivedIdRef.current !== game.id) {
+            archivedIdRef.current = game.id;
+            archiveGame(game);
+        }
+    }, [game]);
+    useEffect(() => { if (!gamesOpen)
+        setConfirmGameDel(null); }, [gamesOpen]);
+    useEffect(() => { if (!teamPickSide)
+        setConfirmRosterDel(null); }, [teamPickSide]);
     const saveRoster = (side) => {
         const name = teams[side].name.trim() || "My Team";
         const entry = { name, lineup: snapshot(teams[side].lineup) };
@@ -385,6 +452,7 @@ function DugoutScorecard() {
     };
     const playBall = () => {
         setGame({
+            id: Date.now(),
             inning: 1,
             half: "top",
             balls: 0,
@@ -1967,7 +2035,7 @@ function DugoutScorecard() {
         const W = 1080, M = 40;
         const navy = "#1D2D5C", amber = "#F5C518", ink = "#1C2438", linec = "#E1E5EE";
         const headerH = 210;
-        const aLU = teams.away.lineup, hLU = teams.home.lineup;
+        const aLU = game.lineup.away, hLU = game.lineup.home;
         const aP = game.pitchers.away, hP = game.pitchers.home;
         const innN = Math.max(game.linescore.length, 1);
         const battH = (n) => 142 + 40 * n;
@@ -2912,6 +2980,10 @@ function DugoutScorecard() {
                             themeLogo ? React.createElement("img", { src: themeLogo, alt: "team logo" }) : "＋ Logo",
                             React.createElement("input", { type: "file", accept: "image/*", onChange: onThemeLogoPick, style: { display: "none" } })),
                         themeLogo && (React.createElement("button", { type: "button", className: "logo-rm", onClick: () => setThemeLogo(""), "aria-label": "Remove logo" }, "\u2715")))),
+                React.createElement("div", { className: "btnrow", style: { marginBottom: 14 } },
+                    React.createElement("button", { className: "dg ghost", onClick: () => setGamesOpen(true) },
+                        "\uD83D\uDCC1 Saved games",
+                        games.length ? ` (${games.length})` : "")),
                 React.createElement("div", { className: "setup-grid" }, ["away", "home"].map((side) => (React.createElement("div", { className: "setup-card", key: side },
                     React.createElement("h2", null, side === "away" ? "Visiting Club" : "Home Club"),
                     React.createElement("input", { className: "dg-in teamname-in", value: teams[side].name, onChange: (e) => setTeamName(side, e.target.value), "aria-label": `${side} team name` }),
@@ -3174,6 +3246,36 @@ function DugoutScorecard() {
                             e.h === "top" ? "T" : "B",
                             e.i),
                         React.createElement("span", { className: "log-txt" }, e.t))))))))),
+            gamesOpen && (React.createElement("div", { className: "modal-back", onClick: () => setGamesOpen(false) },
+                React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
+                    React.createElement("h3", null, "Saved games"),
+                    React.createElement("p", null, "Games are saved here automatically when you tap \u201CCall it final.\u201D Tap one to reopen and re-share its box score."),
+                    React.createElement("div", { className: "plog", style: { textAlign: "left" } },
+                        games.length === 0 && (React.createElement("div", { className: "plog-row", style: { opacity: 0.7, padding: "8px 4px" } }, "No saved games yet.")),
+                        games.map((gm) => {
+                            const dstr = new Date(gm.savedAt).toLocaleDateString(undefined, {
+                                month: "short",
+                                day: "numeric",
+                                year: "numeric",
+                            });
+                            return (React.createElement("div", { className: "plog-row", key: gm.id },
+                                React.createElement("button", { className: "roster-load", onClick: () => reopenGame(gm) },
+                                    gm.away.name,
+                                    " ",
+                                    gm.awayRuns,
+                                    " \u2014 ",
+                                    gm.homeRuns,
+                                    " ",
+                                    gm.home.name,
+                                    React.createElement("span", { className: "roster-n" },
+                                        " \u00B7 ",
+                                        dstr)),
+                                confirmGameDel === gm.id ? (React.createElement("span", { style: { display: "inline-flex", gap: 6, alignItems: "center" } },
+                                    React.createElement("button", { onClick: () => { deleteGame(gm.id); setConfirmGameDel(null); }, style: { background: "#B91C1C", color: "#fff", border: "none", borderRadius: 6, padding: "5px 10px", fontSize: 13, fontWeight: 700, cursor: "pointer" } }, "Delete"),
+                                    React.createElement("button", { onClick: () => setConfirmGameDel(null), style: { background: "transparent", color: "var(--powder)", border: "1px solid var(--line)", borderRadius: 6, padding: "5px 10px", fontSize: 13, cursor: "pointer" } }, "Keep"))) : (React.createElement("button", { className: "rm", onClick: () => setConfirmGameDel(gm.id), "aria-label": "Delete saved game" }, "\u00D7"))));
+                        })),
+                    React.createElement("div", { className: "btnrow" },
+                        React.createElement("button", { className: "dg ghost", onClick: () => setGamesOpen(false) }, "Close"))))),
             teamPickSide && (React.createElement("div", { className: "modal-back", onClick: () => setTeamPickSide(null) },
                 React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
                     React.createElement("h3", null, "My Teams"),
@@ -3188,7 +3290,9 @@ function DugoutScorecard() {
                                 " \u00B7 ",
                                 r.lineup.length,
                                 " batters")),
-                        React.createElement("button", { className: "rm", onClick: () => deleteRoster(i), "aria-label": `Delete saved roster ${r.name}` }, "\u00D7"))))),
+                        confirmRosterDel === i ? (React.createElement("span", { style: { display: "inline-flex", gap: 6, alignItems: "center" } },
+                            React.createElement("button", { onClick: () => { deleteRoster(i); setConfirmRosterDel(null); }, style: { background: "#B91C1C", color: "#fff", border: "none", borderRadius: 6, padding: "5px 10px", fontSize: 13, fontWeight: 700, cursor: "pointer" } }, "Delete"),
+                            React.createElement("button", { onClick: () => setConfirmRosterDel(null), style: { background: "transparent", color: "var(--powder)", border: "1px solid var(--line)", borderRadius: 6, padding: "5px 10px", fontSize: 13, cursor: "pointer" } }, "Keep"))) : (React.createElement("button", { className: "rm", onClick: () => setConfirmRosterDel(i), "aria-label": `Delete saved roster ${r.name}` }, "\u00D7")))))),
                     React.createElement("div", { className: "btnrow" },
                         React.createElement("button", { className: "dg ghost", onClick: () => setTeamPickSide(null) }, "Cancel"))))),
             importOpen && (React.createElement("div", { className: "modal-back", onClick: () => setImportOpen(false) },
