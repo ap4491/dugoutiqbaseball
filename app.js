@@ -10,7 +10,7 @@ const POSITIONS = ["", "P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "DH"]
 const MIN_BATTERS = 9;
 const MAX_BATTERS = 15;
 const freshLineup = (label, n = 12) => Array.from({ length: n }, (_, i) => ({ name: `${label} ${i + 1}`, pos: "" }));
-const freshStats = (n) => Array.from({ length: n }, () => ({ ab: 0, h: 0, r: 0, rbi: 0, bb: 0, k: 0 }));
+const freshStats = (n) => Array.from({ length: n }, () => ({ ab: 0, h: 0, r: 0, rbi: 0, bb: 0, k: 0, x2b: 0, x3b: 0, xhr: 0, hbp: 0, sac: 0 }));
 const emptyBases = () => ({ first: false, second: false, third: false });
 const freshPitcher = (name) => ({
     name,
@@ -22,6 +22,7 @@ const freshPitcher = (name) => ({
     r: 0,
     hr: 0,
     uer: 0, // unearned runs (ER displayed = r - uer)
+    bf: 0, // batters faced
 });
 const ipDisplay = (outs) => `${Math.floor(outs / 3)}.${outs % 3}`;
 const snapshot = (s) => JSON.parse(JSON.stringify(s));
@@ -537,6 +538,9 @@ function DugoutScorecard() {
         g.log[g.openPA].result = result;
         g.openPA = null;
         g.lastPlay = ticker;
+        const p = curP(g, fieldingSide);
+        if (p)
+            p.bf = (p.bf || 0) + 1;
     };
     // '' | 'warn' (within 10 of limit) | 'over' (at/past limit)
     const pitchStatus = (cur) => {
@@ -694,6 +698,7 @@ function DugoutScorecard() {
         const bIdx = g.batter[battingSide];
         const st = g.stats[battingSide][bIdx];
         st.bb += 1; // HBP counted with walks in the BB column
+        st.hbp = (st.hbp || 0) + 1;
         chargeP(g, "bb");
         cardMark(g, bIdx, "HP", 1);
         const runs = forceAdvance(g, bIdx);
@@ -729,6 +734,12 @@ function DugoutScorecard() {
         const name = currentBatterName();
         st.ab += 1;
         st.h += 1;
+        if (basesTaken === 2)
+            st.x2b = (st.x2b || 0) + 1;
+        else if (basesTaken === 3)
+            st.x3b = (st.x3b || 0) + 1;
+        else if (basesTaken >= 4)
+            st.xhr = (st.xhr || 0) + 1;
         g.hits[battingSide] += 1;
         chargeP(g, "h");
         if (basesTaken >= 4)
@@ -872,6 +883,7 @@ function DugoutScorecard() {
             const bIdx = g.batter[battingSide];
             const st = g.stats[battingSide][bIdx];
             const name = currentBatterName();
+            st.sac = (st.sac || 0) + 1;
             chargeP(g, "outs");
             const willPlay = g.outs < 2;
             const flyScores = kind === "fly" && willPlay && g.bases.third;
@@ -1950,6 +1962,241 @@ function DugoutScorecard() {
         img.onerror = () => finish(null);
         img.src = LOGO;
     });
+    // Tall, branded box score — visitor (batting then pitching) then home.
+    const drawBoxScoreCanvas = () => new Promise((resolve) => {
+        const W = 1080, M = 40;
+        const navy = "#1D2D5C", amber = "#F5C518", ink = "#1C2438", linec = "#E1E5EE";
+        const headerH = 210;
+        const aLU = teams.away.lineup, hLU = teams.home.lineup;
+        const aP = game.pitchers.away, hP = game.pitchers.home;
+        const innN = Math.max(game.linescore.length, 1);
+        const battH = (n) => 142 + 40 * n;
+        const lsH = 34 + 2 * 38 + 28;
+        const H = headerH + 36 + lsH +
+            battH(aLU.length) + battH(aP.length) + battH(hLU.length) + battH(hP.length) + 760;
+        const c = document.createElement("canvas");
+        c.width = W;
+        c.height = H;
+        const ctx = c.getContext("2d");
+        const finish = (logoImg) => {
+            ctx.fillStyle = "#FFFFFF";
+            ctx.fillRect(0, 0, W, H);
+            ctx.fillStyle = navy;
+            ctx.fillRect(0, 0, W, headerH);
+            ctx.fillStyle = amber;
+            ctx.fillRect(0, headerH, W, 6);
+            if (logoImg) {
+                const lw = 150, lh = (logoImg.height / logoImg.width) * lw;
+                ctx.drawImage(logoImg, 40, 40, lw, lh);
+            }
+            ctx.textAlign = "left";
+            ctx.fillStyle = amber;
+            ctx.font = "700 30px 'Saira Condensed', sans-serif";
+            ctx.fillText("OFFICIAL BOX SCORE", 210, 72);
+            ctx.fillStyle = "#FFFFFF";
+            ctx.font = "700 42px 'Saira Condensed', sans-serif";
+            ctx.fillText(`${teams.away.name}  ${totals("away")} — ${totals("home")}  ${teams.home.name}`, 210, 118);
+            ctx.fillStyle = "#A9C5E8";
+            ctx.font = "400 24px 'Saira Condensed', sans-serif";
+            const dstr = new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+            ctx.fillText(`${game.over ? "Final" : "Live"}  ·  ${dstr}`, 210, 158);
+            let y = headerH + 36;
+            // linescore
+            const lsNameW = 170;
+            const lsCols = [];
+            for (let i = 1; i <= innN; i++)
+                lsCols.push(String(i));
+            lsCols.push("R", "H", "E");
+            const lsCW = (W - 2 * M - lsNameW) / lsCols.length;
+            ctx.fillStyle = navy;
+            ctx.fillRect(M, y, W - 2 * M, 34);
+            ctx.textAlign = "center";
+            ctx.font = "700 18px 'Saira Condensed', sans-serif";
+            lsCols.forEach((cn, i) => {
+                ctx.fillStyle = (cn === "R" || cn === "H" || cn === "E") ? amber : "#FFFFFF";
+                ctx.fillText(cn, M + lsNameW + lsCW * i + lsCW / 2, y + 22);
+            });
+            y += 34;
+            const lsRow = (nm, side) => {
+                ctx.textAlign = "left";
+                ctx.fillStyle = ink;
+                ctx.font = "700 20px 'Saira Condensed', sans-serif";
+                ctx.fillText(nm.toUpperCase().slice(0, 16), M + 10, y + 25);
+                ctx.textAlign = "center";
+                for (let i = 0; i < innN; i++) {
+                    const v = game.linescore[i] ? game.linescore[i][side] : null;
+                    ctx.font = "400 19px 'IBM Plex Mono', monospace";
+                    ctx.fillStyle = ink;
+                    ctx.fillText(v == null ? "-" : String(v), M + lsNameW + lsCW * i + lsCW / 2, y + 25);
+                }
+                [totals(side), game.hits[side], game.errors[side]].forEach((v, j) => {
+                    ctx.font = "700 20px 'IBM Plex Mono', monospace";
+                    ctx.fillStyle = navy;
+                    ctx.fillText(String(v), M + lsNameW + lsCW * (innN + j) + lsCW / 2, y + 25);
+                });
+                ctx.strokeStyle = linec;
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(M, y + 37);
+                ctx.lineTo(W - M, y + 37);
+                ctx.stroke();
+                y += 38;
+            };
+            lsRow(teams.away.name, "away");
+            lsRow(teams.home.name, "home");
+            y += 28;
+            const nameW = 360;
+            const drawTable = (title, cols, rows, totalsRow) => {
+                ctx.textAlign = "left";
+                ctx.fillStyle = navy;
+                ctx.font = "700 24px 'Saira Condensed', sans-serif";
+                ctx.fillText(title, M, y + 22);
+                y += 34;
+                const cw = (W - 2 * M - nameW) / cols.length;
+                ctx.fillStyle = navy;
+                ctx.fillRect(M, y, W - 2 * M, 36);
+                ctx.textAlign = "center";
+                ctx.font = "700 19px 'Saira Condensed', sans-serif";
+                ctx.fillStyle = "#FFFFFF";
+                cols.forEach((cn, i) => ctx.fillText(cn, M + nameW + cw * i + cw / 2, y + 24));
+                y += 36;
+                rows.forEach((r) => {
+                    ctx.textAlign = "left";
+                    ctx.fillStyle = ink;
+                    ctx.font = "400 23px 'Saira Condensed', sans-serif";
+                    ctx.fillText(String(r.label).slice(0, 26), M + 10, y + 27);
+                    ctx.textAlign = "center";
+                    ctx.font = "400 22px 'IBM Plex Mono', monospace";
+                    r.vals.forEach((v, i) => ctx.fillText(String(v), M + nameW + cw * i + cw / 2, y + 27));
+                    ctx.strokeStyle = linec;
+                    ctx.lineWidth = 1;
+                    ctx.beginPath();
+                    ctx.moveTo(M, y + 40);
+                    ctx.lineTo(W - M, y + 40);
+                    ctx.stroke();
+                    y += 40;
+                });
+                ctx.textAlign = "left";
+                ctx.fillStyle = navy;
+                ctx.font = "700 23px 'Saira Condensed', sans-serif";
+                ctx.fillText("Totals", M + 10, y + 27);
+                ctx.textAlign = "center";
+                ctx.font = "700 22px 'IBM Plex Mono', monospace";
+                totalsRow.forEach((v, i) => ctx.fillText(String(v), M + nameW + cw * i + cw / 2, y + 27));
+                y += 50;
+            };
+            const battingRows = (lineup, side) => lineup.map((p, i) => {
+                const s = game.stats[side][i] || { ab: 0, r: 0, h: 0, rbi: 0, bb: 0, k: 0 };
+                return { label: p.pos ? `${p.name}  ${p.pos}` : p.name, vals: [s.ab, s.r, s.h, s.rbi, s.bb, s.k] };
+            });
+            const battingTot = (side, n) => {
+                const t = [0, 0, 0, 0, 0, 0];
+                for (let i = 0; i < n; i++) {
+                    const s = game.stats[side][i] || {};
+                    t[0] += s.ab || 0;
+                    t[1] += s.r || 0;
+                    t[2] += s.h || 0;
+                    t[3] += s.rbi || 0;
+                    t[4] += s.bb || 0;
+                    t[5] += s.k || 0;
+                }
+                return t;
+            };
+            const pitchingRows = (arr) => arr.map((p) => ({
+                label: p.name, vals: [ipDisplay(p.outs), p.h, p.r, Math.max(0, p.r - (p.uer || 0)), p.bb, p.k, p.hr],
+            }));
+            const pitchingTot = (arr) => {
+                let o = 0, h = 0, r = 0, er = 0, bb = 0, k = 0, hr = 0;
+                arr.forEach((p) => { o += p.outs; h += p.h; r += p.r; er += Math.max(0, p.r - (p.uer || 0)); bb += p.bb; k += p.k; hr += p.hr; });
+                return [ipDisplay(o), h, r, er, bb, k, hr];
+            };
+            const BAT = ["AB", "R", "H", "RBI", "BB", "SO"];
+            const PIT = ["IP", "H", "R", "ER", "BB", "SO", "HR"];
+            const noteCat = (players, label, alwaysCount) => {
+                const parts = players
+                    .filter((p) => p.n > 0)
+                    .map((p) => (p.n > 1 || alwaysCount ? `${p.name} ${p.n}` : p.name));
+                return parts.length ? `${label}: ${parts.join(", ")}` : "";
+            };
+            const battingNotes = (lineup, side) => {
+                const col = (key) => lineup.map((p, i) => ({ name: p.name, n: (game.stats[side][i] || {})[key] || 0 }));
+                const tb = lineup.map((p, i) => {
+                    const s = game.stats[side][i] || {};
+                    return { name: p.name, n: (s.h || 0) + (s.x2b || 0) + 2 * (s.x3b || 0) + 3 * (s.xhr || 0) };
+                });
+                return [
+                    noteCat(col("x2b"), "2B"),
+                    noteCat(col("x3b"), "3B"),
+                    noteCat(col("xhr"), "HR"),
+                    noteCat(tb, "TB", true),
+                    noteCat(col("sac"), "SAC"),
+                    noteCat(col("hbp"), "HBP"),
+                ].filter(Boolean);
+            };
+            const pitchingNotes = (arr) => {
+                const bf = arr.filter((p) => (p.bf || 0) > 0).map((p) => `${p.name} ${p.bf || 0}`);
+                return bf.length ? [`BF: ${bf.join(", ")}`] : [];
+            };
+            const drawNotes = (lines) => {
+                if (!lines.length) {
+                    y += 8;
+                    return;
+                }
+                ctx.textAlign = "left";
+                ctx.font = "400 19px 'Saira Condensed', sans-serif";
+                ctx.fillStyle = "#5A6478";
+                const maxW = W - 2 * M;
+                lines.forEach((line) => {
+                    const words = line.split(" ");
+                    let cur = "";
+                    const flush = () => { ctx.fillText(cur, M, y + 15); y += 24; cur = ""; };
+                    words.forEach((w) => {
+                        const t = cur ? cur + " " + w : w;
+                        if (ctx.measureText(t).width > maxW) {
+                            flush();
+                            cur = w;
+                        }
+                        else
+                            cur = t;
+                    });
+                    if (cur)
+                        flush();
+                });
+                y += 12;
+            };
+            drawTable(`${teams.away.name.toUpperCase()} — BATTING`, BAT, battingRows(aLU, "away"), battingTot("away", aLU.length));
+            drawNotes(battingNotes(aLU, "away"));
+            drawTable(`${teams.away.name.toUpperCase()} — PITCHING`, PIT, pitchingRows(aP), pitchingTot(aP));
+            drawNotes(pitchingNotes(aP));
+            drawTable(`${teams.home.name.toUpperCase()} — BATTING`, BAT, battingRows(hLU, "home"), battingTot("home", hLU.length));
+            drawNotes(battingNotes(hLU, "home"));
+            drawTable(`${teams.home.name.toUpperCase()} — PITCHING`, PIT, pitchingRows(hP), pitchingTot(hP));
+            drawNotes(pitchingNotes(hP));
+            const footerTop = y + 6;
+            ctx.fillStyle = navy;
+            ctx.fillRect(0, footerTop, W, 70);
+            ctx.fillStyle = amber;
+            ctx.fillRect(0, footerTop, W, 4);
+            ctx.textAlign = "left";
+            ctx.fillStyle = "#FFFFFF";
+            ctx.font = "700 22px 'Saira Condensed', sans-serif";
+            ctx.fillText("DugoutIQ — Manage the Game", M, footerTop + 44);
+            ctx.textAlign = "right";
+            ctx.fillStyle = "#A9C5E8";
+            ctx.font = "400 20px 'Saira Condensed', sans-serif";
+            ctx.fillText("dugoutiqbaseball.netlify.app", W - M, footerTop + 44);
+            const finalH = footerTop + 70;
+            const out = document.createElement("canvas");
+            out.width = W;
+            out.height = finalH;
+            out.getContext("2d").drawImage(c, 0, 0);
+            resolve(out);
+        };
+        const img = new Image();
+        img.onload = () => finish(img);
+        img.onerror = () => finish(null);
+        img.src = LOGO;
+    });
     const shareScorebook = async (side) => {
         setBookChoose(false);
         try {
@@ -1981,6 +2228,25 @@ function DugoutScorecard() {
         }
         catch (_a) {
             mutate((g) => (g.lastPlay = "Couldn't create the score graphic on this device"));
+        }
+    };
+    const shareBoxScore = async () => {
+        setShareOpen(false);
+        try {
+            const c = await drawBoxScoreCanvas();
+            const dataUrl = c.toDataURL("image/png");
+            const blob = await new Promise((res) => c.toBlob(res, "image/png"));
+            const file = new File([blob], "dugoutiq-boxscore.png", { type: "image/png" });
+            const canShare = !!(navigator.canShare && navigator.canShare({ files: [file] }));
+            setRecapPreview({
+                dataUrl,
+                canShare,
+                title: `${teams.away.name} ${totals("away")}, ${teams.home.name} ${totals("home")} — box score`,
+                fname: "dugoutiq-boxscore.png",
+            });
+        }
+        catch (_a) {
+            mutate((g) => (g.lastPlay = "Couldn't create the box score on this device"));
         }
     };
     const shareRecapFile = async () => {
@@ -2948,7 +3214,7 @@ function DugoutScorecard() {
                     React.createElement("div", { className: "btnrow" },
                         React.createElement("button", { className: "dg hit", onClick: shareImageRecap }, "\uD83D\uDDBC Score graphic (image)"),
                         React.createElement("button", { className: "dg", onClick: shareGameStory }, "\uD83D\uDCF0 Game story (narrative)"),
-                        React.createElement("button", { className: "dg", onClick: shareRecap }, "\uD83D\uDCC4 Full recap (text)"),
+                        React.createElement("button", { className: "dg", onClick: shareBoxScore }, "\uD83D\uDCCA Box score (image)"),
                         React.createElement("button", { className: "dg", onClick: () => {
                                 setShareOpen(false);
                                 setBookChoose(true);
