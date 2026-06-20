@@ -990,22 +990,63 @@ function DugoutScorecard() {
             g.openK = null;
             g.openHit = null;
             g.openTag = null;
-            g.openTag = null;
             const bIdx = g.batter[battingSide];
             const st = g.stats[battingSide][bIdx];
             const name = currentBatterName();
             st.ab += 1;
             cardMark(g, bIdx, "DP", 0);
-            g.bases[runnerBase] = false; // lead runner doubled off
+            // snapshot the runners before the play resolves
+            const had = {
+                first: g.bases.first,
+                second: g.bases.second,
+                third: g.bases.third,
+            };
+            // two outs on the play: the batter, plus the selected runner
             chargeP(g, "outs"); // batter
             closePA(g, "double play", `${name}: grounds into a double play`);
-            recordOut(g); // batter out (DP is offered only with < 2 outs, so never flips here)
+            recordOut(g); // batter out (DP offered only with < 2 outs)
             chargeP(g, "outs"); // runner
             const flipped = recordOut(g);
-            if (!flipped)
+            if (!flipped) {
+                // Rebuild the bases. The runner who was put out is gone; every OTHER
+                // forced runner still advances one base (a forced runner from third scores).
+                const nb = { first: false, second: false, third: false };
+                let runs = 0;
+                // runner from first is always forced (the batter put the ball in play)
+                if (had.first && runnerBase !== "first") {
+                    cardAdvance(g, had.first, 2);
+                    nb.second = had.first;
+                }
+                // runner from second is forced only if first was occupied
+                if (had.second && runnerBase !== "second") {
+                    if (had.first) {
+                        cardAdvance(g, had.second, 3);
+                        nb.third = had.second;
+                    }
+                    else {
+                        nb.second = had.second; // not forced — holds at second
+                    }
+                }
+                // runner from third is forced home only if first AND second were occupied
+                if (had.third && runnerBase !== "third") {
+                    if (had.first && had.second) {
+                        runs += 1;
+                        creditRun(g, had.third); // forced in
+                    }
+                    else {
+                        nb.third = had.third; // not forced — holds at third
+                    }
+                }
+                g.bases = nb;
+                if (runs) {
+                    addRuns(g, runs);
+                    chargeP(g, "r", runs);
+                }
                 nextBatter(g);
-            else
+            }
+            else {
                 advanceOrder(g);
+            }
         });
         setDpMenu(false);
     };
