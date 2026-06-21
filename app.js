@@ -9,12 +9,13 @@ const LOGO = "logo.png";
 const POSITIONS = ["", "P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "DH"];
 const MIN_BATTERS = 9;
 const MAX_BATTERS = 15;
-const freshLineup = (label, n = 12) => Array.from({ length: n }, (_, i) => ({ name: `${label} ${i + 1}`, pos: "" }));
+const freshLineup = (label, n = 12) => Array.from({ length: n }, (_, i) => ({ name: `${label} ${i + 1}`, pos: "", num: "" }));
 const freshStats = (n) => Array.from({ length: n }, () => ({ ab: 0, h: 0, r: 0, rbi: 0, bb: 0, k: 0, x2b: 0, x3b: 0, xhr: 0, hbp: 0, sac: 0 }));
 const emptyBases = () => ({ first: false, second: false, third: false });
 const freshPitcher = (name) => ({
     name,
     pitches: 0,
+    strikes: 0,
     outs: 0, // outs recorded -> IP
     k: 0,
     bb: 0,
@@ -38,7 +39,7 @@ if (saved0 && saved0.game) {
     const g = saved0.game;
     if (!g.lineup && saved0.teams) {
         try {
-            g.lineup = { away: saved0.teams.away.lineup.map((p) => ({ name: p.name, pos: p.pos || "" })), home: saved0.teams.home.lineup.map((p) => ({ name: p.name, pos: p.pos || "" })) };
+            g.lineup = { away: saved0.teams.away.lineup.map((p) => ({ name: p.name, pos: p.pos || "", num: p.num || "" })), home: saved0.teams.home.lineup.map((p) => ({ name: p.name, pos: p.pos || "", num: p.num || "" })) };
         }
         catch (_a) { }
     }
@@ -262,7 +263,7 @@ function DugoutScorecard() {
             return t;
         const lineup = [
             ...t[side].lineup,
-            { name: `Batter ${t[side].lineup.length + 1}`, pos: "" },
+            { name: `Batter ${t[side].lineup.length + 1}`, pos: "", num: "" },
         ];
         return Object.assign(Object.assign({}, t), { [side]: Object.assign(Object.assign({}, t[side]), { lineup }) });
     });
@@ -280,6 +281,10 @@ function DugoutScorecard() {
     const [games, setGames] = useState(loadGames);
     const [gamesOpen, setGamesOpen] = useState(false);
     const [confirmGameDel, setConfirmGameDel] = useState(null);
+    const [gameDate, setGameDate] = useState(() => new Date().toISOString().slice(0, 10));
+    const [pbpOpen, setPbpOpen] = useState(false);
+    const [pbpEdit, setPbpEdit] = useState(null);
+    const [pbpText, setPbpText] = useState("");
     const archivedIdRef = useRef(null);
     const archiveGame = (g) => {
         if (!g)
@@ -429,11 +434,11 @@ function DugoutScorecard() {
             setTeams({
                 away: {
                     name: data.away.name,
-                    lineup: data.away.lineup.map((p) => ({ name: p.name, pos: p.pos || "" })),
+                    lineup: data.away.lineup.map((p) => ({ name: p.name, pos: p.pos || "", num: p.num || "" })),
                 },
                 home: {
                     name: data.home.name,
-                    lineup: data.home.lineup.map((p) => ({ name: p.name, pos: p.pos || "" })),
+                    lineup: data.home.lineup.map((p) => ({ name: p.name, pos: p.pos || "", num: p.num || "" })),
                 },
             });
             setImportOpen(false);
@@ -453,6 +458,7 @@ function DugoutScorecard() {
     const playBall = () => {
         setGame({
             id: Date.now(),
+            date: gameDate,
             inning: 1,
             half: "top",
             balls: 0,
@@ -470,8 +476,8 @@ function DugoutScorecard() {
             },
             // active in-game lineup (sub-aware) + retired stat lines for the box score
             lineup: {
-                away: teams.away.lineup.map((p) => ({ name: p.name, pos: p.pos || "" })),
-                home: teams.home.lineup.map((p) => ({ name: p.name, pos: p.pos || "" })),
+                away: teams.away.lineup.map((p) => ({ name: p.name, pos: p.pos || "", num: p.num || "" })),
+                home: teams.home.lineup.map((p) => ({ name: p.name, pos: p.pos || "", num: p.num || "" })),
             },
             subs: { away: [], home: [] },
             orderLocked: { away: false, home: false }, // locks once the order turns over once
@@ -559,8 +565,11 @@ function DugoutScorecard() {
     const curP = (g, side) => g.pitchers[side][g.pitchers[side].length - 1];
     const staffTotal = (g, side) => g.pitchers[side].reduce((s, p) => s + p.pitches, 0);
     // every pitch is charged to the fielding team's current pitcher
-    const addPitch = (g) => {
-        curP(g, fieldingSide).pitches += 1;
+    const addPitch = (g, isStrike = true) => {
+        const p = curP(g, fieldingSide);
+        p.pitches += 1;
+        if (isStrike)
+            p.strikes = (p.strikes || 0) + 1;
     };
     // charge a stat to the current pitcher of the fielding team
     const chargeP = (g, field, n = 1) => {
@@ -709,7 +718,7 @@ function DugoutScorecard() {
     };
     /* --- count buttons --- */
     const tapBall = () => mutate((g) => {
-        addPitch(g);
+        addPitch(g, false);
         g.openK = null;
         g.openHit = null;
         g.openTag = null;
@@ -759,7 +768,7 @@ function DugoutScorecard() {
         }
     });
     const tapHBP = () => mutate((g) => {
-        addPitch(g);
+        addPitch(g, false);
         g.openK = null;
         g.openHit = null;
         g.openTag = null;
@@ -1607,6 +1616,31 @@ function DugoutScorecard() {
         g.decisions = suggestDecisions(g);
         logPlay(g, "Final", "info");
     });
+    const startLogEdit = (idx) => {
+        const e = game.log[idx];
+        if (!e)
+            return;
+        setPbpText(e.type === "pa" ? (e.result || "") : (e.t || ""));
+        setPbpEdit(idx);
+    };
+    const saveLogEdit = () => {
+        const idx = pbpEdit;
+        if (idx == null)
+            return;
+        mutate((g) => {
+            const e = g.log[idx];
+            if (!e)
+                return;
+            if (e.type === "pa")
+                e.result = pbpText;
+            else
+                e.t = pbpText;
+            if (idx === g.log.length - 1 && pbpText)
+                g.lastPlay = pbpText;
+        });
+        setPbpEdit(null);
+        setPbpText("");
+    };
     const totals = (side) => game.linescore.reduce((sum, r) => sum + (r[side] || 0), 0);
     /* ---------------- live spectator (view-only) ---------------- */
     const LIVE_ENDPOINT = "/.netlify/functions/game";
@@ -2066,7 +2100,7 @@ function DugoutScorecard() {
             ctx.fillText(`${teams.away.name}  ${totals("away")} — ${totals("home")}  ${teams.home.name}`, 210, 118);
             ctx.fillStyle = "#A9C5E8";
             ctx.font = "400 24px 'Saira Condensed', sans-serif";
-            const dstr = new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+            const dstr = (game.date ? new Date(game.date + "T00:00:00") : new Date()).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" });
             ctx.fillText(`${game.over ? "Final" : "Live"}  ·  ${dstr}`, 210, 158);
             let y = headerH + 36;
             // linescore
@@ -2155,7 +2189,9 @@ function DugoutScorecard() {
             };
             const battingRows = (lineup, side) => lineup.map((p, i) => {
                 const s = game.stats[side][i] || { ab: 0, r: 0, h: 0, rbi: 0, bb: 0, k: 0 };
-                return { label: p.pos ? `${p.name}  ${p.pos}` : p.name, vals: [s.ab, s.r, s.h, s.rbi, s.bb, s.k] };
+                const num = p.num ? ` #${p.num}` : "";
+                const label = `${p.name}${num}${p.pos ? `  ${p.pos}` : ""}`;
+                return { label, vals: [s.ab, s.r, s.h, s.rbi, s.bb, s.k] };
             });
             const battingTot = (side, n) => {
                 const t = [0, 0, 0, 0, 0, 0];
@@ -2202,8 +2238,14 @@ function DugoutScorecard() {
                 ].filter(Boolean);
             };
             const pitchingNotes = (arr) => {
+                const ps = arr.filter((p) => (p.pitches || 0) > 0).map((p) => `${p.name} ${p.pitches || 0}-${p.strikes || 0}`);
                 const bf = arr.filter((p) => (p.bf || 0) > 0).map((p) => `${p.name} ${p.bf || 0}`);
-                return bf.length ? [`BF: ${bf.join(", ")}`] : [];
+                const lines = [];
+                if (ps.length)
+                    lines.push(`P-S: ${ps.join(", ")}`);
+                if (bf.length)
+                    lines.push(`BF: ${bf.join(", ")}`);
+                return lines;
             };
             const drawNotes = (lines) => {
                 if (!lines.length) {
@@ -2724,6 +2766,17 @@ function DugoutScorecard() {
           text-align: center; font-size: 15px; letter-spacing: .06em;
           color: var(--powder); min-height: 22px; margin-bottom: 12px;
         }
+        .ticker-btn { width: 100%; background: none; border: none; cursor: pointer; }
+        .ticker-hint { color: var(--line); font-size: 12px; letter-spacing: .04em; }
+        .pbp-list { max-height: 60vh; overflow-y: auto; text-align: left; margin: 6px 0 12px; }
+        .pbp-inn { font-weight: 700; color: var(--amberw); font-size: 13px; letter-spacing: .08em; margin: 10px 0 4px; }
+        .pbp-row { margin-bottom: 4px; }
+        .pbp-tap { display: block; width: 100%; text-align: left; background: rgba(255,255,255,.04); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; cursor: pointer; color: var(--white); }
+        .pbp-bat { font-weight: 700; margin-right: 8px; }
+        .pbp-text { color: var(--powder); }
+        .pbp-seq { display: block; font-size: 11px; color: var(--line); margin-top: 3px; letter-spacing: .04em; }
+        .pbp-edit { display: flex; gap: 6px; align-items: center; }
+        .pbp-edit .dg-in { flex: 1; }
 
         .atbat-card {
           background: var(--navy-deep); border: 1px solid var(--line);
@@ -2897,9 +2950,10 @@ function DugoutScorecard() {
         }
         input.dg-in:focus, select.dg-sel:focus { outline: 2px solid var(--white); outline-offset: 1px; }
         .prow {
-          display: grid; grid-template-columns: 30px 1fr 64px 24px; gap: 6px;
+          display: grid; grid-template-columns: 30px 46px 1fr 64px 24px; gap: 6px;
           align-items: center; margin-bottom: 6px; transition: transform .12s ease;
         }
+        .jersey-in { text-align: center; padding: 0 4px; }
         .prow.dragging .dg-in, .prow.dragging .dg-sel { border-color: var(--amberw); }
         button.drag-handle {
           display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -2980,10 +3034,13 @@ function DugoutScorecard() {
                             themeLogo ? React.createElement("img", { src: themeLogo, alt: "team logo" }) : "＋ Logo",
                             React.createElement("input", { type: "file", accept: "image/*", onChange: onThemeLogoPick, style: { display: "none" } })),
                         themeLogo && (React.createElement("button", { type: "button", className: "logo-rm", onClick: () => setThemeLogo(""), "aria-label": "Remove logo" }, "\u2715")))),
-                React.createElement("div", { className: "btnrow", style: { marginBottom: 14 } },
+                React.createElement("div", { className: "btnrow", style: { marginBottom: 14, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" } },
                     React.createElement("button", { className: "dg ghost", onClick: () => setGamesOpen(true) },
                         "\uD83D\uDCC1 Saved games",
-                        games.length ? ` (${games.length})` : "")),
+                        games.length ? ` (${games.length})` : ""),
+                    React.createElement("label", { style: { display: "inline-flex", alignItems: "center", gap: 8, color: "var(--powder)", fontSize: 14 } },
+                        "Game date",
+                        React.createElement("input", { type: "date", className: "dg-in", style: { width: "auto" }, value: gameDate, onChange: (e) => setGameDate(e.target.value), "aria-label": "Game date" }))),
                 React.createElement("div", { className: "setup-grid" }, ["away", "home"].map((side) => (React.createElement("div", { className: "setup-card", key: side },
                     React.createElement("h2", null, side === "away" ? "Visiting Club" : "Home Club"),
                     React.createElement("input", { className: "dg-in teamname-in", value: teams[side].name, onChange: (e) => setTeamName(side, e.target.value), "aria-label": `${side} team name` }),
@@ -3004,6 +3061,7 @@ function DugoutScorecard() {
                         React.createElement("button", { className: "drag-handle", onPointerDown: rowHandleDown(side, i), onPointerMove: rowHandleMove, onPointerUp: rowHandleUp, "aria-label": `Batter ${i + 1} — drag to reorder` },
                             i + 1,
                             React.createElement("span", { className: "grip" }, "\u2261")),
+                        React.createElement("input", { className: "dg-in jersey-in", value: p.num || "", onChange: (e) => setPlayer(side, i, "num", e.target.value.replace(/[^0-9]/g, "").slice(0, 2)), inputMode: "numeric", placeholder: "#", "aria-label": `${side} batter ${i + 1} number` }),
                         React.createElement("input", { className: "dg-in", value: p.name, onChange: (e) => setPlayer(side, i, "name", e.target.value), "aria-label": `${side} batter ${i + 1} name` }),
                         React.createElement("select", { className: "dg-sel", value: p.pos, onChange: (e) => setPlayer(side, i, "pos", e.target.value), "aria-label": `${side} batter ${i + 1} position` }, POSITIONS.map((pos) => (React.createElement("option", { key: pos, value: pos }, pos || "POS")))),
                         teams[side].lineup.length > MIN_BATTERS ? (React.createElement("button", { className: "rm", onClick: () => removePlayer(side, i), "aria-label": `Remove ${side} batter ${i + 1}` }, "\u00D7")) : (React.createElement("span", null))))),
@@ -3083,7 +3141,9 @@ function DugoutScorecard() {
                             React.createElement("td", { className: "rhe" }, totals(side)),
                             React.createElement("td", { className: "rhe" }, game.hits[side]),
                             React.createElement("td", { className: "rhe" }, game.errors[side]))))))),
-                React.createElement("div", { className: "ticker" }, game.lastPlay),
+                React.createElement("div", { className: "ticker ticker-btn", onClick: () => setPbpOpen(true), role: "button", tabIndex: 0 },
+                    game.lastPlay,
+                    React.createElement("span", { className: "ticker-hint" }, " \u00B7 tap for play-by-play")),
                 !game.over && (React.createElement(React.Fragment, null,
                     React.createElement("button", { className: "atbat-card", onClick: openBatterMenu },
                         React.createElement("div", { className: "who" },
@@ -3246,6 +3306,37 @@ function DugoutScorecard() {
                             e.h === "top" ? "T" : "B",
                             e.i),
                         React.createElement("span", { className: "log-txt" }, e.t))))))))),
+            pbpOpen && game && (React.createElement("div", { className: "modal-back", onClick: () => { setPbpOpen(false); setPbpEdit(null); } },
+                React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
+                    React.createElement("h3", null, "Play-by-play"),
+                    React.createElement("p", null, "Tap a play to fix its wording. This edits the description only \u2014 it won\u2019t change stats or the score (use Undo for that)."),
+                    React.createElement("div", { className: "pbp-list" }, (() => {
+                        const rows = [];
+                        let lastKey = "";
+                        game.log.forEach((e, idx) => {
+                            const key = `${e.h}-${e.i}`;
+                            if (key !== lastKey) {
+                                lastKey = key;
+                                rows.push(React.createElement("div", { className: "pbp-inn", key: `h${idx}` },
+                                    e.h === "top" ? "▲ Top" : "▼ Bot",
+                                    " ",
+                                    e.i));
+                            }
+                            const text = e.type === "pa"
+                                ? (e.result || (e.seq && e.seq.length ? "(at bat…)" : ""))
+                                : e.t;
+                            rows.push(React.createElement("div", { className: "pbp-row", key: idx }, pbpEdit === idx ? (React.createElement("div", { className: "pbp-edit" },
+                                React.createElement("input", { className: "dg-in", value: pbpText, onChange: (ev) => setPbpText(ev.target.value), "aria-label": "Edit play description" }),
+                                React.createElement("button", { className: "dg hit", onClick: saveLogEdit }, "Save"),
+                                React.createElement("button", { className: "dg ghost", onClick: () => { setPbpEdit(null); setPbpText(""); } }, "Cancel"))) : (React.createElement("button", { className: "pbp-tap", onClick: () => startLogEdit(idx) },
+                                e.type === "pa" && React.createElement("span", { className: "pbp-bat" }, e.batter),
+                                React.createElement("span", { className: "pbp-text" }, text),
+                                e.type === "pa" && e.seq && e.seq.length > 0 && (React.createElement("span", { className: "pbp-seq" }, e.seq.join(" · ")))))));
+                        });
+                        return rows;
+                    })()),
+                    React.createElement("div", { className: "btnrow" },
+                        React.createElement("button", { className: "dg ghost", onClick: () => { setPbpOpen(false); setPbpEdit(null); } }, "Close"))))),
             gamesOpen && (React.createElement("div", { className: "modal-back", onClick: () => setGamesOpen(false) },
                 React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
                     React.createElement("h3", null, "Saved games"),
