@@ -464,6 +464,7 @@ function DugoutScorecard() {
             balls: 0,
             strikes: 0,
             outs: 0,
+            halfPA: 0, // plate appearances in the current half (to detect a home no-bat)
             bases: emptyBases(),
             card: { away: [], home: [] }, // scorebook cells: {b, inning, res, base 0-4}
             openHit: null,
@@ -551,6 +552,7 @@ function DugoutScorecard() {
             if (!g.linescore[g.inning - 1])
                 g.linescore.push({ away: 0, home: null });
         }
+        g.halfPA = 0;
     };
     const recordOut = (g) => {
         g.outs += 1;
@@ -618,6 +620,7 @@ function DugoutScorecard() {
         const p = curP(g, fieldingSide);
         if (p)
             p.bf = (p.bf || 0) + 1;
+        g.halfPA = (g.halfPA || 0) + 1;
     };
     // '' | 'warn' (within 10 of limit) | 'over' (at/past limit)
     const pitchStatus = (cur) => {
@@ -1614,6 +1617,14 @@ function DugoutScorecard() {
         if (!g.decisions)
             g.decisions = { w: null, l: null, s: null };
         g.decisions = suggestDecisions(g);
+        // If the home team never batted in the final inning, mark that cell 'X'.
+        const ci = g.inning - 1;
+        const row = g.linescore[ci];
+        if (row && row.away != null) {
+            const homeDidNotBat = g.half === "top" ? true : (g.halfPA || 0) === 0;
+            if (homeDidNotBat)
+                row.homeX = true;
+        }
         logPlay(g, "Final", "info");
     });
     const startLogEdit = (idx) => {
@@ -1723,7 +1734,7 @@ function DugoutScorecard() {
         g.balls = 0;
         g.strikes = 0;
         g.openPA = null;
-        logPlay(g, `Now batting: ${g.lineup[battingSide][idx].name}`, "info");
+        g.lastPlay = `Now batting: ${g.lineup[battingSide][idx].name}`;
     });
     const buildRecap = () => {
         const line = (side) => `${teams[side].name.padEnd(14)} ${game.linescore
@@ -1849,7 +1860,7 @@ function DugoutScorecard() {
                 ctx.font = "700 32px 'IBM Plex Mono', monospace";
                 ctx.fillStyle = "#FFFFFF";
                 innings.forEach((r, i) => {
-                    ctx.fillText(r[side] === null ? "-" : String(r[side]), startX + colW * i + colW / 2, ry);
+                    ctx.fillText(side === "home" && r.homeX ? "X" : r[side] == null ? "-" : String(r[side]), startX + colW * i + colW / 2, ry);
                 });
                 ctx.fillStyle = "#F5C518";
                 [totals(side), game.hits[side], game.errors[side]].forEach((v, i) => {
@@ -2126,10 +2137,12 @@ function DugoutScorecard() {
                 ctx.fillText(nm.toUpperCase().slice(0, 16), M + 10, y + 25);
                 ctx.textAlign = "center";
                 for (let i = 0; i < innN; i++) {
-                    const v = game.linescore[i] ? game.linescore[i][side] : null;
+                    const cell = game.linescore[i] || {};
+                    const v = cell[side];
+                    const disp = side === "home" && cell.homeX ? "X" : v == null ? "-" : String(v);
                     ctx.font = "400 19px 'IBM Plex Mono', monospace";
                     ctx.fillStyle = ink;
-                    ctx.fillText(v == null ? "-" : String(v), M + lsNameW + lsCW * i + lsCW / 2, y + 25);
+                    ctx.fillText(disp, M + lsNameW + lsCW * i + lsCW / 2, y + 25);
                 }
                 [totals(side), game.hits[side], game.errors[side]].forEach((v, j) => {
                     ctx.font = "700 20px 'IBM Plex Mono', monospace";
@@ -3090,7 +3103,7 @@ function DugoutScorecard() {
             licensed && phase === "game" && game && (React.createElement(React.Fragment, null,
                 game.over && React.createElement("div", { className: "final-banner" }, "Final"),
                 React.createElement("div", { className: "board" },
-                    React.createElement("div", { className: `team-cell ${battingSide === "away" && !game.over ? "atbat" : ""}`, style: battingSide === "away" && !game.over ? { borderColor: teamColor("away") } : undefined },
+                    React.createElement("div", { className: `team-cell ${battingSide === "away" && !game.over ? "atbat" : ""}`, style: Object.assign({ cursor: "pointer" }, (battingSide === "away" && !game.over ? { borderColor: teamColor("away") } : {})), onClick: () => { setSubSide("away"); setSubSlot(null); setSubMenu(true); }, title: "Edit lineup" },
                         React.createElement("div", { className: "tname", style: { color: teamColor("away") } },
                             teams.away.logo && React.createElement("img", { src: teams.away.logo, className: "tlogo", alt: "" }),
                             teams.away.name),
@@ -3099,7 +3112,7 @@ function DugoutScorecard() {
                         React.createElement("div", { className: "arrow" }, game.half === "top" ? "▲" : "▽"),
                         React.createElement("div", { className: "num" }, game.inning),
                         React.createElement("div", { className: "lbl" }, game.half === "top" ? "TOP" : "BOT")),
-                    React.createElement("div", { className: `team-cell ${battingSide === "home" && !game.over ? "atbat" : ""}`, style: battingSide === "home" && !game.over ? { borderColor: teamColor("home") } : undefined },
+                    React.createElement("div", { className: `team-cell ${battingSide === "home" && !game.over ? "atbat" : ""}`, style: Object.assign({ cursor: "pointer" }, (battingSide === "home" && !game.over ? { borderColor: teamColor("home") } : {})), onClick: () => { setSubSide("home"); setSubSlot(null); setSubMenu(true); }, title: "Edit lineup" },
                         React.createElement("div", { className: "tname", style: { color: teamColor("home") } },
                             teams.home.logo && React.createElement("img", { src: teams.home.logo, className: "tlogo", alt: "" }),
                             teams.home.name),
@@ -3137,7 +3150,7 @@ function DugoutScorecard() {
                             React.createElement("td", { className: "tm" }, teams[side].name.slice(0, 12)),
                             game.linescore.map((r, i) => (React.createElement("td", { key: i, className: i === game.inning - 1 && side === battingSide && !game.over
                                     ? "cur"
-                                    : "" }, r[side] === null ? "" : r[side]))),
+                                    : "" }, side === "home" && r.homeX ? "X" : r[side] === null ? "" : r[side]))),
                             React.createElement("td", { className: "rhe" }, totals(side)),
                             React.createElement("td", { className: "rhe" }, game.hits[side]),
                             React.createElement("td", { className: "rhe" }, game.errors[side]))))))),

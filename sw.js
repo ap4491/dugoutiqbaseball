@@ -1,5 +1,5 @@
 /* DugoutIQ service worker — app shell cache for offline scorekeeping */
-const CACHE = "dugoutiq-v47";
+const CACHE = "dugoutiq-v48";
 const ASSETS = [
   "./",
   "./index.html",
