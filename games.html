@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#14204A" />
+<title>DugoutIQ — Live Games</title>
+<style>
+  :root{ --navy:#14204A; --navy2:#1D2D5C; --royal:#134A8E; --line:#2B5AA0;
+         --powder:#A9C5E8; --red:#E8291C; --amber:#F5C518; --white:#F5F7FA; }
+  *{ box-sizing:border-box; }
+  body{ margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+        background:linear-gradient(180deg,var(--navy) 0%, var(--navy2) 100%); color:var(--white);
+        min-height:100vh; padding:18px 14px 60px; }
+  .wrap{ max-width:760px; margin:0 auto; }
+  header{ display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; }
+  .brand{ display:flex; align-items:center; gap:10px; font-weight:800; letter-spacing:.5px; font-size:18px; }
+  .brand img{ height:30px; width:auto; }
+  .sub{ color:var(--powder); font-size:13px; margin:2px 0 18px; }
+  .count{ color:var(--powder); font-size:12px; }
+  .grid{ display:grid; grid-template-columns:1fr; gap:14px; }
+  @media(min-width:620px){ .grid{ grid-template-columns:1fr 1fr; } }
+  .card{ background:rgba(255,255,255,.05); border:1px solid var(--line); border-radius:16px; padding:14px 16px; }
+  .crow{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:5px 0; }
+  .team{ font-size:20px; font-weight:700; line-height:1.15; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .runs{ font-size:30px; font-weight:800; min-width:42px; text-align:right; }
+  .status{ display:flex; align-items:center; gap:7px; margin-top:8px; color:var(--powder); font-size:13px; font-weight:600; }
+  .dot{ width:9px; height:9px; border-radius:50%; background:#3ad07a; box-shadow:0 0 0 0 rgba(58,208,122,.6); animation:p 1.6s infinite; }
+  .dot.stale{ background:#888; animation:none; box-shadow:none; }
+  .final{ color:var(--amber); font-weight:800; letter-spacing:.5px; }
+  @keyframes p{ 0%{box-shadow:0 0 0 0 rgba(58,208,122,.6);} 70%{box-shadow:0 0 0 7px rgba(58,208,122,0);} 100%{box-shadow:0 0 0 0 rgba(58,208,122,0);} }
+  .ls{ margin-top:10px; overflow-x:auto; }
+  table{ border-collapse:collapse; font-variant-numeric:tabular-nums; font-size:12px; width:100%; }
+  th,td{ padding:2px 6px; text-align:center; color:var(--powder); }
+  td.tm{ text-align:left; color:var(--white); font-weight:700; max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  td.rr{ color:var(--white); font-weight:800; border-left:1px solid var(--line); }
+  .empty{ text-align:center; color:var(--powder); padding:50px 10px; }
+  .empty h2{ color:var(--white); font-weight:800; margin:0 0 8px; }
+  footer{ text-align:center; color:var(--powder); font-size:11px; margin-top:26px; opacity:.8; line-height:1.5; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="brand"><img src="logo.png" alt="DugoutIQ" onerror="this.style.display='none'"/>Live Games</div>
+      <div class="count" id="count"></div>
+    </header>
+    <div class="sub">Games shared publicly right now. Scores update automatically.</div>
+    <div class="grid" id="grid"></div>
+    <div class="empty" id="empty" style="display:none">
+      <h2>No public games right now</h2>
+      <div>When someone shares a game to the public list, it’ll show up here live.</div>
+    </div>
+    <footer>
+      DugoutIQ — Manage the Game · Scores only, no player info.<br/>
+      Games appear here only when the scorer chooses to list them publicly.
+    </footer>
+  </div>
+
+<script>
+  var ENDPOINT = "/.netlify/functions/game?list=1";
+  var ord = function(n){ var s=["th","st","nd","rd"], v=n%100; return n+(s[(v-20)%10]||s[v]||s[0]); };
+  var esc = function(t){ var d=document.createElement("div"); d.textContent=t==null?"":String(t); return d.innerHTML; };
+
+  function linescore(g){
+    var ls = g.linescore || [];
+    if(!ls.length) return "";
+    var head = "<tr><th></th>";
+    for(var i=0;i<ls.length;i++) head += "<th>"+(i+1)+"</th>";
+    head += "<th class='rr'>R</th></tr>";
+    function row(side, name, total){
+      var r = "<tr><td class='tm'>"+esc(name)+"</td>";
+      for(var i=0;i<ls.length;i++){
+        var v = ls[i][side];
+        r += "<td>"+(v==null?"":v)+"</td>";
+      }
+      r += "<td class='rr'>"+total+"</td></tr>";
+      return r;
+    }
+    return "<div class='ls'><table>"+head+row("away",g.away,g.sA)+row("home",g.home,g.sH)+"</table></div>";
+  }
+
+  function card(g){
+    var ac = g.ac || "#A9C5E8", hc = g.hc || "#A9C5E8";
+    var fresh = (Date.now() - (g.updated || 0)) < 60000;
+    var status = g.over
+      ? "<span class='final'>FINAL</span>"
+      : (fresh
+          ? "<span class='dot'></span><span>"+(g.half==="bottom"?"Bot ":"Top ")+ord(g.inning)+"</span>"
+          : "<span class='dot stale'></span><span>Paused</span>");
+    return "<div class='card'>"
+      + "<div class='crow'><div class='team' style='color:"+esc(ac)+"'>"+esc(g.away)+"</div><div class='runs'>"+g.sA+"</div></div>"
+      + "<div class='crow'><div class='team' style='color:"+esc(hc)+"'>"+esc(g.home)+"</div><div class='runs'>"+g.sH+"</div></div>"
+      + "<div class='status'>"+status+"</div>"
+      + linescore(g)
+      + "</div>";
+  }
+
+  function render(games){
+    var grid = document.getElementById("grid");
+    var empty = document.getElementById("empty");
+    var count = document.getElementById("count");
+    if(!games || !games.length){
+      grid.innerHTML=""; empty.style.display="block"; count.textContent=""; return;
+    }
+    empty.style.display="none";
+    var live = games.filter(function(g){return !g.over;}).length;
+    count.textContent = games.length + " game" + (games.length>1?"s":"") + (live?" · "+live+" live":"");
+    grid.innerHTML = games.map(card).join("");
+  }
+
+  function load(){
+    fetch(ENDPOINT, { cache:"no-store" })
+      .then(function(r){ return r.json(); })
+      .then(function(d){ render(d && d.games ? d.games : []); })
+      .catch(function(){ /* keep last view on a blip */ });
+  }
+  load();
+  setInterval(load, 15000);
+</script>
+</body>
+</html>

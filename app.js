@@ -169,7 +169,9 @@ function DugoutScorecard() {
     };
     const [liveCode, setLiveCode] = useState(() => loadLive().code || null); // spectator share code
     const [liveOn, setLiveOn] = useState(() => !!loadLive().on); // broadcasting?
+    const [liveList, setLiveList] = useState(() => !!loadLive().list); // listed on public hub?
     const [liveOpen, setLiveOpen] = useState(false);
+    const [settingsOpen, setSettingsOpen] = useState(false);
     const [liveCopied, setLiveCopied] = useState(false);
     const [themeColor, setThemeColor] = useState(() => { try {
         return localStorage.getItem("dugoutiq-theme-color") || "#1B57A0";
@@ -197,6 +199,50 @@ function DugoutScorecard() {
     const teamColor = (side) => (teams[side] && teams[side].color) || (side === "away" ? "#134A8E" : "#B91C1C");
     const setTeamColor = (side, color) => setTeams((t) => (Object.assign(Object.assign({}, t), { [side]: Object.assign(Object.assign({}, t[side]), { color }) })));
     const setTeamLogo = (side, logo) => setTeams((t) => (Object.assign(Object.assign({}, t), { [side]: Object.assign(Object.assign({}, t[side]), { logo: logo || "" }) })));
+    // Pull the dominant vivid color out of a logo (skips white/black/grey + transparent).
+    const dominantColor = (ctx, w, h) => {
+        try {
+            const data = ctx.getImageData(0, 0, w, h).data;
+            const buckets = {};
+            let best = null, bestN = 0;
+            for (let i = 0; i < data.length; i += 4) {
+                const r = data[i], g = data[i + 1], b = data[i + 2], a = data[i + 3];
+                if (a < 128)
+                    continue;
+                const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+                if (mx > 235 && mn > 235)
+                    continue; // near-white
+                if (mx < 35)
+                    continue; // near-black
+                if (mx - mn < 28 && mx < 200)
+                    continue; // dull grey
+                const key = ((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4);
+                const c = buckets[key] || (buckets[key] = { r: 0, g: 0, b: 0, n: 0 });
+                c.r += r;
+                c.g += g;
+                c.b += b;
+                c.n++;
+                if (c.n > bestN) {
+                    bestN = c.n;
+                    best = c;
+                }
+            }
+            if (!best || !bestN)
+                return null;
+            let r = Math.round(best.r / best.n), g = Math.round(best.g / best.n), b = Math.round(best.b / best.n);
+            const mx = Math.max(r, g, b); // lift very dark colors so the name stays readable on navy
+            if (mx > 0 && mx < 110) {
+                const f = 150 / mx;
+                r = Math.min(255, Math.round(r * f));
+                g = Math.min(255, Math.round(g * f));
+                b = Math.min(255, Math.round(b * f));
+            }
+            return "#" + [r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("");
+        }
+        catch (_a) {
+            return null;
+        }
+    };
     const onLogoPick = (side, e) => {
         const file = e.target.files && e.target.files[0];
         e.target.value = "";
@@ -213,11 +259,15 @@ function DugoutScorecard() {
                 const cv = document.createElement("canvas");
                 cv.width = w;
                 cv.height = h;
-                cv.getContext("2d").drawImage(img, 0, 0, w, h);
+                const ctx = cv.getContext("2d");
+                ctx.drawImage(img, 0, 0, w, h);
                 try {
                     setTeamLogo(side, cv.toDataURL("image/png"));
                 }
                 catch (_a) { }
+                const dc = dominantColor(ctx, w, h); // auto-match team color to the logo
+                if (dc)
+                    setTeamColor(side, dc);
             };
             img.src = reader.result;
         };
@@ -614,6 +664,21 @@ function DugoutScorecard() {
             entry.result += `; ${extra}`;
         g.lastPlay = ticker;
     };
+    // index of the most recent plate-appearance row in the log (-1 if none)
+    const lastPAIdx = (g) => {
+        for (let i = g.log.length - 1; i >= 0; i--)
+            if (g.log[i].type === "pa")
+                return i;
+        return -1;
+    };
+    // append something that happened during an at-bat onto that same PA row,
+    // so a run/RBI shows on the batter's line instead of a separate event
+    const amendPA = (g, idx, extra, ticker) => {
+        if (idx >= 0 && g.log[idx] && g.log[idx].type === "pa")
+            g.log[idx].result += `; ${extra}`;
+        if (ticker)
+            g.lastPlay = ticker;
+    };
     const closePA = (g, result, ticker) => {
         ensurePA(g);
         g.log[g.openPA].result = result;
@@ -893,9 +958,9 @@ function DugoutScorecard() {
         if (d3kLegal)
             g.openK = { b: bIdx };
         if (flyType && hadRunners && !flipped)
-            g.openTag = { b: bIdx, conv: false, note };
+            g.openTag = { b: bIdx, conv: false, note, log: lastPAIdx(g) };
         if (label === "groundout" && g.bases.third && !flipped)
-            g.openTag = { b: bIdx, kind: "ground", note };
+            g.openTag = { b: bIdx, kind: "ground", note, log: lastPAIdx(g) };
     });
     // Fielder's choice: batter reaches, the selected runner is forced out.
     // Remaining runners + batter advance on the force.
@@ -919,7 +984,7 @@ function DugoutScorecard() {
                 addRuns(g, runs);
                 chargeP(g, "r", runs);
                 if (runs)
-                    logPlay(g, "Run forced in on the play", "info");
+                    amendPA(g, lastPAIdx(g), runs === 1 ? "run forced in" : `${runs} runs forced in`, "Run forced in on the play");
                 nextBatter(g);
             }
             else
@@ -949,7 +1014,7 @@ function DugoutScorecard() {
                 st.rbi += runs; // productive out — RBI credited
                 chargeP(g, "r", runs);
                 if (runs)
-                    logPlay(g, "Run scores on the play", "info");
+                    amendPA(g, lastPAIdx(g), runs === 1 ? "run scores — RBI" : `${runs} score — RBI`, "Run scores on the play");
                 nextBatter(g);
             }
             else
@@ -1151,6 +1216,7 @@ function DugoutScorecard() {
         mutate((g) => {
             if (!g.openTag || g.openTag.kind !== "ground" || !g.bases.third)
                 return;
+            const tlog = g.openTag.log;
             const r3 = g.bases.third;
             g.bases.third = false;
             creditRun(g, r3);
@@ -1158,7 +1224,7 @@ function DugoutScorecard() {
             chargeP(g, "r", 1);
             g.stats[battingSide][g.openTag.b].rbi += 1; // RBI groundout — at-bat stands
             g.openTag = null;
-            logPlay(g, "Run scores on the groundout — RBI", "info");
+            amendPA(g, tlog, "run scores — RBI", "Run scores on the groundout — RBI");
         });
     };
     const tagUpScore = () => {
@@ -1186,7 +1252,7 @@ function DugoutScorecard() {
                 }
                 g.openTag.conv = true;
             }
-            logPlay(g, "Sacrifice fly — run scores on the tag", "info");
+            amendPA(g, g.openTag.log, "sac fly — run scores", "Sacrifice fly — run scores on the tag");
         });
     };
     // Tag-up with no run: 2nd->3rd or 1st->2nd on the catch.
@@ -1198,13 +1264,13 @@ function DugoutScorecard() {
                 g.bases.third = g.bases.second;
                 g.bases.second = false;
                 cardAdvance(g, g.bases.third, 3);
-                logPlay(g, "Runner tags, 2nd to 3rd", "info");
+                amendPA(g, g.openTag.log, "runner tags to 3rd", "Runner tags, 2nd to 3rd");
             }
             else if (from === "first" && !g.bases.second && g.bases.first) {
                 g.bases.second = g.bases.first;
                 g.bases.first = false;
                 cardAdvance(g, g.bases.second, 2);
-                logPlay(g, "Runner tags, 1st to 2nd", "info");
+                amendPA(g, g.openTag.log, "runner tags to 2nd", "Runner tags, 1st to 2nd");
             }
         });
     };
@@ -1734,7 +1800,7 @@ function DugoutScorecard() {
     useEffect(() => {
         try {
             if (liveCode)
-                localStorage.setItem(LIVE_KEY, JSON.stringify({ code: liveCode, on: liveOn }));
+                localStorage.setItem(LIVE_KEY, JSON.stringify({ code: liveCode, on: liveOn, list: liveList }));
         }
         catch (_a) { }
     }, [liveCode, liveOn]);
@@ -1748,7 +1814,7 @@ function DugoutScorecard() {
             fetch(LIVE_ENDPOINT, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ code: liveCode, snap: buildLiveSnap() }),
+                body: JSON.stringify({ code: liveCode, snap: buildLiveSnap(), list: liveList }),
             }).catch(() => { });
         };
         const id = setTimeout(send, 600); // publish this change
@@ -1757,7 +1823,7 @@ function DugoutScorecard() {
             clearTimeout(id);
             clearInterval(hb);
         };
-    }, [game, liveOn, liveCode, phase]);
+    }, [game, liveOn, liveCode, phase, liveList]);
     const setBatterIndex = (idx) => mutate((g) => {
         g.batter[battingSide] = idx;
         g.balls = 0;
@@ -1808,7 +1874,7 @@ function DugoutScorecard() {
                 this.rect(x, y, w, h);
             };
         }
-        const finish = (logoImg) => {
+        const finish = (logoImg, awayLogo, homeLogo) => {
             // background
             const grad = ctx.createLinearGradient(0, 0, 0, H);
             grad.addColorStop(0, "#1D2D5C");
@@ -1850,18 +1916,27 @@ function DugoutScorecard() {
             // teams + scores
             const aWin = totals("away") > totals("home");
             const hWin = totals("home") > totals("away");
-            const teamRow = (name, score, win, ty, accent) => {
+            const teamRow = (name, score, win, ty, accent, logo) => {
+                let nx = 110;
+                if (logo) {
+                    const ls = 78;
+                    try {
+                        ctx.drawImage(logo, 110, ty - 58, ls, ls);
+                    }
+                    catch (_a) { }
+                    nx = 110 + ls + 18;
+                }
                 ctx.textAlign = "left";
                 ctx.fillStyle = win && game.over ? "#F5C518" : (accent || "#FFFFFF");
                 ctx.font = "700 58px 'Saira Condensed', sans-serif";
-                ctx.fillText(name.toUpperCase().slice(0, 16), 110, ty);
+                ctx.fillText(name.toUpperCase().slice(0, logo ? 13 : 16), nx, ty);
                 ctx.textAlign = "right";
                 ctx.font = "700 96px 'IBM Plex Mono', monospace";
                 ctx.fillStyle = win && game.over ? "#F5C518" : "#FFFFFF";
                 ctx.fillText(String(score), W - 110, ty + 10);
             };
-            teamRow(teams.away.name, totals("away"), aWin, y + 60, teamColor("away"));
-            teamRow(teams.home.name, totals("home"), hWin, y + 180, teamColor("home"));
+            teamRow(teams.away.name, totals("away"), aWin, y + 60, teamColor("away"), awayLogo);
+            teamRow(teams.home.name, totals("home"), hWin, y + 180, teamColor("home"), homeLogo);
             y += 250;
             // linescore grid
             const maxInn = 12;
@@ -1912,10 +1987,19 @@ function DugoutScorecard() {
             ctx.fillText(`${new Date().toLocaleDateString()}  ·  DUGOUTIQ — MANAGE THE GAME`, W / 2, H - 60);
             resolve(c);
         };
-        const img = new Image();
-        img.onload = () => finish(img);
-        img.onerror = () => finish(null);
-        img.src = LOGO;
+        const loadImg = (src) => new Promise((res) => {
+            if (!src)
+                return res(null);
+            const im = new Image();
+            im.onload = () => res(im);
+            im.onerror = () => res(null);
+            im.src = src;
+        });
+        Promise.all([
+            loadImg(LOGO),
+            loadImg(teams.away.logo),
+            loadImg(teams.home.logo),
+        ]).then(([brand, al, hl]) => finish(brand, al, hl));
     });
     // Classic paper-scorebook page: batters down, innings across, a diamond per cell
     const drawScorebookCanvas = (side) => new Promise((resolve) => {
@@ -2633,8 +2717,10 @@ function DugoutScorecard() {
         .dg-root *, .dg-root *::before { box-sizing: border-box; }
         .shell { max-width: 760px; margin: 0 auto; }
 
-        .brand { display: flex; justify-content: center; align-items: center; margin: 0 auto 10px; }
+        .brand { position: relative; display: flex; justify-content: center; align-items: center; margin: 0 auto 10px; }
         .brand-logo { display: block; height: 88px; width: auto; max-width: 70%; object-fit: contain; margin: 0 auto; }
+        .gear-btn { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); background: rgba(255,255,255,.06); border: 1px solid var(--line); border-radius: 12px; width: 44px; height: 44px; font-size: 22px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+        .gear-btn:active { transform: translateY(-50%) scale(.94); }
 
         /* ---- scoreboard header ---- */
         .board {
@@ -3063,7 +3149,8 @@ function DugoutScorecard() {
       `),
         React.createElement("div", { className: "shell" },
             React.createElement("div", { className: "brand" },
-                React.createElement("img", { src: LOGO, alt: "DugoutIQ \u2014 Manage the Game", className: "brand-logo" })),
+                React.createElement("img", { src: LOGO, alt: "DugoutIQ \u2014 Manage the Game", className: "brand-logo" }),
+                licensed && (React.createElement("button", { className: "gear-btn", onClick: () => setSettingsOpen(true), "aria-label": "Settings", title: "Settings" }, "\u2699\uFE0F"))),
             !licensed && (React.createElement("div", { className: "setup-card license-card" },
                 React.createElement("h2", null, "Activate DugoutIQ"),
                 React.createElement("p", { className: "license-sub" }, "Enter the license key from your purchase receipt. You only do this once \u2014 after activation the app works fully offline."),
@@ -3152,7 +3239,7 @@ function DugoutScorecard() {
                             teams.home.name),
                         React.createElement("div", { className: "tscore" }, totals("home")))),
                 React.createElement("div", { className: "diamond-card" },
-                    React.createElement("div", { className: "diamond-hint" }, "Drag runner \u00B7 home = scores \u00B7 tap = options"),
+                    React.createElement("div", { className: "diamond-hint" }, "Drag runner \u00B7 tap = options"),
                     React.createElement(Diamond, null),
                     React.createElement("div", { className: "count-corner", role: "status", "aria-label": `${game.balls} balls, ${game.strikes} strikes, ${game.outs} outs` },
                         React.createElement("div", { className: "crow" },
@@ -3470,6 +3557,24 @@ function DugoutScorecard() {
                             } }, "\uD83D\uDCD2 Scorebook page (classic)"),
                         React.createElement("button", { className: "dg", onClick: startLive }, "\uD83D\uDCE1 Live game link (spectators)"),
                         React.createElement("button", { className: "dg ghost", onClick: () => setShareOpen(false) }, "Cancel"))))),
+            settingsOpen && (React.createElement("div", { className: "modal-back", onClick: () => setSettingsOpen(false) },
+                React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
+                    React.createElement("h3", null, "\u2699\uFE0F Settings"),
+                    React.createElement("div", { style: { fontWeight: 700, color: "#A9C5E8", fontSize: 13, margin: "4px 0 8px", letterSpacing: ".4px" } }, "APP LOOK"),
+                    React.createElement("div", { className: "theme-swatches", style: { marginBottom: 6 } },
+                        PRESET_TEAM_COLORS.map((c) => (React.createElement("button", { key: c, type: "button", className: `swatch ${themeColor === c ? "sel" : ""}`, style: { background: c }, onClick: () => setThemeColor(c), "aria-label": "Set app theme color" }))),
+                        React.createElement("input", { type: "color", className: "swatch-custom", value: themeColor, onChange: (e) => setThemeColor(e.target.value), "aria-label": "Custom app theme color" }),
+                        React.createElement("label", { className: "logo-btn" },
+                            themeLogo ? React.createElement("img", { src: themeLogo, alt: "app logo" }) : "＋ Logo",
+                            React.createElement("input", { type: "file", accept: "image/*", onChange: onThemeLogoPick, style: { display: "none" } })),
+                        themeLogo && (React.createElement("button", { type: "button", className: "logo-rm", onClick: () => setThemeLogo(""), "aria-label": "Remove logo" }, "\u2715"))),
+                    React.createElement("p", { style: { fontSize: 12, opacity: 0.7, margin: "0 0 16px" } }, "Sets the accent color and the watermark in the diamond."),
+                    React.createElement("div", { style: { fontWeight: 700, color: "#A9C5E8", fontSize: 13, margin: "4px 0 8px", letterSpacing: ".4px" } }, "PUBLIC GAMES"),
+                    React.createElement("a", { href: "/games.html", target: "_blank", rel: "noopener", className: "dg", style: { display: "block", textAlign: "center", textDecoration: "none", marginBottom: 6 } }, "Open the public Games page \u2192"),
+                    React.createElement("p", { style: { fontSize: 12, opacity: 0.7, margin: "0 0 16px" } }, "Games appear there only when a scorer ticks \u201Clist publicly\u201D in the live-share window."),
+                    React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr" } },
+                        React.createElement("button", { className: "dg ghost", onClick: () => setSettingsOpen(false) }, "Done")),
+                    React.createElement("p", { style: { fontSize: 11, opacity: 0.55, textAlign: "center", marginTop: 12 } }, "DugoutIQ \u2014 Manage the Game")))),
             liveOpen && (React.createElement("div", { className: "modal-back", onClick: () => setLiveOpen(false) },
                 React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
                     React.createElement("h3", null, "Live spectator link"),
@@ -3495,6 +3600,24 @@ function DugoutScorecard() {
                             fontSize: "13px",
                             marginBottom: "10px",
                         } }),
+                    React.createElement("label", { style: {
+                            display: "flex",
+                            alignItems: "flex-start",
+                            gap: "10px",
+                            margin: "2px 0 12px",
+                            cursor: "pointer",
+                            fontSize: "14px",
+                            lineHeight: 1.35,
+                        } },
+                        React.createElement("input", { type: "checkbox", checked: liveList, onChange: (e) => setLiveList(e.target.checked), style: { width: "18px", height: "18px", marginTop: "1px", flex: "0 0 auto" } }),
+                        React.createElement("span", null,
+                            "List on the public ",
+                            React.createElement("strong", null, "Games"),
+                            " page",
+                            React.createElement("span", { style: { color: "#A9C5E8" } },
+                                " ",
+                                "\u2014 team names & score only, never player names. Shows while you\u2019re broadcasting; untick to remove it."))),
+                    liveList && (React.createElement("a", { href: "/games.html", target: "_blank", rel: "noopener", style: { display: "inline-block", color: "#F5C518", fontSize: "13px", marginBottom: "10px", textDecoration: "none" } }, "View the public Games page \u2192")),
                     React.createElement("div", { className: "btnrow" },
                         React.createElement("button", { className: "dg hit", onClick: async () => {
                                 try {
