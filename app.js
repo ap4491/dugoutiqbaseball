@@ -477,8 +477,8 @@ function DugoutScorecard() {
             },
             // active in-game lineup (sub-aware) + retired stat lines for the box score
             lineup: {
-                away: teams.away.lineup.map((p) => ({ name: p.name, pos: p.pos || "", num: p.num || "" })),
-                home: teams.home.lineup.map((p) => ({ name: p.name, pos: p.pos || "", num: p.num || "" })),
+                away: teams.away.lineup.map((p) => ({ name: p.name, pos: p.pos || "", num: p.num || "", posHist: p.pos ? [p.pos] : [] })),
+                home: teams.home.lineup.map((p) => ({ name: p.name, pos: p.pos || "", num: p.num || "", posHist: p.pos ? [p.pos] : [] })),
             },
             subs: { away: [], home: [] },
             orderLocked: { away: false, home: false }, // locks once the order turns over once
@@ -892,6 +892,8 @@ function DugoutScorecard() {
             g.openK = { b: bIdx };
         if (flyType && hadRunners && !flipped)
             g.openTag = { b: bIdx, conv: false, note };
+        if (label === "groundout" && g.bases.third && !flipped)
+            g.openTag = { b: bIdx, kind: "ground", note };
     });
     // Fielder's choice: batter reaches, the selected runner is forced out.
     // Remaining runners + batter advance on the force.
@@ -1143,6 +1145,20 @@ function DugoutScorecard() {
         setDpMenu(false);
     };
     // Tag-up: runner from 3rd scores -> the fly out becomes a sacrifice fly.
+    const groundScore = () => {
+        mutate((g) => {
+            if (!g.openTag || g.openTag.kind !== "ground" || !g.bases.third)
+                return;
+            const r3 = g.bases.third;
+            g.bases.third = false;
+            creditRun(g, r3);
+            addRuns(g, 1);
+            chargeP(g, "r", 1);
+            g.stats[battingSide][g.openTag.b].rbi += 1; // RBI groundout — at-bat stands
+            g.openTag = null;
+            logPlay(g, "Run scores on the groundout — RBI", "info");
+        });
+    };
     const tagUpScore = () => {
         mutate((g) => {
             if (!g.openTag || !g.bases.third)
@@ -1228,7 +1244,8 @@ function DugoutScorecard() {
                 k: st.k,
             });
             g.stats[side][slot] = { ab: 0, h: 0, r: 0, rbi: 0, bb: 0, k: 0 };
-            g.lineup[side][slot] = { name: nm, pos: ((newPos || cur.pos) || "").trim() };
+            const sp = ((newPos || cur.pos) || "").trim();
+            g.lineup[side][slot] = { name: nm, pos: sp, num: "", posHist: sp ? [sp] : [] };
             g.lastPlay = `Sub: ${nm} in for ${cur.name}`;
         });
         setSubMenu(false);
@@ -1242,7 +1259,11 @@ function DugoutScorecard() {
         mutate((g) => {
             const cur = g.lineup[side][slot];
             const nm = (newName || "").trim() || cur.name;
-            g.lineup[side][slot] = { name: nm, pos: (newPos || "").trim() };
+            const np = (newPos || "").trim();
+            const hist = Array.isArray(cur.posHist) ? cur.posHist.slice() : (cur.pos ? [cur.pos] : []);
+            if (np && !hist.includes(np))
+                hist.push(np); // record each new position played
+            g.lineup[side][slot] = { name: nm, pos: np, num: cur.num || "", posHist: hist };
             g.lastPlay = `Lineup updated: ${nm}`;
         });
         setSubMenu(false);
@@ -1315,7 +1336,7 @@ function DugoutScorecard() {
             return;
         const newIdx = game.lineup[side].length;
         mutate((g) => {
-            g.lineup[side].push({ name: `Batter ${g.lineup[side].length + 1}`, pos: "" });
+            g.lineup[side].push({ name: `Batter ${g.lineup[side].length + 1}`, pos: "", num: "", posHist: [] });
             g.stats[side].push({ ab: 0, h: 0, r: 0, rbi: 0, bb: 0, k: 0 });
             g.lastPlay = `${teams[side].name}: batter added`;
         });
@@ -2200,10 +2221,15 @@ function DugoutScorecard() {
                 totalsRow.forEach((v, i) => ctx.fillText(String(v), M + nameW + cw * i + cw / 2, y + 27));
                 y += 50;
             };
+            const posLabel = (p) => {
+                const h = Array.isArray(p.posHist) && p.posHist.length ? p.posHist : (p.pos ? [p.pos] : []);
+                return h.join("-");
+            };
             const battingRows = (lineup, side) => lineup.map((p, i) => {
                 const s = game.stats[side][i] || { ab: 0, r: 0, h: 0, rbi: 0, bb: 0, k: 0 };
                 const num = p.num ? ` #${p.num}` : "";
-                const label = `${p.name}${num}${p.pos ? `  ${p.pos}` : ""}`;
+                const pl = posLabel(p);
+                const label = `${p.name}${num}${pl ? `  ${pl}` : ""}`;
                 return { label, vals: [s.ab, s.r, s.h, s.rbi, s.bb, s.k] };
             });
             const battingTot = (side, n) => {
@@ -3176,6 +3202,13 @@ function DugoutScorecard() {
                         React.createElement("strong", null, "Batter safe at 1st \u2014 tap here"))),
                     game.openTag &&
                         !game.over &&
+                        game.openTag.kind === "ground" &&
+                        game.bases.third && (React.createElement("button", { className: "d3k-banner tagup", onClick: groundScore },
+                        "Run score from third? ",
+                        React.createElement("strong", null, "Tap to score + RBI"))),
+                    game.openTag &&
+                        !game.over &&
+                        game.openTag.kind !== "ground" &&
                         (game.bases.first || game.bases.second || game.bases.third) && (React.createElement("button", { className: "d3k-banner tagup", onClick: () => setTagMenu(true) },
                         "Runner tag up? ",
                         React.createElement("strong", null, "Advance on the catch \u2014 tap here"))),
