@@ -35,12 +35,15 @@
   td.tm{ text-align:left; color:var(--white); font-weight:700; max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   td.rr{ color:var(--white); font-weight:800; border-left:1px solid var(--line); }
   .empty{ text-align:center; color:var(--powder); padding:50px 10px; }
+  .backlink{ display:inline-block; color:var(--powder); text-decoration:none; font-size:14px; font-weight:700; padding:8px 14px 8px 8px; margin-bottom:6px; border-radius:10px; }
+  .backlink:active{ background:rgba(255,255,255,.06); }
   .empty h2{ color:var(--white); font-weight:800; margin:0 0 8px; }
   footer{ text-align:center; color:var(--powder); font-size:11px; margin-top:26px; opacity:.8; line-height:1.5; }
 </style>
 </head>
 <body>
   <div class="wrap">
+    <a class="backlink" href="/" onclick="if(window.history.length>1){window.history.back();return false;}">‹ Back to DugoutIQ</a>
     <header>
       <div class="brand"><img src="logo.png" alt="DugoutIQ" onerror="this.style.display='none'"/>Live Games</div>
       <div class="count" id="count"></div>
