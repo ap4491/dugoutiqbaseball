@@ -149,9 +149,11 @@ function DugoutScorecard() {
     const [subSlot, setSubSlot] = useState(null);
     const [subName, setSubName] = useState("");
     const [subPos, setSubPos] = useState("");
+    const [subNum, setSubNum] = useState("");
     const [batterMenu, setBatterMenu] = useState(false);
     const [batName, setBatName] = useState("");
     const [batPos, setBatPos] = useState("");
+    const [batNum, setBatNum] = useState("");
     const [decisionsOpen, setDecisionsOpen] = useState(false);
     const [bookChoose, setBookChoose] = useState(false);
     const [confirmNew, setConfirmNew] = useState(false);
@@ -1223,7 +1225,7 @@ function DugoutScorecard() {
     // Substitution / pinch hitter / pinch runner: a new player takes over a
     // batting-order slot. The original keeps their stats (retired to the box
     // score); the incoming player starts a fresh line in the same slot.
-    const substitute = (side, slot, newName, newPos) => {
+    const substitute = (side, slot, newName, newPos, newNum) => {
         const nm = (newName || "").trim();
         if (!nm)
             return;
@@ -1245,17 +1247,18 @@ function DugoutScorecard() {
             });
             g.stats[side][slot] = { ab: 0, h: 0, r: 0, rbi: 0, bb: 0, k: 0 };
             const sp = ((newPos || cur.pos) || "").trim();
-            g.lineup[side][slot] = { name: nm, pos: sp, num: "", posHist: sp ? [sp] : [] };
+            g.lineup[side][slot] = { name: nm, pos: sp, num: (newNum || "").trim(), posHist: sp ? [sp] : [] };
             g.lastPlay = `Sub: ${nm} in for ${cur.name}`;
         });
         setSubMenu(false);
         setSubSlot(null);
         setSubName("");
         setSubPos("");
+        setSubNum("");
     };
     // Correct a name or position in place — NOT a substitution.
     // Stats stay exactly where they are; nothing is retired.
-    const editLineup = (side, slot, newName, newPos) => {
+    const editLineup = (side, slot, newName, newPos, newNum) => {
         mutate((g) => {
             const cur = g.lineup[side][slot];
             const nm = (newName || "").trim() || cur.name;
@@ -1263,13 +1266,15 @@ function DugoutScorecard() {
             const hist = Array.isArray(cur.posHist) ? cur.posHist.slice() : (cur.pos ? [cur.pos] : []);
             if (np && !hist.includes(np))
                 hist.push(np); // record each new position played
-            g.lineup[side][slot] = { name: nm, pos: np, num: cur.num || "", posHist: hist };
+            const nn = newNum != null ? (newNum || "").trim() : (cur.num || ""); // preserve number if not supplied
+            g.lineup[side][slot] = { name: nm, pos: np, num: nn, posHist: hist };
             g.lastPlay = `Lineup updated: ${nm}`;
         });
         setSubMenu(false);
         setSubSlot(null);
         setSubName("");
         setSubPos("");
+        setSubNum("");
     };
     // Add a batter to the end of the order (e.g. a player who arrived late).
     // Appends a fresh slot + stat line; existing slots, runners and the
@@ -1330,6 +1335,7 @@ function DugoutScorecard() {
         setSubSlot(null);
         setSubName("");
         setSubPos("");
+        setSubNum("");
     };
     const addBatter = (side) => {
         if (!orderOpen(side))
@@ -1343,6 +1349,7 @@ function DugoutScorecard() {
         setSubSlot(newIdx);
         setSubName("");
         setSubPos("");
+        setSubNum("");
     };
     // Quick options for the batter at the plate (tap the at-bat card).
     const openBatterMenu = () => {
@@ -1351,6 +1358,7 @@ function DugoutScorecard() {
         const p = game.lineup[battingSide][game.batter[battingSide]];
         setBatName(p.name);
         setBatPos(p.pos || "");
+        setBatNum(p.num || "");
         setBatterMenu(true);
     };
     /* --- diamond interactions: tap = menu/place, drag = move runner --- */
@@ -3623,14 +3631,15 @@ function DugoutScorecard() {
                         " in the order"),
                     React.createElement("div", { className: "sub-form" },
                         React.createElement("input", { className: "dg-in", placeholder: "Batter name", value: batName, onChange: (e) => setBatName(e.target.value) }),
+                        React.createElement("input", { className: "dg-in", placeholder: "#", inputMode: "numeric", style: { maxWidth: 64 }, value: batNum, onChange: (e) => setBatNum(e.target.value) }),
                         React.createElement("input", { className: "dg-in", placeholder: "Pos", style: { maxWidth: 84 }, value: batPos, onChange: (e) => setBatPos(e.target.value) })),
                     React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr", marginTop: 6 } },
                         React.createElement("button", { className: "dg", disabled: !batName.trim(), onClick: () => {
-                                editLineup(battingSide, game.batter[battingSide], batName, batPos);
+                                editLineup(battingSide, game.batter[battingSide], batName, batPos, batNum);
                                 setBatterMenu(false);
                             } }, "Save name"),
                         React.createElement("button", { className: "dg hit", disabled: !batName.trim(), onClick: () => {
-                                substitute(battingSide, game.batter[battingSide], batName, batPos);
+                                substitute(battingSide, game.batter[battingSide], batName, batPos, batNum);
                                 setBatterMenu(false);
                             } }, "Pinch hitter")),
                     React.createElement("p", { className: "sub-hint" },
@@ -3664,6 +3673,7 @@ function DugoutScorecard() {
                                 setSubSlot(i);
                                 setSubName(p.name);
                                 setSubPos(p.pos || "");
+                                setSubNum(p.num || "");
                             } },
                             React.createElement("span", { className: "sub-n" },
                                 i + 1,
@@ -3685,10 +3695,11 @@ function DugoutScorecard() {
                     subSlot != null && (React.createElement("div", { className: "sub-form-wrap" },
                         React.createElement("div", { className: "sub-form" },
                             React.createElement("input", { className: "dg-in", placeholder: "Player name", value: subName, onChange: (e) => setSubName(e.target.value) }),
+                            React.createElement("input", { className: "dg-in", placeholder: "#", inputMode: "numeric", style: { maxWidth: 64 }, value: subNum, onChange: (e) => setSubNum(e.target.value) }),
                             React.createElement("input", { className: "dg-in", placeholder: "Pos", style: { maxWidth: 84 }, value: subPos, onChange: (e) => setSubPos(e.target.value) })),
                         React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr", marginTop: 6 } },
-                            React.createElement("button", { className: "dg", disabled: !subName.trim(), onClick: () => editLineup(subSide, subSlot, subName, subPos) }, "Save edit"),
-                            React.createElement("button", { className: "dg hit", disabled: !subName.trim(), onClick: () => substitute(subSide, subSlot, subName, subPos) }, "Sub \u2014 new player")),
+                            React.createElement("button", { className: "dg", disabled: !subName.trim(), onClick: () => editLineup(subSide, subSlot, subName, subPos, subNum) }, "Save edit"),
+                            React.createElement("button", { className: "dg hit", disabled: !subName.trim(), onClick: () => substitute(subSide, subSlot, subName, subPos, subNum) }, "Sub \u2014 new player")),
                         React.createElement("p", { className: "sub-hint" },
                             React.createElement("b", null, "Save edit"),
                             " fixes a name or position \u2014 stats untouched.",
