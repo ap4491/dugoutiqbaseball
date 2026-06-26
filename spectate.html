@@ -20,6 +20,9 @@
   @keyframes p{0%{box-shadow:0 0 0 0 rgba(58,208,122,.55)}70%{box-shadow:0 0 0 8px rgba(58,208,122,0)}100%{box-shadow:0 0 0 0 rgba(58,208,122,0)}}
   .dot.stale{ background:#888; animation:none; }
   .card{ background:rgba(255,255,255,.05); border:1px solid var(--line); border-radius:16px; padding:16px; margin-bottom:14px; }
+  .vidcard{ padding:0; overflow:hidden; }
+  .vidwrap{ position:relative; width:100%; aspect-ratio:16/9; background:#000; }
+  .vidwrap iframe{ position:absolute; inset:0; width:100%; height:100%; border:0; display:block; }
   .score{ display:grid; grid-template-columns:1fr auto; gap:6px 10px; align-items:center; }
   .team{ font-size:22px; font-weight:700; }
   .tlogo{ height:26px; width:26px; object-fit:contain; vertical-align:middle; margin-right:9px; border-radius:5px; }
@@ -62,13 +65,24 @@
 
   function pips(n,total,cls){ let s=""; for(let i=0;i<total;i++) s+=`<span class="pip ${cls} ${i<n?'on':''}"></span>`; return s; }
 
+  function safeEmbed(src){
+    try{ const u=new URL(src);
+      if(u.protocol!=="https:") return "";
+      const h=u.hostname.replace(/^www\./,"").toLowerCase();
+      if(h==="youtube-nocookie.com"||h==="youtube.com"||h==="streamyard.com"||h.endsWith(".streamyard.com")) return u.href;
+    }catch(e){}
+    return "";
+  }
   function render(s){
     const half = s.half === "top" ? "▲ Top" : "▼ Bot";
     const battingAway = s.half === "top";
     const ls = (s.linescore||[]).map((r,i)=>`<th>${i+1}</th>`).join("");
     const lsA = (s.linescore||[]).map(r=>`<td>${r.away==null?"":r.away}</td>`).join("");
     const lsH = (s.linescore||[]).map(r=>`<td>${r.home==null?"·":r.home}</td>`).join("");
+    const emb = s.video ? safeEmbed(s.video) : "";
+    const vid = emb ? `<div class="card vidcard"><div class="vidwrap"><iframe src="${emb}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen frameborder="0"></iframe></div></div>` : "";
     $("content").innerHTML = `
+      ${vid}
       <div class="card">
         <div class="score">
           <div class="team ${battingAway?'bat':''}" style="${s.away.color?('color:'+s.away.color):''}">${s.away.logo?`<img class="tlogo" src="${s.away.logo}">`:""}${esc(s.away.name)}</div><div class="runs">${s.away.runs}</div>

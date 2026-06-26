@@ -170,6 +170,7 @@ function DugoutScorecard() {
     const [liveCode, setLiveCode] = useState(() => loadLive().code || null); // spectator share code
     const [liveOn, setLiveOn] = useState(() => !!loadLive().on); // broadcasting?
     const [liveList, setLiveList] = useState(() => !!loadLive().list); // listed on public hub?
+    const [liveVideo, setLiveVideo] = useState(() => loadLive().video || ""); // optional YouTube/StreamYard live video link
     const [liveOpen, setLiveOpen] = useState(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [liveCopied, setLiveCopied] = useState(false);
@@ -1839,6 +1840,31 @@ function DugoutScorecard() {
     /* ---------------- live spectator (view-only) ---------------- */
     const LIVE_ENDPOINT = "/.netlify/functions/game";
     const liveLink = () => liveCode ? `${location.origin}/spectate.html?g=${liveCode}` : "";
+    // Turn a pasted YouTube or StreamYard link (or full <iframe> embed) into a
+    // SAFE embed URL. Allowlisted hosts only; we never inject pasted HTML.
+    const parseStreamUrl = (input) => {
+        if (!input) return null;
+        let s = String(input).trim();
+        const m = s.match(/<iframe[^>]*\ssrc=["']([^"']+)["']/i);
+        if (m) s = m[1];
+        let u;
+        try { u = new URL(s, "https://x"); } catch (e) { return null; }
+        if (u.protocol !== "https:") return null;
+        const host = u.hostname.replace(/^www\./, "").toLowerCase();
+        const yt = ["youtube.com", "youtube-nocookie.com", "youtu.be", "m.youtube.com"];
+        if (yt.includes(host)) {
+            let id = "";
+            if (host === "youtu.be") id = u.pathname.slice(1);
+            else if (u.searchParams.get("v")) id = u.searchParams.get("v");
+            else { const p = u.pathname.match(/\/(?:live|embed|shorts)\/([A-Za-z0-9_-]{6,})/); if (p) id = p[1]; }
+            id = (id || "").split(/[/?&]/)[0];
+            if (!/^[A-Za-z0-9_-]{6,}$/.test(id)) return null;
+            return { type: "youtube", src: "https://www.youtube-nocookie.com/embed/" + id + "?autoplay=1&playsinline=1" };
+        }
+        if (host === "streamyard.com" || host.endsWith(".streamyard.com"))
+            return { type: "streamyard", src: u.href };
+        return null;
+    };
     const buildLiveSnap = () => {
         const g = game;
         const nm = (side) => (teams[side].name || "").trim() || (side === "away" ? "Visitors" : "Home");
@@ -1869,6 +1895,7 @@ function DugoutScorecard() {
             pitcher: fp ? fp.name : "",
             lastPlay: g.lastPlay || "",
             linescore: g.linescore.map((r) => ({ away: r.away, home: r.home })),
+            video: (parseStreamUrl(liveVideo) || {}).src || "",
         };
     };
     const startLive = () => {
@@ -1888,10 +1915,10 @@ function DugoutScorecard() {
     useEffect(() => {
         try {
             if (liveCode)
-                localStorage.setItem(LIVE_KEY, JSON.stringify({ code: liveCode, on: liveOn, list: liveList }));
+                localStorage.setItem(LIVE_KEY, JSON.stringify({ code: liveCode, on: liveOn, list: liveList, video: liveVideo }));
         }
         catch (_a) { }
-    }, [liveCode, liveOn]);
+    }, [liveCode, liveOn, liveList, liveVideo]);
     // Broadcast the game state: once on every change (debounced), plus a heartbeat
     // every few seconds so the viewer stays "live" during quiet stretches and
     // re-seeds instantly after a backgrounded tab or a signal blip.
@@ -1911,7 +1938,7 @@ function DugoutScorecard() {
             clearTimeout(id);
             clearInterval(hb);
         };
-    }, [game, liveOn, liveCode, phase, liveList]);
+    }, [game, liveOn, liveCode, phase, liveList, liveVideo]);
     const setBatterIndex = (idx) => mutate((g) => {
         g.batter[battingSide] = idx;
         g.balls = 0;
@@ -3797,6 +3824,24 @@ function DugoutScorecard() {
                                 " ",
                                 "\u2014 team names & score only, never player names. Shows while you\u2019re broadcasting; untick to remove it."))),
                     liveList && (React.createElement("a", { href: "/games.html", target: "_blank", rel: "noopener", style: { display: "inline-block", color: "#F5C518", fontSize: "13px", marginBottom: "10px", textDecoration: "none" } }, "View the public Games page \u2192")),
+                    React.createElement("div", { style: { margin: "4px 0 12px" } },
+                        React.createElement("label", { style: { display: "block", fontSize: "14px", marginBottom: "5px", color: "#fff" } },
+                            "\uD83D\uDCFA Live video link ",
+                            React.createElement("span", { style: { color: "#A9C5E8", fontWeight: 400 } }, "(optional)")),
+                        React.createElement("input", { type: "url", value: liveVideo, placeholder: "Paste a YouTube or StreamYard link", onChange: (e) => setLiveVideo(e.target.value), style: {
+                                width: "100%",
+                                padding: "10px",
+                                borderRadius: "8px",
+                                border: "1px solid #2B5AA0",
+                                background: "#0E1A3A",
+                                color: "#fff",
+                                fontSize: "13px",
+                            } }),
+                        React.createElement("div", { style: { fontSize: "12px", marginTop: "5px", lineHeight: 1.35, color: liveVideo ? (parseStreamUrl(liveVideo) ? "#3ad07a" : "#E8915A") : "#A9C5E8" } }, !liveVideo
+                            ? "Stream the game on YouTube Live or StreamYard, then paste the link here \u2014 it shows above the scoreboard for your spectators."
+                            : parseStreamUrl(liveVideo)
+                                ? ("\u2713 " + (parseStreamUrl(liveVideo).type === "youtube" ? "YouTube" : "StreamYard") + " video will play for spectators.")
+                                : "Link not recognized \u2014 paste a YouTube or StreamYard link.")),
                     React.createElement("div", { className: "btnrow" },
                         React.createElement("button", { className: "dg hit", onClick: async () => {
                                 try {
