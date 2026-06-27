@@ -23,9 +23,14 @@
   .vidcard{ padding:0; overflow:hidden; }
   .vidwrap{ position:relative; width:100%; aspect-ratio:16/9; background:#000; }
   .vidwrap iframe{ position:absolute; inset:0; width:100%; height:100%; border:0; display:block; }
+  .watchlink{ display:flex; align-items:center; justify-content:center; gap:4px; text-decoration:none;
+    font-weight:700; font-size:17px; color:#0E1838; background:var(--amber,#F5C518);
+    padding:15px 16px; border:0; }
+  .watchlink .arr{ font-weight:700; }
+  .watchlink:active{ filter:brightness(.94); }
   .score{ display:grid; grid-template-columns:1fr auto; gap:6px 10px; align-items:center; }
   .team{ font-size:22px; font-weight:700; }
-  .tlogo{ height:26px; width:26px; object-fit:contain; vertical-align:middle; margin-right:9px; border-radius:5px; }
+  .tlogo{ height:30px; width:30px; object-fit:contain; vertical-align:middle; margin-right:9px; border-radius:6px; background:rgba(255,255,255,.92); padding:2px; box-sizing:border-box; }
   .runs{ font-size:34px; font-weight:800; text-align:right; min-width:50px; }
   .bat{ color:var(--amber); }
   .meta{ display:flex; gap:14px; align-items:center; justify-content:center; margin:6px 0 2px; color:var(--powder); font-size:14px; }
@@ -65,13 +70,25 @@
 
   function pips(n,total,cls){ let s=""; for(let i=0;i<total;i++) s+=`<span class="pip ${cls} ${i<n?'on':''}"></span>`; return s; }
 
-  function safeEmbed(src){
-    try{ const u=new URL(src);
-      if(u.protocol!=="https:") return "";
-      const h=u.hostname.replace(/^www\./,"").toLowerCase();
-      if(h==="youtube-nocookie.com"||h==="youtube.com"||h==="streamyard.com"||h.endsWith(".streamyard.com")) return u.href;
-    }catch(e){}
-    return "";
+  function safeVideo(v){
+    if(!v) return null;
+    if(typeof v === "string") v = { type:"", mode:"embed", src:v };
+    let u; try{ u=new URL(v.src); }catch(e){ return null; }
+    if(u.protocol!=="https:") return null;
+    const h=u.hostname.replace(/^www\./,"").toLowerCase();
+    const isHost=(list)=>list.some(d=>h===d||h.endsWith("."+d));
+    const embedHosts=["youtube-nocookie.com","youtube.com","streamyard.com","facebook.com"];
+    const linkHosts=["instagram.com","tiktok.com"];
+    if(isHost(embedHosts)) return { mode:"embed", src:u.href, type:v.type||"" };
+    if(isHost(linkHosts))  return { mode:"link",  src:u.href, type:v.type||"" };
+    return null;
+  }
+  function videoBlock(v){
+    if(!v) return "";
+    if(v.mode==="embed")
+      return `<div class="card vidcard"><div class="vidwrap"><iframe src="${v.src}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen frameborder="0"></iframe></div></div>`;
+    const name = v.type==="instagram" ? "Instagram" : v.type==="tiktok" ? "TikTok" : "the stream";
+    return `<a class="card watchlink" href="${v.src}" target="_blank" rel="noopener">▶&nbsp; Watch live on ${name} <span class="arr">↗</span></a>`;
   }
   function render(s){
     const half = s.half === "top" ? "▲ Top" : "▼ Bot";
@@ -79,8 +96,7 @@
     const ls = (s.linescore||[]).map((r,i)=>`<th>${i+1}</th>`).join("");
     const lsA = (s.linescore||[]).map(r=>`<td>${r.away==null?"":r.away}</td>`).join("");
     const lsH = (s.linescore||[]).map(r=>`<td>${r.home==null?"·":r.home}</td>`).join("");
-    const emb = s.video ? safeEmbed(s.video) : "";
-    const vid = emb ? `<div class="card vidcard"><div class="vidwrap"><iframe src="${emb}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen frameborder="0"></iframe></div></div>` : "";
+    const vid = videoBlock(safeVideo(s.video));
     $("content").innerHTML = `
       ${vid}
       <div class="card">
