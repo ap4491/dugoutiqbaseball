@@ -1847,22 +1847,40 @@ function DugoutScorecard() {
         let s = String(input).trim();
         const m = s.match(/<iframe[^>]*\ssrc=["']([^"']+)["']/i);
         if (m) s = m[1];
+        const urlm = s.match(/https?:\/\/[^\s"'<>]+/i);
+        if (urlm) s = urlm[0];
+        s = s.replace(/^http:\/\//i, "https://");
+        if (!/^https?:\/\//i.test(s)) s = "https://" + s.replace(/^\/+/, "");
         let u;
-        try { u = new URL(s, "https://x"); } catch (e) { return null; }
+        try { u = new URL(s); } catch (e) { return null; }
         if (u.protocol !== "https:") return null;
         const host = u.hostname.replace(/^www\./, "").toLowerCase();
-        const yt = ["youtube.com", "youtube-nocookie.com", "youtu.be", "m.youtube.com"];
-        if (yt.includes(host)) {
+        const ytHost = host === "youtu.be" || host === "youtube.com" || host.endsWith(".youtube.com")
+            || host === "youtube-nocookie.com" || host.endsWith(".youtube-nocookie.com");
+        if (ytHost) {
             let id = "";
             if (host === "youtu.be") id = u.pathname.slice(1);
             else if (u.searchParams.get("v")) id = u.searchParams.get("v");
-            else { const p = u.pathname.match(/\/(?:live|embed|shorts)\/([A-Za-z0-9_-]{6,})/); if (p) id = p[1]; }
-            id = (id || "").split(/[/?&]/)[0];
-            if (!/^[A-Za-z0-9_-]{6,}$/.test(id)) return null;
-            return { type: "youtube", src: "https://www.youtube-nocookie.com/embed/" + id + "?autoplay=1&playsinline=1" };
+            else { const p = u.pathname.match(/\/(?:live|embed|shorts|v)\/([A-Za-z0-9_-]{6,})/); if (p) id = p[1]; }
+            id = (id || "").split(/[/?&#]/)[0];
+            if (/^[A-Za-z0-9_-]{6,}$/.test(id))
+                return { type: "youtube", mode: "embed", src: "https://www.youtube-nocookie.com/embed/" + id + "?autoplay=1&playsinline=1" };
+            const ch = u.pathname.match(/\/channel\/(UC[A-Za-z0-9_-]{10,})/);
+            if (ch)
+                return { type: "youtube", mode: "embed", src: "https://www.youtube-nocookie.com/embed/live_stream?channel=" + ch[1] + "&autoplay=1" };
+            return { type: "youtube", mode: "link", src: u.href };
         }
         if (host === "streamyard.com" || host.endsWith(".streamyard.com"))
-            return { type: "streamyard", src: u.href };
+            return { type: "streamyard", mode: "embed", src: u.href };
+        if (host === "facebook.com" || host === "fb.watch" || host.endsWith(".facebook.com")) {
+            if (u.pathname.indexOf("/plugins/video.php") === 0)
+                return { type: "facebook", mode: "embed", src: u.href };
+            return { type: "facebook", mode: "embed", src: "https://www.facebook.com/plugins/video.php?show_text=false&href=" + encodeURIComponent(u.href) };
+        }
+        if (host === "instagram.com" || host.endsWith(".instagram.com"))
+            return { type: "instagram", mode: "link", src: u.href };
+        if (host === "tiktok.com" || host.endsWith(".tiktok.com"))
+            return { type: "tiktok", mode: "link", src: u.href };
         return null;
     };
     const buildLiveSnap = () => {
@@ -1895,7 +1913,7 @@ function DugoutScorecard() {
             pitcher: fp ? fp.name : "",
             lastPlay: g.lastPlay || "",
             linescore: g.linescore.map((r) => ({ away: r.away, home: r.home })),
-            video: (parseStreamUrl(liveVideo) || {}).src || "",
+            video: parseStreamUrl(liveVideo) || null,
         };
     };
     const startLive = () => {
@@ -3828,7 +3846,7 @@ function DugoutScorecard() {
                         React.createElement("label", { style: { display: "block", fontSize: "14px", marginBottom: "5px", color: "#fff" } },
                             "\uD83D\uDCFA Live video link ",
                             React.createElement("span", { style: { color: "#A9C5E8", fontWeight: 400 } }, "(optional)")),
-                        React.createElement("input", { type: "url", value: liveVideo, placeholder: "Paste a YouTube or StreamYard link", onChange: (e) => setLiveVideo(e.target.value), style: {
+                        React.createElement("input", { type: "url", value: liveVideo, placeholder: "Paste a YouTube, Facebook, Instagram, TikTok, or StreamYard link", onChange: (e) => setLiveVideo(e.target.value), style: {
                                 width: "100%",
                                 padding: "10px",
                                 borderRadius: "8px",
@@ -3837,11 +3855,15 @@ function DugoutScorecard() {
                                 color: "#fff",
                                 fontSize: "13px",
                             } }),
-                        React.createElement("div", { style: { fontSize: "12px", marginTop: "5px", lineHeight: 1.35, color: liveVideo ? (parseStreamUrl(liveVideo) ? "#3ad07a" : "#E8915A") : "#A9C5E8" } }, !liveVideo
-                            ? "Stream the game on YouTube Live or StreamYard, then paste the link here \u2014 it shows above the scoreboard for your spectators."
-                            : parseStreamUrl(liveVideo)
-                                ? ("\u2713 " + (parseStreamUrl(liveVideo).type === "youtube" ? "YouTube" : "StreamYard") + " video will play for spectators.")
-                                : "Link not recognized \u2014 paste a YouTube or StreamYard link.")),
+                        React.createElement("div", { style: { fontSize: "12px", marginTop: "5px", lineHeight: 1.35, color: liveVideo ? (parseStreamUrl(liveVideo) ? "#3ad07a" : "#E8915A") : "#A9C5E8" } }, (() => {
+                            const v = parseStreamUrl(liveVideo);
+                            if (!liveVideo) return "Stream on YouTube, Facebook, Instagram, TikTok, or StreamYard, then paste the link \u2014 it shows on the spectator page.";
+                            if (!v) return "Link not recognized \u2014 paste a YouTube, Facebook, Instagram, TikTok, or StreamYard link.";
+                            const names = { youtube: "YouTube", facebook: "Facebook", streamyard: "StreamYard", instagram: "Instagram", tiktok: "TikTok" };
+                            if (v.mode === "embed") return "\u2713 " + names[v.type] + " video will play on the spectator page." + (v.type === "facebook" ? " (The post must be Public.)" : "");
+                            if (v.type === "instagram" || v.type === "tiktok") return "\u2713 " + names[v.type] + " \u2014 spectators get a \u201CWatch live\u201D button (" + names[v.type] + " live can\u2019t play inside the page).";
+                            return "\u2713 Saved as a \u201CWatch on " + names[v.type] + "\u201D button. Tip: for an in-page player, paste the video\u2019s watch link (youtube.com/watch?v=\u2026 or youtu.be/\u2026).";
+                        })())),
                     React.createElement("div", { className: "btnrow" },
                         React.createElement("button", { className: "dg hit", onClick: async () => {
                                 try {

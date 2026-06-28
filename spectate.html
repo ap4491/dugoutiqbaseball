@@ -76,18 +76,17 @@
     let u; try{ u=new URL(v.src); }catch(e){ return null; }
     if(u.protocol!=="https:") return null;
     const h=u.hostname.replace(/^www\./,"").toLowerCase();
-    const isHost=(list)=>list.some(d=>h===d||h.endsWith("."+d));
-    const embedHosts=["youtube-nocookie.com","youtube.com","streamyard.com","facebook.com"];
-    const linkHosts=["instagram.com","tiktok.com"];
-    if(isHost(embedHosts)) return { mode:"embed", src:u.href, type:v.type||"" };
-    if(isHost(linkHosts))  return { mode:"link",  src:u.href, type:v.type||"" };
-    return null;
+    const ok=(list)=>list.some(d=>h===d||h.endsWith("."+d));
+    const allowed=["youtube-nocookie.com","youtube.com","streamyard.com","facebook.com","instagram.com","tiktok.com"];
+    if(!ok(allowed)) return null;
+    return { mode: v.mode==="link" ? "link" : "embed", src:u.href, type:v.type||"" };
   }
   function videoBlock(v){
     if(!v) return "";
     if(v.mode==="embed")
       return `<div class="card vidcard"><div class="vidwrap"><iframe src="${v.src}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen frameborder="0"></iframe></div></div>`;
-    const name = v.type==="instagram" ? "Instagram" : v.type==="tiktok" ? "TikTok" : "the stream";
+    const names={youtube:"YouTube",facebook:"Facebook",streamyard:"StreamYard",instagram:"Instagram",tiktok:"TikTok"};
+    const name = names[v.type] || "the stream";
     return `<a class="card watchlink" href="${v.src}" target="_blank" rel="noopener">▶&nbsp; Watch live on ${name} <span class="arr">↗</span></a>`;
   }
   function render(s){
