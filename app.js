@@ -24,8 +24,14 @@ const freshPitcher = (name) => ({
     hr: 0,
     uer: 0, // unearned runs (ER displayed = r - uer)
     bf: 0, // batters faced
+    pInn: {}, // pitches thrown per inning, keyed by inning number
 });
 const ipDisplay = (outs) => `${Math.floor(outs / 3)}.${outs % 3}`;
+const pInnStr = (pp, sep, pre) => {
+    const m = (pp && pp.pInn) || {};
+    const ks = Object.keys(m).map(Number).filter((n) => !isNaN(n)).sort((a, b) => a - b);
+    return ks.length ? ks.map((k) => `${pre || ""}${k}: ${m[k]}`).join(sep || ", ") : "";
+};
 const snapshot = (s) => JSON.parse(JSON.stringify(s));
 const SAVE_KEY = "dugoutiq-save-v1";
 const loadSaved = () => { try {
@@ -711,6 +717,8 @@ function DugoutScorecard() {
     const addPitch = (g, isStrike = true) => {
         const p = curP(g, fieldingSide);
         p.pitches += 1;
+        p.pInn = p.pInn || {};
+        p.pInn[g.inning] = (p.pInn[g.inning] || 0) + 1;
         if (isStrike)
             p.strikes = (p.strikes || 0) + 1;
     };
@@ -1167,6 +1175,8 @@ function DugoutScorecard() {
         const name = g.lineup[side][bIdx].name;
         const pit = g.pitchers[fSide][g.pitchers[fSide].length - 1];
         pit.pitches += 1; // the 3rd strike
+        pit.pInn = pit.pInn || {};
+        pit.pInn[g.inning] = (pit.pInn[g.inning] || 0) + 1;
         pit.k += 1;
         const st = g.stats[side][bIdx];
         st.ab += 1;
@@ -1975,7 +1985,11 @@ function DugoutScorecard() {
         })
             .join("\n");
         const pitLines = (side) => game.pitchers[side]
-            .map((pp) => `${pp.name}: ${ipDisplay(pp.outs)} IP, ${pp.h} H, ${pp.r} R, ${pp.bb} BB, ${pp.k} K, ${pp.hr} HR, ${pp.pitches} NP`)
+            .map((pp) => {
+            const base = `${pp.name}: ${ipDisplay(pp.outs)} IP, ${pp.h} H, ${pp.r} R, ${pp.bb} BB, ${pp.k} K, ${pp.hr} HR, ${pp.pitches} NP`;
+            const bi = pInnStr(pp);
+            return bi ? `${base} (by inning ${bi})` : base;
+        })
             .join("\n  ");
         const scoring = game.log
             .filter((e) => (e.type === "pa" && e.result && /score|run forced/i.test(e.result)) ||
@@ -4163,6 +4177,11 @@ function DugoutScorecard() {
                             React.createElement("button", { className: "dg ghost", onClick: () => adjustUER(-1) }, "\u2212"),
                             React.createElement("b", null, curP(game, pitchMenuSide).uer || 0),
                             React.createElement("button", { className: "dg ghost", onClick: () => adjustUER(1) }, "\uFF0B"))),
+                    game.pitchers[pitchMenuSide].some((pp) => pInnStr(pp)) && (React.createElement("div", { style: { margin: "6px 0 12px", padding: "10px 12px", background: "rgba(43,90,160,.12)", border: "1px solid rgba(43,90,160,.35)", borderRadius: "10px" } },
+                        React.createElement("div", { style: { fontSize: "11px", letterSpacing: ".07em", textTransform: "uppercase", color: "#A9C5E8", marginBottom: "6px" } }, "Pitches by inning"),
+                        game.pitchers[pitchMenuSide].filter((pp) => pInnStr(pp)).map((pp, i) => React.createElement("div", { key: i, style: { fontSize: "13px", margin: "3px 0", color: "#fff" } },
+                            React.createElement("b", null, pp.name + ":  "),
+                            pInnStr(pp, "  \u00B7  ", "Inn "))))),
                     pitchLimit > 0 && (React.createElement("p", { className: `limitstatus ${pitchStatus(curP(game, pitchMenuSide).pitches)}` }, pitchStatus(curP(game, pitchMenuSide).pitches) === "over"
                         ? `At/over the ${pitchLimit}-pitch limit — change pitchers`
                         : `${Math.max(0, pitchLimit - curP(game, pitchMenuSide).pitches)} pitches remaining of ${pitchLimit}`)),
