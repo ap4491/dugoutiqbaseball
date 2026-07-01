@@ -33,6 +33,19 @@ const pInnStr = (pp, sep, pre) => {
     return ks.length ? ks.map((k) => `${pre || ""}${k}: ${m[k]}`).join(sep || ", ") : "";
 };
 const snapshot = (s) => JSON.parse(JSON.stringify(s));
+// Standard scorebook fielding positions
+const FPOS = [
+    { n: 1, l: "P" }, { n: 2, l: "C" }, { n: 3, l: "1B" },
+    { n: 4, l: "2B" }, { n: 5, l: "3B" }, { n: 6, l: "SS" },
+    { n: 7, l: "LF" }, { n: 8, l: "CF" }, { n: 9, l: "RF" },
+];
+const fieldNote = (label, seq) => {
+    if (!seq || !seq.length) return "";
+    if (label === "flyout") return "F" + seq[0];
+    if (label === "popup") return "P" + seq[0];
+    if (label === "lineout") return "L" + seq[0];
+    return seq.join("-"); // groundout / default
+};
 const SAVE_KEY = "dugoutiq-save-v1";
 const loadSaved = () => { try {
     return JSON.parse(localStorage.getItem(SAVE_KEY) || "null");
@@ -147,7 +160,8 @@ function DugoutScorecard() {
     }
     catch (_a) { } }, [phase, teams, game, pitchLimit]);
     const [fcMenu, setFcMenu] = useState(false);
-    const [sacMenu, setSacMenu] = useState(false);
+    const [fieldPick, setFieldPick] = useState(null); // {label, isK} | null — fielder picker for batted outs
+    const [fieldSeq, setFieldSeq] = useState([]); // positions tapped, e.g. [6,3]    const [sacMenu, setSacMenu] = useState(false);
     const [dpMenu, setDpMenu] = useState(false);
     const [tagMenu, setTagMenu] = useState(false);
     const [subMenu, setSubMenu] = useState(false);
@@ -1019,7 +1033,7 @@ function DugoutScorecard() {
         closePA(g, `reached on error${runs ? ", run scores" : ""}`, `${name} reaches on error${runs ? ", run scores" : ""}`);
         nextBatter(g);
     });
-    const playOut = (label, isK) => mutate((g) => {
+    const playOut = (label, isK, fnote) => mutate((g) => {
         addPitch(g);
         g.openK = null;
         g.openHit = null;
@@ -1033,20 +1047,22 @@ function DugoutScorecard() {
         chargeP(g, "outs");
         if (isK)
             chargeP(g, "k");
-        const note = isK
-            ? "K"
-            : label === "groundout"
-                ? "GO"
-                : label === "popup"
-                    ? "P"
-                    : label === "lineout"
-                        ? "L"
-                        : "FO";
+        const note = (fnote && fnote.length)
+            ? fnote
+            : isK
+                ? "K"
+                : label === "groundout"
+                    ? "GO"
+                    : label === "popup"
+                        ? "P"
+                        : label === "lineout"
+                            ? "L"
+                            : "FO";
         cardMark(g, bIdx, note, 0);
         const d3kLegal = isK && (!g.bases.first || g.outs === 2);
         const flyType = label === "flyout" || label === "popup" || label === "lineout";
         const hadRunners = !!(g.bases.first || g.bases.second || g.bases.third);
-        closePA(g, label, `${name}: ${label}`);
+        closePA(g, label, `${name}: ${label}${fnote ? " " + fnote : ""}`);
         const flipped = recordOut(g);
         if (!flipped)
             nextBatter(g);
@@ -1059,9 +1075,35 @@ function DugoutScorecard() {
         if (label === "groundout" && g.bases.third && !flipped)
             g.openTag = { b: bIdx, kind: "ground", note, log: lastPAIdx(g) };
     });
+    // Fielder picker: choose fielder(s) -> 6-3, F8, 6-4-3, etc. Used by batted outs, DP and FC.
+    const isAirOut = (lb) => lb === "flyout" || lb === "popup" || lb === "lineout";
+    const openFieldPick = (label, isK) => { setFieldSeq([]); setFieldPick({ label, isK }); };
+    const openFieldSeq = (title, instr, onRecord) => { setFieldSeq([]); setFieldPick({ label: "seq", isK: false, title, instr, onRecord }); };
+    const cancelFieldPick = () => { setFieldPick(null); setFieldSeq([]); };
+    const finishFieldPick = (note) => {
+        const fp = fieldPick;
+        if (!fp)
+            return;
+        if (fp.onRecord)
+            fp.onRecord(note);
+        else
+            playOut(fp.label, fp.isK, note);
+        setFieldPick(null);
+        setFieldSeq([]);
+    };
+    const pickField = (n) => {
+        if (!fieldPick)
+            return;
+        if (isAirOut(fieldPick.label))
+            finishFieldPick(fieldNote(fieldPick.label, [n])); // single fielder -> record now
+        else
+            setFieldSeq((seq) => [...seq, n]);
+    };
+    const recordFieldOut = () => { if (fieldPick) finishFieldPick(fieldNote(fieldPick.label, fieldSeq)); };
+    const skipFieldOut = () => { if (fieldPick) finishFieldPick(""); };
     // Fielder's choice: batter reaches, the selected runner is forced out.
     // Remaining runners + batter advance on the force.
-    const playFC = (outBase) => {
+    const playFC = (outBase, fnote) => {
         mutate((g) => {
             addPitch(g);
             g.openK = null;
@@ -1073,8 +1115,8 @@ function DugoutScorecard() {
             st.ab += 1;
             chargeP(g, "outs");
             g.bases[outBase] = false;
-            cardMark(g, bIdx, "FC", 1);
-            closePA(g, `fielder's choice — runner from ${baseLabel(outBase)} forced out`, `${name}: fielder's choice — runner from ${baseLabel(outBase)} forced out`);
+            cardMark(g, bIdx, fnote || "FC", 1);
+            closePA(g, `fielder's choice — runner from ${baseLabel(outBase)} forced out`, `${name}: fielder's choice${fnote ? " " + fnote : ""} — runner from ${baseLabel(outBase)} forced out`);
             const flipped = recordOut(g);
             if (!flipped) {
                 const runs = forceAdvance(g, bIdx);
@@ -1090,7 +1132,7 @@ function DugoutScorecard() {
         setFcMenu(false);
     };
     // FC variant: the OUT is the batter at 1st; everyone else moves up
-    const playFCBatterOut = () => {
+    const playFCBatterOut = (fnote) => {
         mutate((g) => {
             addPitch(g);
             g.openK = null;
@@ -1101,9 +1143,9 @@ function DugoutScorecard() {
             const name = currentBatterName();
             st.ab += 1;
             chargeP(g, "outs");
-            cardMark(g, bIdx, "GO", 0);
+            cardMark(g, bIdx, fnote || "GO", 0);
             const willPlay = g.outs < 2; // runners only advance if this isn't the 3rd out
-            closePA(g, willPlay ? "out at 1st — runners advance" : "out at 1st", `${name}: out at 1st${willPlay ? ", runners advance" : ""}`);
+            closePA(g, willPlay ? "out at 1st — runners advance" : "out at 1st", `${name}: out at 1st${fnote ? " " + fnote : ""}${willPlay ? ", runners advance" : ""}`);
             const flipped = recordOut(g);
             if (!flipped) {
                 const runs = advanceAll(g, 1, null); // station-to-station, no batter
@@ -1244,7 +1286,7 @@ function DugoutScorecard() {
         nextBatter(g);
     });
     // Double play — batter is out plus one selected runner (two outs on the play).
-    const playDoublePlay = (runnerBase) => {
+    const playDoublePlay = (runnerBase, fnote) => {
         mutate((g) => {
             addPitch(g);
             g.openK = null;
@@ -1254,7 +1296,7 @@ function DugoutScorecard() {
             const st = g.stats[battingSide][bIdx];
             const name = currentBatterName();
             st.ab += 1;
-            cardMark(g, bIdx, "DP", 0);
+            cardMark(g, bIdx, fnote || "DP", 0);
             // snapshot the runners before the play resolves
             const had = {
                 first: g.bases.first,
@@ -1263,7 +1305,7 @@ function DugoutScorecard() {
             };
             // two outs on the play: the batter, plus the selected runner
             chargeP(g, "outs"); // batter
-            closePA(g, "double play", `${name}: grounds into a double play`);
+            closePA(g, "double play", `${name}: grounds into a double play${fnote ? " " + fnote : ""}`);
             recordOut(g); // batter out (DP offered only with < 2 outs)
             chargeP(g, "outs"); // runner
             const flipped = recordOut(g);
@@ -3513,10 +3555,10 @@ function DugoutScorecard() {
                         React.createElement("button", { className: "dg hit", onClick: () => playHit(3, "triple") }, "3B"),
                         React.createElement("button", { className: "dg hit", onClick: () => playHit(4, "HOME RUN") }, "HR")),
                     React.createElement("div", { className: "btnrow r5" },
-                        React.createElement("button", { className: "dg outb", onClick: () => playOut("groundout", false) }, "Gnd"),
-                        React.createElement("button", { className: "dg outb", onClick: () => playOut("flyout", false) }, "Fly"),
-                        React.createElement("button", { className: "dg outb", onClick: () => playOut("popup", false) }, "Pop"),
-                        React.createElement("button", { className: "dg outb", onClick: () => playOut("lineout", false) }, "Line"),
+                        React.createElement("button", { className: "dg outb", onClick: () => openFieldPick("groundout", false) }, "Gnd"),
+                        React.createElement("button", { className: "dg outb", onClick: () => openFieldPick("flyout", false) }, "Fly"),
+                        React.createElement("button", { className: "dg outb", onClick: () => openFieldPick("popup", false) }, "Pop"),
+                        React.createElement("button", { className: "dg outb", onClick: () => openFieldPick("lineout", false) }, "Line"),
                         React.createElement("button", { className: "dg outb", onClick: () => playOut("strikeout", true) }, "K")),
                     React.createElement("div", { className: "btnrow r4" },
                         React.createElement("button", { className: "dg outb", onClick: () => setDpMenu(true), disabled: game.outs >= 2 ||
@@ -3952,16 +3994,30 @@ function DugoutScorecard() {
                         React.createElement("button", { className: "dg outb", onClick: () => runnerOut(baseMenu) }, "Out on the bases"),
                         React.createElement("button", { className: "dg ghost", onClick: () => runnerClear(baseMenu) }, "Remove runner"),
                         React.createElement("button", { className: "dg ghost", onClick: () => setBaseMenu(null) }, "Cancel"))))),
+            fieldPick && game && (React.createElement("div", { className: "modal-back", onClick: cancelFieldPick },
+                React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
+                    React.createElement("h3", null, fieldPick.title || ({ groundout: "Groundout", flyout: "Fly out", popup: "Pop out", lineout: "Line out" })[fieldPick.label] || "Out"),
+                    React.createElement("p", null, fieldPick.instr || (isAirOut(fieldPick.label)
+                        ? "Tap the fielder who made the catch."
+                        : "Tap the fielders in order (e.g. SS then 1B = 6-3).")),
+                    !isAirOut(fieldPick.label) && (React.createElement("div", { style: { textAlign: "center", fontFamily: "'IBM Plex Mono', monospace", fontSize: "26px", fontWeight: 700, color: "#F5C518", letterSpacing: ".05em", margin: "4px 0 10px", minHeight: "30px" } }, fieldNote(fieldPick.label, fieldSeq) || "\u2014")),
+                    React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "8px", marginBottom: "12px" } }, FPOS.map((p) => React.createElement("button", { key: p.n, className: "dg outb", onClick: () => pickField(p.n) },
+                        p.l,
+                        React.createElement("span", { style: { opacity: .55, fontSize: "11px", marginLeft: "5px" } }, p.n)))),
+                    React.createElement("div", { className: "btnrow" },
+                        !isAirOut(fieldPick.label) && (React.createElement("button", { className: "dg ghost", onClick: () => setFieldSeq((s) => s.slice(0, -1)), disabled: !fieldSeq.length }, "Undo")),
+                        React.createElement("button", { className: "dg ghost", onClick: skipFieldOut }, "Skip (no detail)"),
+                        !isAirOut(fieldPick.label) && (React.createElement("button", { className: "dg", onClick: recordFieldOut, disabled: !fieldSeq.length }, "Record")))))),
             fcMenu && game && (React.createElement("div", { className: "modal-back", onClick: () => setFcMenu(false) },
                 React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
                     React.createElement("h3", null, "Fielder's choice"),
                     React.createElement("p", null, "Who was out on the play?"),
                     React.createElement("div", { className: "btnrow" },
-                        ["third", "second", "first"].map((b) => game.bases[b] && (React.createElement("button", { key: b, className: "dg outb", onClick: () => playFC(b) },
+                        ["third", "second", "first"].map((b) => game.bases[b] && (React.createElement("button", { key: b, className: "dg outb", onClick: () => { setFcMenu(false); openFieldSeq("Fielder's choice", "Tap fielders in order (e.g. 6-4).", (note) => playFC(b, note)); } },
                             "Runner from ",
                             baseLabel(b),
                             " out \u2014 batter reaches"))),
-                        React.createElement("button", { className: "dg outb", onClick: playFCBatterOut }, "Batter out at 1st \u2014 runners advance"),
+                        React.createElement("button", { className: "dg outb", onClick: () => { setFcMenu(false); openFieldSeq("Out at 1st", "Tap fielders in order (e.g. 5-3).", (note) => playFCBatterOut(note)); } }, "Batter out at 1st \u2014 runners advance"),
                         React.createElement("button", { className: "dg ghost", onClick: () => setFcMenu(false) }, "Cancel"))))),
             sacMenu && game && (React.createElement("div", { className: "modal-back", onClick: () => setSacMenu(false) },
                 React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
@@ -4104,7 +4160,7 @@ function DugoutScorecard() {
                     React.createElement("h3", null, "Double play"),
                     React.createElement("p", null, "Batter is out. Which runner is also out?"),
                     React.createElement("div", { className: "btnrow" },
-                        ["third", "second", "first"].map((b) => game.bases[b] && (React.createElement("button", { key: b, className: "dg outb", onClick: () => playDoublePlay(b) },
+                        ["third", "second", "first"].map((b) => game.bases[b] && (React.createElement("button", { key: b, className: "dg outb", onClick: () => { setDpMenu(false); openFieldSeq("Double play", "Tap fielders in order (e.g. 6-4-3).", (note) => playDoublePlay(b, note)); } },
                             "Runner from ",
                             baseLabel(b)))),
                         React.createElement("button", { className: "dg ghost", onClick: () => setDpMenu(false) }, "Cancel"))))),
