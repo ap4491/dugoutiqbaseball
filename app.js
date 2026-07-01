@@ -161,7 +161,8 @@ function DugoutScorecard() {
     catch (_a) { } }, [phase, teams, game, pitchLimit]);
     const [fcMenu, setFcMenu] = useState(false);
     const [fieldPick, setFieldPick] = useState(null); // {label, isK} | null — fielder picker for batted outs
-    const [fieldSeq, setFieldSeq] = useState([]); // positions tapped, e.g. [6,3]    const [sacMenu, setSacMenu] = useState(false);
+    const [fieldSeq, setFieldSeq] = useState([]); // positions tapped, e.g. [6,3]
+    const [sacMenu, setSacMenu] = useState(false);
     const [dpMenu, setDpMenu] = useState(false);
     const [tagMenu, setTagMenu] = useState(false);
     const [subMenu, setSubMenu] = useState(false);
