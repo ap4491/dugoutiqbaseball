@@ -47,6 +47,39 @@ const fieldNote = (label, seq) => {
     return seq.join("-"); // groundout / default
 };
 const SAVE_KEY = "dugoutiq-save-v1";
+// ---- Backup & restore ----
+const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
+const collectBackup = () => {
+    const data = {};
+    for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.indexOf("dugoutiq-") === 0 && k !== BACKUP_META_KEY)
+            data[k] = localStorage.getItem(k);
+    }
+    return { v: 1, app: "dugoutiq", t: Date.now(), data };
+};
+const applyBackup = (payload) => {
+    if (!payload || typeof payload.data !== "object")
+        throw new Error("Not a DugoutIQ backup");
+    // clear existing app data (keep the backup code so future backups continue it)
+    const gone = [];
+    for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.indexOf("dugoutiq-") === 0 && k !== BACKUP_META_KEY)
+            gone.push(k);
+    }
+    gone.forEach((k) => localStorage.removeItem(k));
+    Object.keys(payload.data).forEach((k) => {
+        if (k.indexOf("dugoutiq-") === 0 && typeof payload.data[k] === "string")
+            localStorage.setItem(k, payload.data[k]);
+    });
+};
+const backupMeta = () => { try {
+    return JSON.parse(localStorage.getItem(BACKUP_META_KEY) || "null");
+}
+catch (_a) {
+    return null;
+} };
 const loadSaved = () => { try {
     return JSON.parse(localStorage.getItem(SAVE_KEY) || "null");
 }
@@ -194,6 +227,93 @@ function DugoutScorecard() {
     const [liveVideo, setLiveVideo] = useState(() => loadLive().video || ""); // optional YouTube/StreamYard live video link
     const [liveOpen, setLiveOpen] = useState(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
+    // ---- Backup & restore state ----
+    const [bkMeta, setBkMeta] = useState(backupMeta); // {code,t} | null
+    const [bkBusy, setBkBusy] = useState(false);
+    const [bkMsg, setBkMsg] = useState(null); // {ok, text} | null
+    const [restoreIn, setRestoreIn] = useState("");
+    const runBackup = async () => {
+        setBkBusy(true);
+        setBkMsg(null);
+        try {
+            const payload = collectBackup();
+            const body = JSON.stringify({ code: (bkMeta && bkMeta.code) || undefined, payload });
+            if (body.length > 4.2 * 1024 * 1024)
+                throw new Error("Backup is very large — use Export file instead");
+            const r = await fetch("/.netlify/functions/backup", { method: "POST", headers: { "Content-Type": "application/json" }, body });
+            const d = await r.json().catch(() => ({}));
+            if (!r.ok || !d.ok)
+                throw new Error(d.message || "Backup failed");
+            const meta = { code: d.code, t: d.t || Date.now() };
+            localStorage.setItem(BACKUP_META_KEY, JSON.stringify(meta));
+            setBkMeta(meta);
+            setBkMsg({ ok: true, text: "Backed up. Keep your code somewhere safe — it's how you restore." });
+        }
+        catch (e) {
+            setBkMsg({ ok: false, text: (e && e.message) || "Backup failed — are you online?" });
+        }
+        setBkBusy(false);
+    };
+    const runRestore = async () => {
+        const code = restoreIn.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+        if (code.length !== 12) {
+            setBkMsg({ ok: false, text: "Enter the 12-character backup code." });
+            return;
+        }
+        if (!window.confirm("Restore this backup? Everything currently in the app on this device (games, teams, settings) will be replaced."))
+            return;
+        setBkBusy(true);
+        setBkMsg(null);
+        try {
+            const r = await fetch("/.netlify/functions/backup?code=" + code);
+            const d = await r.json().catch(() => ({}));
+            if (!r.ok || !d.ok || !d.payload)
+                throw new Error(d.message || "No backup found for that code");
+            applyBackup(d.payload);
+            localStorage.setItem(BACKUP_META_KEY, JSON.stringify({ code, t: (d.payload && d.payload.t) || Date.now() }));
+            window.location.reload();
+        }
+        catch (e) {
+            setBkMsg({ ok: false, text: (e && e.message) || "Restore failed — are you online?" });
+            setBkBusy(false);
+        }
+    };
+    const exportBackupFile = () => {
+        try {
+            const payload = collectBackup();
+            const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
+            const a = document.createElement("a");
+            a.href = URL.createObjectURL(blob);
+            a.download = "DugoutIQ-backup-" + new Date().toISOString().slice(0, 10) + ".json";
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setBkMsg({ ok: true, text: "Backup file downloaded. Keep it somewhere safe (works offline)." });
+        }
+        catch (e) {
+            setBkMsg({ ok: false, text: "Couldn't create the file on this device." });
+        }
+    };
+    const importBackupFile = (ev) => {
+        const f = ev.target.files && ev.target.files[0];
+        ev.target.value = "";
+        if (!f)
+            return;
+        if (!window.confirm("Restore from this file? Everything currently in the app on this device (games, teams, settings) will be replaced."))
+            return;
+        const rd = new FileReader();
+        rd.onload = () => {
+            try {
+                const payload = JSON.parse(String(rd.result || ""));
+                applyBackup(payload);
+                window.location.reload();
+            }
+            catch (e) {
+                setBkMsg({ ok: false, text: "That file isn't a DugoutIQ backup." });
+            }
+        };
+        rd.readAsText(f);
+    };
     const [liveCopied, setLiveCopied] = useState(false);
     const [themeColor, setThemeColor] = useState(() => { try {
         return localStorage.getItem("dugoutiq-theme-color") || "#1B57A0";
@@ -1955,17 +2075,25 @@ function DugoutScorecard() {
             balls: g.balls,
             strikes: g.strikes,
             outs: g.outs,
-            bases: {
-                first: !!g.bases.first,
-                second: !!g.bases.second,
-                third: !!g.bases.third,
-            },
+            bases: (() => {
+                const bs = (k) => {
+                    const r = g.bases[k];
+                    if (!r)
+                        return false;
+                    const p = (r.b != null && g.lineup[battingSide][r.b]) || null;
+                    return { n: p ? p.name : "" };
+                };
+                return { first: bs("first"), second: bs("second"), third: bs("third") };
+            })(),
             batter: bat ? bat.name : "",
             onDeck: onDeck ? onDeck.name : "",
             pitches: fp ? fp.pitches || 0 : 0,
             pitcher: fp ? fp.name : "",
             lastPlay: g.lastPlay || "",
             linescore: g.linescore.map((r) => ({ away: r.away, home: r.home })),
+            log: (g.log || []).slice(-40).map((e) => e.type === "pa"
+                ? { p: 1, i: e.i, h: e.h, b: e.batter, r: e.result || "", q: (e.seq || []).join(" ") }
+                : { i: e.i, h: e.h, t: e.t || "" }),
             video: parseStreamUrl(liveVideo) || null,
         };
     };
@@ -3853,6 +3981,26 @@ function DugoutScorecard() {
                     React.createElement("div", { style: { fontWeight: 700, color: "#A9C5E8", fontSize: 13, margin: "4px 0 8px", letterSpacing: ".4px" } }, "PUBLIC GAMES"),
                     React.createElement("a", { href: "/games.html", target: "_blank", rel: "noopener", className: "dg", style: { display: "block", textAlign: "center", textDecoration: "none", marginBottom: 6 } }, "Open the public Games page \u2192"),
                     React.createElement("p", { style: { fontSize: 12, opacity: 0.7, margin: "0 0 16px" } }, "Games appear there only when a scorer ticks \u201Clist publicly\u201D in the live-share window."),
+                    React.createElement("div", { style: { fontWeight: 700, color: "#A9C5E8", fontSize: 13, margin: "4px 0 8px", letterSpacing: ".4px" } }, "BACKUP & RESTORE"),
+                    React.createElement("p", { style: { fontSize: 12, opacity: 0.75, margin: "0 0 8px" } }, "Backs up everything \u2014 saved games, teams, rosters, settings, and your activation \u2014 so a lost or new phone doesn't mean a lost season."),
+                    bkMeta && (React.createElement("div", { style: { background: "#0E1A3A", border: "1px solid #2B5AA0", borderRadius: 8, padding: "9px 11px", marginBottom: 8 } },
+                        React.createElement("div", { style: { fontSize: 11, color: "#A9C5E8", letterSpacing: ".05em", marginBottom: 2 } }, "YOUR BACKUP CODE"),
+                        React.createElement("div", { style: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 17, fontWeight: 700, color: "#F5C518", letterSpacing: ".12em", userSelect: "all" } }, bkMeta.code),
+                        React.createElement("div", { style: { fontSize: 11, opacity: 0.65, marginTop: 3 } },
+                            "Last backed up ",
+                            new Date(bkMeta.t).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }),
+                            " \u00B7 enter this code on any device to restore"))),
+                    React.createElement("button", { className: "dg hit", style: { width: "100%", marginBottom: 8 }, onClick: runBackup, disabled: bkBusy }, bkBusy ? "Working\u2026" : bkMeta ? "\u2601\uFE0F Back up now (updates your code)" : "\u2601\uFE0F Back up now"),
+                    React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr", marginBottom: 10 } },
+                        React.createElement("button", { className: "dg ghost", onClick: exportBackupFile, disabled: bkBusy }, "\u2B07\uFE0F Export file"),
+                        React.createElement("label", { className: "dg ghost", style: { textAlign: "center", cursor: "pointer" } },
+                            "\uD83D\uDCC2 Import file",
+                            React.createElement("input", { type: "file", accept: "application/json,.json", onChange: importBackupFile, style: { display: "none" } }))),
+                    React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 6 } },
+                        React.createElement("input", { className: "dg-in", style: { flex: 1, textTransform: "uppercase" }, value: restoreIn, onChange: (e) => setRestoreIn(e.target.value), placeholder: "Backup code\u2026", "aria-label": "Backup code to restore", autoComplete: "off" }),
+                        React.createElement("button", { className: "dg ghost", onClick: runRestore, disabled: bkBusy || !restoreIn.trim() }, "Restore")),
+                    bkMsg && (React.createElement("p", { style: { fontSize: 12, margin: "0 0 10px", color: bkMsg.ok ? "#3ad07a" : "#E8915A" } }, bkMsg.text)),
+                    React.createElement("p", { style: { fontSize: 11, opacity: 0.55, margin: "0 0 16px" } }, "Cloud backup needs internet. Export file works fully offline \u2014 keep one before playoffs."),
                     React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr" } },
                         React.createElement("button", { className: "dg ghost", onClick: () => setSettingsOpen(false) }, "Done")),
                     React.createElement("p", { style: { fontSize: 11, opacity: 0.55, textAlign: "center", marginTop: 12 } }, "DugoutIQ \u2014 Manage the Game")))),

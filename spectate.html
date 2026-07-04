@@ -73,7 +73,9 @@
   .crow i{ width:13px; height:13px; border-radius:50%; background:rgba(255,255,255,.07); }
   .crow i.on{ background:var(--amber); box-shadow:0 0 12px rgba(245,197,24,.75); }
   .crow.o i.on{ background:var(--red); box-shadow:0 0 12px rgba(232,41,28,.7); }
-  .dia{ width:168px; height:150px; flex:0 0 auto; filter:drop-shadow(0 10px 22px rgba(0,0,0,.45)); }
+  .dia{ width:198px; height:138px; flex:0 0 auto; filter:drop-shadow(0 10px 22px rgba(0,0,0,.45)); }
+  .dia .rn{ font-family:"Saira Condensed",sans-serif; font-weight:700; font-size:13px; letter-spacing:.03em;
+            fill:var(--white); stroke:rgba(10,17,40,.85); stroke-width:3px; paint-order:stroke; }
   .dia .bs{ fill:rgba(255,255,255,.08); stroke:rgba(169,197,232,.5); stroke-width:1.4; }
   .dia .bs.on{ fill:var(--amber); stroke:var(--amber); filter:drop-shadow(0 0 8px rgba(245,197,24,.9)); }
   .dia .hp{ fill:var(--white); }
@@ -187,14 +189,19 @@
       : `<div class="sb-half">${s.half==="top"?"▲":"▼"}</div><div class="sb-inn">${s.inning}</div>`;
   }
 
+  function rname(x){ return (x && typeof x === "object" && x.n) ? String(x.n).slice(0,12) : ""; }
   function diamond(b){
     const on=(x)=>x?'on':'';
-    return `<svg class="dia" viewBox="0 0 132 120" aria-label="Bases">
-      <path class="ln" d="M66 106 L26 66 L66 26 L106 66 Z"/>
-      <rect class="bs ${on(b.second)}" x="59" y="19" width="14" height="14" rx="2" transform="rotate(45 66 26)"/>
-      <rect class="bs ${on(b.first)}"  x="99" y="59" width="14" height="14" rx="2" transform="rotate(45 106 66)"/>
-      <rect class="bs ${on(b.third)}"  x="19" y="59" width="14" height="14" rx="2" transform="rotate(45 26 66)"/>
-      <polygon class="hp" points="59,102 73,102 73,109 66,115 59,109"/>
+    const lbl=(x,y,a,n)=> n?`<text class="rn" x="${x}" y="${y}" text-anchor="${a}">${esc(n)}</text>`:"";
+    return `<svg class="dia" viewBox="0 0 200 140" aria-label="Bases">
+      <path class="ln" d="M100 120 L55 75 L100 30 L145 75 Z"/>
+      <rect class="bs ${on(b.second)}" x="93" y="23" width="14" height="14" rx="2" transform="rotate(45 100 30)"/>
+      <rect class="bs ${on(b.first)}"  x="138" y="68" width="14" height="14" rx="2" transform="rotate(45 145 75)"/>
+      <rect class="bs ${on(b.third)}"  x="48" y="68" width="14" height="14" rx="2" transform="rotate(45 55 75)"/>
+      <polygon class="hp" points="93,116 107,116 107,123 100,129 93,123"/>
+      ${lbl(100,16,"middle",rname(b.second))}
+      ${lbl(156,79,"start",rname(b.first))}
+      ${lbl(44,79,"end",rname(b.third))}
     </svg>`;
   }
 
