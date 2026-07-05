@@ -62,8 +62,8 @@
     if(s.over){
       bug.innerHTML = `<div class="bug">
         <div class="teams">
-          <div class="trow "><span class="acc" style="background:${s.away.color||'#2B5AA0'}"></span>${s.away.logo?`<img class="olg" src="${s.away.logo}">`:""}<span class="tname">${esc(s.away.name)}</span><span class="trun">${s.away.runs}</span></div>
-          <div class="trow "><span class="acc" style="background:${s.home.color||'#2B5AA0'}"></span>${s.home.logo?`<img class="olg" src="${s.home.logo}">`:""}<span class="tname">${esc(s.home.name)}</span><span class="trun">${s.home.runs}</span></div>
+          <div class="trow "><span class="acc" style="background:${s.away.color||'#2B5AA0'}"></span>${s.away.logo?`<img class="olg" src="${s.away.logo}">`:""}<span class="tname">${esc(s.away.abbr||s.away.name)}</span><span class="trun">${s.away.runs}</span></div>
+          <div class="trow "><span class="acc" style="background:${s.home.color||'#2B5AA0'}"></span>${s.home.logo?`<img class="olg" src="${s.home.logo}">`:""}<span class="tname">${esc(s.home.abbr||s.home.name)}</span><span class="trun">${s.home.runs}</span></div>
         </div>
         <div class="sep"></div>
         <div class="final">FINAL</div>
@@ -73,8 +73,8 @@
     const arrow = battingAway ? "▲" : "▼";
     bug.innerHTML = `<div class="bug">
       <div class="teams">
-        <div class="trow ${battingAway?'bat':''}"><span class="acc" style="background:${s.away.color||'#2B5AA0'}"></span>${s.away.logo?`<img class="olg" src="${s.away.logo}">`:""}<span class="tname">${esc(s.away.name)}</span><span class="trun">${s.away.runs}</span></div>
-        <div class="trow ${!battingAway?'bat':''}"><span class="acc" style="background:${s.home.color||'#2B5AA0'}"></span>${s.home.logo?`<img class="olg" src="${s.home.logo}">`:""}<span class="tname">${esc(s.home.name)}</span><span class="trun">${s.home.runs}</span></div>
+        <div class="trow ${battingAway?'bat':''}"><span class="acc" style="background:${s.away.color||'#2B5AA0'}"></span>${s.away.logo?`<img class="olg" src="${s.away.logo}">`:""}<span class="tname">${esc(s.away.abbr||s.away.name)}</span><span class="trun">${s.away.runs}</span></div>
+        <div class="trow ${!battingAway?'bat':''}"><span class="acc" style="background:${s.home.color||'#2B5AA0'}"></span>${s.home.logo?`<img class="olg" src="${s.home.logo}">`:""}<span class="tname">${esc(s.home.abbr||s.home.name)}</span><span class="trun">${s.home.runs}</span></div>
       </div>
       <div class="sep"></div>
       <div class="mid">

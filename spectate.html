@@ -180,7 +180,7 @@
     const battingHome = s.half !== "top" && !s.over;
     $("sb-away").classList.toggle("bat", battingAway);
     $("sb-home").classList.toggle("bat", battingHome);
-    $("an").textContent = s.away.name; $("hn").textContent = s.home.name;
+    $("an").textContent = s.away.abbr || s.away.name; $("hn").textContent = s.home.abbr || s.home.name;
     $("ar").textContent = s.away.runs; $("hr").textContent = s.home.runs;
     const setLogo = (id, src) => { const el=$(id); if(src){ el.src=src; el.hidden=false; } else el.hidden=true; };
     setLogo("al", s.away.logo); setLogo("hl", s.home.logo);
@@ -249,8 +249,8 @@
         <h3>Linescore</h3>
         <table class="ls">
           <tr><th></th>${ls}<th>R</th><th>H</th><th>E</th></tr>
-          <tr><td class="tm">${esc(s.away.name)}</td>${lsA}${rhe(s.away)}</tr>
-          <tr><td class="tm">${esc(s.home.name)}</td>${lsH}${rhe(s.home)}</tr>
+          <tr><td class="tm">${esc(s.away.abbr || s.away.name)}</td>${lsA}${rhe(s.away)}</tr>
+          <tr><td class="tm">${esc(s.home.abbr || s.home.name)}</td>${lsH}${rhe(s.home)}</tr>
         </table>
       </div>
       ${feed(s.log)}

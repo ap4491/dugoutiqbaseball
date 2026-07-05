@@ -47,6 +47,7 @@ const fieldNote = (label, seq) => {
     return seq.join("-"); // groundout / default
 };
 const SAVE_KEY = "dugoutiq-save-v1";
+const APP_VERSION = "75"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -339,6 +340,7 @@ function DugoutScorecard() {
         "#B91C1C", "#C2410C", "#7E22CE", "#0F172A",
     ];
     const teamColor = (side) => (teams[side] && teams[side].color) || (side === "away" ? "#134A8E" : "#B91C1C");
+    const setTeamAbbr = (side, abbr) => setTeams((t) => (Object.assign(Object.assign({}, t), { [side]: Object.assign(Object.assign({}, t[side]), { abbr: abbr.toUpperCase().slice(0, 6) }) })));
     const setTeamColor = (side, color) => setTeams((t) => (Object.assign(Object.assign({}, t), { [side]: Object.assign(Object.assign({}, t[side]), { color }) })));
     const setTeamLogo = (side, logo) => setTeams((t) => (Object.assign(Object.assign({}, t), { [side]: Object.assign(Object.assign({}, t[side]), { logo: logo || "" }) })));
     // Pull the dominant vivid color out of a logo (skips white/black/grey + transparent).
@@ -1096,6 +1098,32 @@ function DugoutScorecard() {
             g.strikes += 1;
         logPitch(g, "foul", "Foul ball");
     });
+    // Foul tip: caught by the catcher, so it's ALWAYS a strike — including
+    // strike three (and no dropped-3rd-strike, since the tip was caught).
+    const tapFoulTip = () => mutate((g) => {
+        addPitch(g);
+        g.openK = null;
+        g.openHit = null;
+        g.openTag = null;
+        if (g.strikes === 2) {
+            const st = g.stats[battingSide][g.batter[battingSide]];
+            st.ab += 1;
+            st.k += 1;
+            chargeP(g, "k");
+            chargeP(g, "outs");
+            cardMark(g, g.batter[battingSide], "K", 0);
+            closePA(g, "strikeout", `${currentBatterName()} strikes out on a foul tip`);
+            const flipped = recordOut(g);
+            if (!flipped)
+                nextBatter(g);
+            else
+                advanceOrder(g);
+        }
+        else {
+            g.strikes += 1;
+            logPitch(g, "foul tip", `Foul tip — strike ${g.strikes}`);
+        }
+    });
     // advance batting order without resetting the (already reset) count
     const advanceOrder = (g) => {
         const wrapped = (g.batter[battingSide] + 1) % g.lineup[battingSide].length === 0;
@@ -1183,7 +1211,7 @@ function DugoutScorecard() {
         const d3kLegal = isK && (!g.bases.first || g.outs === 2);
         const flyType = label === "flyout" || label === "popup" || label === "lineout";
         const hadRunners = !!(g.bases.first || g.bases.second || g.bases.third);
-        closePA(g, label, `${name}: ${label}${fnote ? " " + fnote : ""}`);
+        closePA(g, `${label}${fnote ? " " + fnote : ""}`, `${name}: ${label}${fnote ? " " + fnote : ""}`);
         const flipped = recordOut(g);
         if (!flipped)
             nextBatter(g);
@@ -1237,7 +1265,7 @@ function DugoutScorecard() {
             chargeP(g, "outs");
             g.bases[outBase] = false;
             cardMark(g, bIdx, fnote || "FC", 1);
-            closePA(g, `fielder's choice — runner from ${baseLabel(outBase)} forced out`, `${name}: fielder's choice${fnote ? " " + fnote : ""} — runner from ${baseLabel(outBase)} forced out`);
+            closePA(g, `fielder's choice${fnote ? " " + fnote : ""} — runner from ${baseLabel(outBase)} forced out`, `${name}: fielder's choice${fnote ? " " + fnote : ""} — runner from ${baseLabel(outBase)} forced out`);
             const flipped = recordOut(g);
             if (!flipped) {
                 const runs = forceAdvance(g, bIdx);
@@ -1266,7 +1294,7 @@ function DugoutScorecard() {
             chargeP(g, "outs");
             cardMark(g, bIdx, fnote || "GO", 0);
             const willPlay = g.outs < 2; // runners only advance if this isn't the 3rd out
-            closePA(g, willPlay ? "out at 1st — runners advance" : "out at 1st", `${name}: out at 1st${fnote ? " " + fnote : ""}${willPlay ? ", runners advance" : ""}`);
+            closePA(g, `out at 1st${fnote ? " " + fnote : ""}${willPlay ? " — runners advance" : ""}`, `${name}: out at 1st${fnote ? " " + fnote : ""}${willPlay ? ", runners advance" : ""}`);
             const flipped = recordOut(g);
             if (!flipped) {
                 const runs = advanceAll(g, 1, null); // station-to-station, no batter
@@ -1426,7 +1454,7 @@ function DugoutScorecard() {
             };
             // two outs on the play: the batter, plus the selected runner
             chargeP(g, "outs"); // batter
-            closePA(g, "double play", `${name}: grounds into a double play${fnote ? " " + fnote : ""}`);
+            closePA(g, `double play${fnote ? " " + fnote : ""}`, `${name}: grounds into a double play${fnote ? " " + fnote : ""}`);
             recordOut(g); // batter out (DP offered only with < 2 outs)
             chargeP(g, "outs"); // runner
             const flipped = recordOut(g);
@@ -1875,6 +1903,58 @@ function DugoutScorecard() {
         });
         setBaseMenu(null);
     };
+    const caughtStealing = (base) => {
+        const who = runnerLabel(base);
+        const targetTxt = base === "third" ? "home" : baseLabel(base === "first" ? "second" : "third");
+        mutate((g) => {
+            g.bases[base] = false;
+            chargeP(g, "outs");
+            logPlay(g, `${who} caught stealing ${targetTxt} (CS)`);
+            recordOut(g);
+        });
+        setBaseMenu(null);
+    };
+    const pickedOff = (base) => {
+        const who = runnerLabel(base);
+        mutate((g) => {
+            g.bases[base] = false;
+            chargeP(g, "outs");
+            logPlay(g, `${who} picked off ${baseLabel(base)} (PO)`);
+            recordOut(g);
+        });
+        setBaseMenu(null);
+    };
+    // Overthrow / errant pickoff: the runner advances a base and the fielding
+    // team is charged an error (shows in the E column).
+    const advanceOnError = (base) => {
+        const who = runnerLabel(base);
+        if (base === "third") {
+            mutate((g) => {
+                creditRun(g, g.bases.third);
+                g.bases.third = false;
+                addRuns(g, 1);
+                chargeP(g, "r");
+                g.errors[fieldingSide] += 1;
+                logPlay(g, `Throwing error \u2014 ${who} scores from 3rd (E)`);
+            });
+            setBaseMenu(null);
+            return;
+        }
+        const target = base === "first" ? "second" : "third";
+        if (game.bases[target]) {
+            mutate((g) => logPlay(g, `${baseLabel(target)} is occupied \u2014 move blocked`, "info"));
+            setBaseMenu(null);
+            return;
+        }
+        mutate((g) => {
+            g.bases[target] = g.bases[base];
+            g.bases[base] = false;
+            cardAdvance(g, g.bases[target], target === "second" ? 2 : 3);
+            g.errors[fieldingSide] += 1;
+            logPlay(g, `Throw gets away \u2014 ${who} takes ${baseLabel(target)} (E)`);
+        });
+        setBaseMenu(null);
+    };
     const runnerClear = (base) => {
         const who = runnerLabel(base);
         mutate((g) => {
@@ -2067,9 +2147,10 @@ function DugoutScorecard() {
         const fp = curP(g, fieldingSide);
         return {
             v: 1,
+            av: APP_VERSION,
             over: !!g.over,
-            away: { name: nm("away"), runs: totals("away"), hits: g.hits.away, errors: g.errors.away, color: teamColor("away"), logo: teams.away.logo || "" },
-            home: { name: nm("home"), runs: totals("home"), hits: g.hits.home, errors: g.errors.home, color: teamColor("home"), logo: teams.home.logo || "" },
+            away: { name: nm("away"), abbr: (teams.away.abbr || "").trim(), runs: totals("away"), hits: g.hits.away, errors: g.errors.away, color: teamColor("away"), logo: teams.away.logo || "" },
+            home: { name: nm("home"), abbr: (teams.home.abbr || "").trim(), runs: totals("home"), hits: g.hits.home, errors: g.errors.home, color: teamColor("home"), logo: teams.home.logo || "" },
             inning: g.inning,
             half: g.half,
             balls: g.balls,
@@ -3430,7 +3511,8 @@ function DugoutScorecard() {
         }
         button.roster-load:hover { color: var(--amberw); }
         .roster-n { color: var(--powder); font-weight: 500; font-size: 12px; }
-        .teamname-in { margin-bottom: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+        .teamname-in { margin-bottom: 6px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+        .abbr-in { margin-bottom: 12px; max-width: 100%; font-size: 13px; letter-spacing: .14em; text-transform: uppercase; opacity: .95; }
 
         /* ---- modal ---- */
         .modal-back {
@@ -3510,6 +3592,7 @@ function DugoutScorecard() {
                 React.createElement("div", { className: "setup-grid" }, ["away", "home"].map((side) => (React.createElement("div", { className: "setup-card", key: side },
                     React.createElement("h2", null, side === "away" ? "Visiting Club" : "Home Club"),
                     React.createElement("input", { className: "dg-in teamname-in", value: teams[side].name, onChange: (e) => setTeamName(side, e.target.value), "aria-label": `${side} team name` }),
+                    React.createElement("input", { className: "dg-in abbr-in", value: teams[side].abbr || "", maxLength: 6, placeholder: "Abbr \u2014 e.g. TIG (scoreboards)", onChange: (e) => setTeamAbbr(side, e.target.value), "aria-label": `${side} team short name for scoreboards` }),
                     React.createElement("div", { className: "team-custom" },
                         PRESET_TEAM_COLORS.map((c) => (React.createElement("button", { key: c, type: "button", className: `swatch ${teamColor(side) === c ? "sel" : ""}`, style: { background: c }, onClick: () => setTeamColor(side, c), "aria-label": `Set ${side} team color` }))),
                         React.createElement("input", { type: "color", className: "swatch-custom", value: teamColor(side), onChange: (e) => setTeamColor(side, e.target.value), "aria-label": `Custom ${side} team color` }),
@@ -3672,10 +3755,11 @@ function DugoutScorecard() {
                                         ? " · AT LIMIT"
                                         : ` · ${pitchLimit - p.pitches} left`))));
                     })(),
-                    React.createElement("div", { className: "btnrow r5" },
+                    React.createElement("div", { className: "btnrow r6" },
                         React.createElement("button", { className: "dg count", onClick: tapBall }, "Ball"),
                         React.createElement("button", { className: "dg count", onClick: tapStrike }, "Strike"),
                         React.createElement("button", { className: "dg count", onClick: tapFoul }, "Foul"),
+                        React.createElement("button", { className: "dg count", onClick: tapFoulTip }, "Tip"),
                         React.createElement("button", { className: "dg count", onClick: tapHBP }, "HBP"),
                         React.createElement("button", { className: "dg count", onClick: tapIBB }, "IBB")),
                     React.createElement("div", { className: "btnrow r4" },
@@ -4003,7 +4087,9 @@ function DugoutScorecard() {
                     React.createElement("p", { style: { fontSize: 11, opacity: 0.55, margin: "0 0 16px" } }, "Cloud backup needs internet. Export file works fully offline \u2014 keep one before playoffs."),
                     React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr" } },
                         React.createElement("button", { className: "dg ghost", onClick: () => setSettingsOpen(false) }, "Done")),
-                    React.createElement("p", { style: { fontSize: 11, opacity: 0.55, textAlign: "center", marginTop: 12 } }, "DugoutIQ \u2014 Manage the Game")))),
+                    React.createElement("p", { style: { fontSize: 11, opacity: 0.55, textAlign: "center", marginTop: 12 } },
+                        "DugoutIQ \u2014 Manage the Game \u00B7 App v",
+                        APP_VERSION)))),
             liveOpen && (React.createElement("div", { className: "modal-back", onClick: () => setLiveOpen(false) },
                 React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
                     React.createElement("h3", null, "Live spectator link"),
@@ -4139,6 +4225,9 @@ function DugoutScorecard() {
                             game.lineup[battingSide][game.openHit.b].name,
                             ")")),
                         React.createElement("button", { className: "dg", onClick: () => stealBase(baseMenu) }, baseMenu === "third" ? "Steals home" : `Steals ${baseMenu === "first" ? "2nd" : "3rd"}`),
+                        React.createElement("button", { className: "dg outb", onClick: () => caughtStealing(baseMenu) }, baseMenu === "third" ? "Caught stealing home" : `Caught stealing ${baseMenu === "first" ? "2nd" : "3rd"}`),
+                        React.createElement("button", { className: "dg outb", onClick: () => pickedOff(baseMenu) }, `Picked off ${baseLabel(baseMenu)}`),
+                        React.createElement("button", { className: "dg", onClick: () => advanceOnError(baseMenu) }, baseMenu === "third" ? "Scores on error (E)" : `Takes ${baseMenu === "first" ? "2nd" : "3rd"} on error (E)`),
                         React.createElement("button", { className: `dg ${game.openHit != null ? "" : "hit"}`, onClick: () => runnerScores(baseMenu) }, "Scores (PB / WP \u2014 no RBI)"),
                         React.createElement("button", { className: "dg outb", onClick: () => runnerOut(baseMenu) }, "Out on the bases"),
                         React.createElement("button", { className: "dg ghost", onClick: () => runnerClear(baseMenu) }, "Remove runner"),
