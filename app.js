@@ -46,8 +46,20 @@ const fieldNote = (label, seq) => {
     if (label === "lineout") return "L" + seq[0];
     return seq.join("-"); // groundout / default
 };
+// Load brand fonts from the app itself, so they work even if index.html is stale.
+(function () {
+    try {
+        if (!document.querySelector('link[href*="fonts.googleapis.com/css2"]')) {
+            var l = document.createElement("link");
+            l.rel = "stylesheet";
+            l.href = "https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap";
+            document.head.appendChild(l);
+        }
+    }
+    catch (e) { }
+})();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "75"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "76"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
