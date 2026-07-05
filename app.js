@@ -33,6 +33,20 @@ const pInnStr = (pp, sep, pre) => {
     return ks.length ? ks.map((k) => `${pre || ""}${k}: ${m[k]}`).join(sep || ", ") : "";
 };
 const snapshot = (s) => JSON.parse(JSON.stringify(s));
+// Scoreboard short name: "Clark's Harbour Foggies" -> "Foggies"; short names pass through;
+// falls back to initials ("CHF") when the nickname isn't usable.
+const autoAbbr = (name) => {
+    const n = (name || "").trim();
+    if (!n)
+        return "";
+    if (n.length <= 9)
+        return n;
+    const words = n.split(/\s+/);
+    const last = words[words.length - 1];
+    if (last.length >= 4 && last.length <= 10)
+        return last;
+    return words.map((w) => (w[0] || "")).join("").toUpperCase().slice(0, 4);
+};
 // Standard scorebook fielding positions
 const FPOS = [
     { n: 1, l: "P" }, { n: 2, l: "C" }, { n: 3, l: "1B" },
@@ -52,14 +66,14 @@ const fieldNote = (label, seq) => {
         if (!document.querySelector('link[href*="fonts.googleapis.com/css2"]')) {
             var l = document.createElement("link");
             l.rel = "stylesheet";
-            l.href = "https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap";
+            l.href = "https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700;800&family=Roboto+Mono:wght@400;500;600&display=swap";
             document.head.appendChild(l);
         }
     }
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "76"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "77"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -352,7 +366,6 @@ function DugoutScorecard() {
         "#B91C1C", "#C2410C", "#7E22CE", "#0F172A",
     ];
     const teamColor = (side) => (teams[side] && teams[side].color) || (side === "away" ? "#134A8E" : "#B91C1C");
-    const setTeamAbbr = (side, abbr) => setTeams((t) => (Object.assign(Object.assign({}, t), { [side]: Object.assign(Object.assign({}, t[side]), { abbr: abbr.toUpperCase().slice(0, 6) }) })));
     const setTeamColor = (side, color) => setTeams((t) => (Object.assign(Object.assign({}, t), { [side]: Object.assign(Object.assign({}, t[side]), { color }) })));
     const setTeamLogo = (side, logo) => setTeams((t) => (Object.assign(Object.assign({}, t), { [side]: Object.assign(Object.assign({}, t[side]), { logo: logo || "" }) })));
     // Pull the dominant vivid color out of a logo (skips white/black/grey + transparent).
@@ -2161,8 +2174,8 @@ function DugoutScorecard() {
             v: 1,
             av: APP_VERSION,
             over: !!g.over,
-            away: { name: nm("away"), abbr: (teams.away.abbr || "").trim(), runs: totals("away"), hits: g.hits.away, errors: g.errors.away, color: teamColor("away"), logo: teams.away.logo || "" },
-            home: { name: nm("home"), abbr: (teams.home.abbr || "").trim(), runs: totals("home"), hits: g.hits.home, errors: g.errors.home, color: teamColor("home"), logo: teams.home.logo || "" },
+            away: { name: nm("away"), abbr: autoAbbr(nm("away")), runs: totals("away"), hits: g.hits.away, errors: g.errors.away, color: teamColor("away"), logo: teams.away.logo || "" },
+            home: { name: nm("home"), abbr: autoAbbr(nm("home")), runs: totals("home"), hits: g.hits.home, errors: g.errors.home, color: teamColor("home"), logo: teams.home.logo || "" },
             inning: g.inning,
             half: g.half,
             balls: g.balls,
@@ -2342,7 +2355,7 @@ function DugoutScorecard() {
                 ctx.font = "700 58px 'Saira Condensed', sans-serif";
                 ctx.fillText(name.toUpperCase().slice(0, logo ? 13 : 16), nx, ty);
                 ctx.textAlign = "right";
-                ctx.font = "700 96px 'IBM Plex Mono', monospace";
+                ctx.font = "700 96px 'Roboto Mono', monospace";
                 ctx.fillStyle = win && game.over ? "#F5C518" : "#FFFFFF";
                 ctx.fillText(String(score), W - 110, ty + 10);
             };
@@ -2357,7 +2370,7 @@ function DugoutScorecard() {
             const gridW = W - 220;
             const colW = Math.min(70, gridW / cols);
             const startX = (W - (colW * cols + 110)) / 2 + 110;
-            ctx.font = "500 30px 'IBM Plex Mono', monospace";
+            ctx.font = "500 30px 'Roboto Mono', monospace";
             ctx.textAlign = "center";
             ctx.fillStyle = "#A9C5E8";
             innings.forEach((_, i) => {
@@ -2372,7 +2385,7 @@ function DugoutScorecard() {
                 ctx.font = "700 30px 'Saira Condensed', sans-serif";
                 ctx.fillText(teams[side].name.toUpperCase().slice(0, 6), startX - 105, ry);
                 ctx.textAlign = "center";
-                ctx.font = "700 32px 'IBM Plex Mono', monospace";
+                ctx.font = "700 32px 'Roboto Mono', monospace";
                 ctx.fillStyle = "#FFFFFF";
                 innings.forEach((r, i) => {
                     ctx.fillText(side === "home" && r.homeX ? "X" : r[side] == null ? "-" : String(r[side]), startX + colW * i + colW / 2, ry);
@@ -2458,7 +2471,7 @@ function DugoutScorecard() {
             const grid = "#9A938A";
             // column headers
             ctx.textAlign = "center";
-            ctx.font = "700 26px 'IBM Plex Mono', monospace";
+            ctx.font = "700 26px 'Roboto Mono', monospace";
             ctx.fillStyle = "#4A443C";
             for (let i = 0; i < innCount; i++) {
                 ctx.fillText(String(skipped + i + 1), gridX + cellW * i + cellW / 2, rowsTop - 18);
@@ -2525,7 +2538,7 @@ function DugoutScorecard() {
                         }
                         // result notation
                         ctx.fillStyle = e0.base === 0 ? "#8A4A3C" : ink;
-                        ctx.font = "700 22px 'IBM Plex Mono', monospace";
+                        ctx.font = "700 22px 'Roboto Mono', monospace";
                         ctx.textAlign = "center";
                         if (e0.base === 0) {
                             ctx.fillText(e0.res, cx, cy + 8);
@@ -2534,7 +2547,7 @@ function DugoutScorecard() {
                             ctx.fillText(e0.res, cx - rR - 2, y + cellH - 12);
                         }
                         if (cell.length > 1) {
-                            ctx.font = "700 18px 'IBM Plex Mono', monospace";
+                            ctx.font = "700 18px 'Roboto Mono', monospace";
                             ctx.fillText("+" + (cell.length - 1), cx + rR + 6, y + 22);
                         }
                     }
@@ -2542,7 +2555,7 @@ function DugoutScorecard() {
                 // stat columns
                 const st = game.stats[side][r] || { ab: 0, r: 0, h: 0, bb: 0 };
                 ctx.fillStyle = ink;
-                ctx.font = "700 24px 'IBM Plex Mono', monospace";
+                ctx.font = "700 24px 'Roboto Mono', monospace";
                 ctx.textAlign = "center";
                 [st.ab, st.r, st.h, st.bb].forEach((v, i) => {
                     ctx.fillText(String(v), gridX + cellW * innCount + statW * i + statW / 2, y + cellH / 2 + 8);
@@ -2583,7 +2596,7 @@ function DugoutScorecard() {
             ctx.font = "700 26px 'Saira Condensed', sans-serif";
             ctx.fillText("RUNS", 48, fy);
             ctx.textAlign = "center";
-            ctx.font = "700 26px 'IBM Plex Mono', monospace";
+            ctx.font = "700 26px 'Roboto Mono', monospace";
             for (let i = 0; i < innCount; i++) {
                 const rv = game.linescore[skipped + i] ? game.linescore[skipped + i][side] : null;
                 ctx.fillText(rv === null || rv === undefined ? "-" : String(rv), gridX + cellW * i + cellW / 2, fy);
@@ -2664,12 +2677,12 @@ function DugoutScorecard() {
                     const cell = game.linescore[i] || {};
                     const v = cell[side];
                     const disp = side === "home" && cell.homeX ? "X" : v == null ? "-" : String(v);
-                    ctx.font = "400 19px 'IBM Plex Mono', monospace";
+                    ctx.font = "400 19px 'Roboto Mono', monospace";
                     ctx.fillStyle = ink;
                     ctx.fillText(disp, M + lsNameW + lsCW * i + lsCW / 2, y + 25);
                 }
                 [totals(side), game.hits[side], game.errors[side]].forEach((v, j) => {
-                    ctx.font = "700 20px 'IBM Plex Mono', monospace";
+                    ctx.font = "700 20px 'Roboto Mono', monospace";
                     ctx.fillStyle = navy;
                     ctx.fillText(String(v), M + lsNameW + lsCW * (innN + j) + lsCW / 2, y + 25);
                 });
@@ -2705,7 +2718,7 @@ function DugoutScorecard() {
                     ctx.font = "400 23px 'Saira Condensed', sans-serif";
                     ctx.fillText(String(r.label).slice(0, 26), M + 10, y + 27);
                     ctx.textAlign = "center";
-                    ctx.font = "400 22px 'IBM Plex Mono', monospace";
+                    ctx.font = "400 22px 'Roboto Mono', monospace";
                     r.vals.forEach((v, i) => ctx.fillText(String(v), M + nameW + cw * i + cw / 2, y + 27));
                     ctx.strokeStyle = linec;
                     ctx.lineWidth = 1;
@@ -2720,7 +2733,7 @@ function DugoutScorecard() {
                 ctx.font = "700 23px 'Saira Condensed', sans-serif";
                 ctx.fillText("Totals", M + 10, y + 27);
                 ctx.textAlign = "center";
-                ctx.font = "700 22px 'IBM Plex Mono', monospace";
+                ctx.font = "700 22px 'Roboto Mono', monospace";
                 totalsRow.forEach((v, i) => ctx.fillText(String(v), M + nameW + cw * i + cw / 2, y + 27));
                 y += 50;
             };
@@ -3105,7 +3118,7 @@ function DugoutScorecard() {
     /* ---------------- render ---------------- */
     return (React.createElement("div", { className: "dg-root", style: { "--accent": themeColor } },
         React.createElement("style", null, `
-        @import url('https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;700;800&family=IBM+Plex+Mono:wght@500;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;700;800&family=Roboto+Mono:wght@500;700&display=swap');
 
         .dg-root {
           --navy: #1D2D5C;
@@ -3148,7 +3161,7 @@ function DugoutScorecard() {
           white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         }
         .team-cell .tscore {
-          font-family: 'IBM Plex Mono', monospace; font-weight: 700;
+          font-family: 'Roboto Mono', monospace; font-weight: 700;
           font-size: 44px; line-height: 1; color: var(--white);
           text-shadow: 0 0 18px rgba(169,197,232,.45);
         }
@@ -3170,7 +3183,7 @@ function DugoutScorecard() {
         }
         .inning-cell .arrow { font-size: 14px; color: var(--red); line-height: 1; }
         .inning-cell .num {
-          font-family: 'IBM Plex Mono', monospace; font-size: 34px;
+          font-family: 'Roboto Mono', monospace; font-size: 34px;
           font-weight: 700; line-height: 1.05;
         }
         .inning-cell .lbl { font-size: 10px; letter-spacing: .3em; color: var(--powder); }
@@ -3204,7 +3217,7 @@ function DugoutScorecard() {
         }
         button.pitchbtn:focus-visible { outline: 2px solid var(--white); outline-offset: 2px; }
         .pcount {
-          font-family: 'IBM Plex Mono', monospace; font-weight: 700;
+          font-family: 'Roboto Mono', monospace; font-weight: 700;
           font-size: 22px; line-height: 1; color: var(--white);
         }
         .plimit-tag {
@@ -3229,7 +3242,7 @@ function DugoutScorecard() {
         .license-card { max-width: 420px; margin: 24px auto 0; }
         .license-sub { color: var(--powder); font-size: 14px; margin: 4px 0 14px; line-height: 1.4; }
         .license-in {
-          font-family: 'IBM Plex Mono', monospace; letter-spacing: .08em;
+          font-family: 'Roboto Mono', monospace; letter-spacing: .08em;
           text-align: center; font-size: 14px; padding: 11px 8px;
         }
         .license-err { color: var(--red); font-size: 13px; margin-top: 8px; letter-spacing: .03em; }
@@ -3240,7 +3253,7 @@ function DugoutScorecard() {
         }
         textarea.import-box {
           min-height: 110px; resize: vertical; margin-bottom: 12px;
-          font-family: 'IBM Plex Mono', monospace; font-size: 11px;
+          font-family: 'Roboto Mono', monospace; font-size: 11px;
         }
 
         .diamond-card {
@@ -3298,7 +3311,7 @@ function DugoutScorecard() {
         .linescore-wrap { overflow-x: auto; margin-bottom: 14px; border-radius: 6px; border: 1px solid var(--line); }
         table.linescore { border-collapse: collapse; width: 100%; min-width: 480px; background: var(--navy-deep); }
         .linescore th, .linescore td {
-          font-family: 'IBM Plex Mono', monospace; font-size: 14px;
+          font-family: 'Roboto Mono', monospace; font-size: 14px;
           padding: 6px 9px; text-align: center; border-bottom: 1px solid var(--line);
         }
         .linescore th { color: var(--powder); font-weight: 500; font-size: 11px; }
@@ -3333,7 +3346,7 @@ function DugoutScorecard() {
         .atbat-edit { color: var(--powder); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; flex-shrink: 0; align-self: center; }
         .atbat-card .who { font-size: 20px; font-weight: 700; letter-spacing: .04em; }
         .atbat-card .who small { color: var(--powder); font-weight: 500; margin-left: 6px; }
-        .atbat-card .statline { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--powder); white-space: nowrap; }
+        .atbat-card .statline { font-family: 'Roboto Mono', monospace; font-size: 12px; color: var(--powder); white-space: nowrap; }
 
         /* ---- opposing pitcher strip ---- */
         button.d3k-banner {
@@ -3365,7 +3378,7 @@ function DugoutScorecard() {
         .pn-wrap .dg-in { max-width: 96px; }
         b.dtag {
           background: var(--amber); color: var(--deep); border-radius: 4px;
-          font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 700;
+          font-family: 'Roboto Mono', monospace; font-size: 11px; font-weight: 700;
           padding: 1px 5px; letter-spacing: .02em;
         }
         .uer-row {
@@ -3375,7 +3388,7 @@ function DugoutScorecard() {
         }
         .uer-ctl { display: flex; align-items: center; gap: 8px; }
         .uer-ctl button.dg { padding: 4px 12px; font-size: 16px; }
-        .uer-ctl b { font-family: 'IBM Plex Mono', monospace; min-width: 16px; text-align: center; color: var(--white); }
+        .uer-ctl b { font-family: 'Roboto Mono', monospace; min-width: 16px; text-align: center; color: var(--white); }
         .dec-block { margin-bottom: 12px; }
         .dec-label { font-family: 'Saira Condensed', sans-serif; font-weight: 700; font-size: 14px; color: var(--powder); margin-bottom: 5px; letter-spacing: .03em; }
         .dec-row { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -3391,8 +3404,8 @@ function DugoutScorecard() {
         button.pstrip:focus-visible { outline: 2px solid var(--white); outline-offset: 2px; }
         .pstrip-who { font-size: 15px; font-weight: 700; letter-spacing: .04em; }
         .pstrip-who small { color: var(--powder); font-weight: 500; }
-        .pstrip-line { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--powder); }
-        .pstrip-np { font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 700; }
+        .pstrip-line { font-family: 'Roboto Mono', monospace; font-size: 11px; color: var(--powder); }
+        .pstrip-np { font-family: 'Roboto Mono', monospace; font-size: 12px; font-weight: 700; }
         button.pstrip.warn { border-color: var(--amberw); }
         button.pstrip.warn .pstrip-np { color: var(--amberw); }
         button.pstrip.over { border-color: var(--red); animation: plimit-pulse 1.2s ease-in-out infinite; }
@@ -3433,8 +3446,8 @@ function DugoutScorecard() {
           padding: 8px 10px; border-top: 1px solid var(--line);
           font-size: 15px; cursor: pointer;
         }
-        .lineup td.num { font-family: 'IBM Plex Mono', monospace; color: var(--powder); width: 28px; font-size: 12px; }
-        .lineup td.stat { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--powder); text-align: right; white-space: nowrap; }
+        .lineup td.num { font-family: 'Roboto Mono', monospace; color: var(--powder); width: 28px; font-size: 12px; }
+        .lineup td.stat { font-family: 'Roboto Mono', monospace; font-size: 12px; color: var(--powder); text-align: right; white-space: nowrap; }
         .lineup tr.cur td { background: var(--royal); color: var(--white); }
         .lineup tr.cur td.stat { color: var(--white); }
 
@@ -3451,7 +3464,7 @@ function DugoutScorecard() {
           align-items: baseline;
         }
         .log-inn {
-          font-family: 'IBM Plex Mono', monospace; font-size: 11px;
+          font-family: 'Roboto Mono', monospace; font-size: 11px;
           color: var(--powder);
         }
         .log-row.pa strong { color: var(--white); font-weight: 700; letter-spacing: .03em; }
@@ -3478,7 +3491,7 @@ function DugoutScorecard() {
         input.plog-name { max-width: 110px; padding: 4px 6px; font-size: 13px; }
         .plog-stats {
           display: grid; grid-template-columns: repeat(8, 27px);
-          font-family: 'IBM Plex Mono', monospace; font-size: 12px;
+          font-family: 'Roboto Mono', monospace; font-size: 12px;
           text-align: right; white-space: nowrap;
         }
 
@@ -3503,11 +3516,11 @@ function DugoutScorecard() {
           display: flex; flex-direction: column; align-items: center; justify-content: center;
           height: 32px; padding: 0; background: transparent; border: 1px solid var(--line);
           border-radius: 4px; color: var(--powder); cursor: grab; touch-action: none;
-          font-family: 'IBM Plex Mono', monospace; font-size: 11px; line-height: 1;
+          font-family: 'Roboto Mono', monospace; font-size: 11px; line-height: 1;
         }
         button.drag-handle:active { cursor: grabbing; border-color: var(--amberw); color: var(--amberw); }
         .drag-handle .grip { font-size: 9px; line-height: .7; opacity: .7; }
-        .prow .n { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--powder); text-align: right; }
+        .prow .n { font-family: 'Roboto Mono', monospace; font-size: 12px; color: var(--powder); text-align: right; }
         button.rm {
           background: transparent; border: 1px solid var(--line); border-radius: 4px;
           color: var(--powder); font-size: 16px; line-height: 1; height: 30px;
@@ -3523,8 +3536,7 @@ function DugoutScorecard() {
         }
         button.roster-load:hover { color: var(--amberw); }
         .roster-n { color: var(--powder); font-weight: 500; font-size: 12px; }
-        .teamname-in { margin-bottom: 6px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
-        .abbr-in { margin-bottom: 12px; max-width: 100%; font-size: 13px; letter-spacing: .14em; text-transform: uppercase; opacity: .95; }
+        .teamname-in { margin-bottom: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
 
         /* ---- modal ---- */
         .modal-back {
@@ -3546,7 +3558,7 @@ function DugoutScorecard() {
         .season-tabs .dg { flex: 1; }
         .season-table { overflow-x: auto; -webkit-overflow-scrolling: touch; border: 1px solid var(--line); border-radius: 10px; }
         .season-table table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
-        .season-table th, .season-table td { padding: 7px 9px; text-align: right; font-size: 13px; white-space: nowrap; font-family: 'IBM Plex Mono', monospace; }
+        .season-table th, .season-table td { padding: 7px 9px; text-align: right; font-size: 13px; white-space: nowrap; font-family: 'Roboto Mono', monospace; }
         .season-table th { position: sticky; top: 0; background: #16244f; color: var(--powder); cursor: pointer; user-select: none; font-weight: 700; border-bottom: 1px solid var(--line); }
         .season-table th.on { color: var(--amber); }
         .season-table th.l, .season-table td.l { text-align: left; position: sticky; left: 0; background: var(--navy-deep); z-index: 1; }
@@ -3604,7 +3616,6 @@ function DugoutScorecard() {
                 React.createElement("div", { className: "setup-grid" }, ["away", "home"].map((side) => (React.createElement("div", { className: "setup-card", key: side },
                     React.createElement("h2", null, side === "away" ? "Visiting Club" : "Home Club"),
                     React.createElement("input", { className: "dg-in teamname-in", value: teams[side].name, onChange: (e) => setTeamName(side, e.target.value), "aria-label": `${side} team name` }),
-                    React.createElement("input", { className: "dg-in abbr-in", value: teams[side].abbr || "", maxLength: 6, placeholder: "Abbr \u2014 e.g. TIG (scoreboards)", onChange: (e) => setTeamAbbr(side, e.target.value), "aria-label": `${side} team short name for scoreboards` }),
                     React.createElement("div", { className: "team-custom" },
                         PRESET_TEAM_COLORS.map((c) => (React.createElement("button", { key: c, type: "button", className: `swatch ${teamColor(side) === c ? "sel" : ""}`, style: { background: c }, onClick: () => setTeamColor(side, c), "aria-label": `Set ${side} team color` }))),
                         React.createElement("input", { type: "color", className: "swatch-custom", value: teamColor(side), onChange: (e) => setTeamColor(side, e.target.value), "aria-label": `Custom ${side} team color` }),
@@ -4081,7 +4092,7 @@ function DugoutScorecard() {
                     React.createElement("p", { style: { fontSize: 12, opacity: 0.75, margin: "0 0 8px" } }, "Backs up everything \u2014 saved games, teams, rosters, settings, and your activation \u2014 so a lost or new phone doesn't mean a lost season."),
                     bkMeta && (React.createElement("div", { style: { background: "#0E1A3A", border: "1px solid #2B5AA0", borderRadius: 8, padding: "9px 11px", marginBottom: 8 } },
                         React.createElement("div", { style: { fontSize: 11, color: "#A9C5E8", letterSpacing: ".05em", marginBottom: 2 } }, "YOUR BACKUP CODE"),
-                        React.createElement("div", { style: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 17, fontWeight: 700, color: "#F5C518", letterSpacing: ".12em", userSelect: "all" } }, bkMeta.code),
+                        React.createElement("div", { style: { fontFamily: "'Roboto Mono', monospace", fontSize: 17, fontWeight: 700, color: "#F5C518", letterSpacing: ".12em", userSelect: "all" } }, bkMeta.code),
                         React.createElement("div", { style: { fontSize: 11, opacity: 0.65, marginTop: 3 } },
                             "Last backed up ",
                             new Date(bkMeta.t).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }),
@@ -4250,7 +4261,7 @@ function DugoutScorecard() {
                     React.createElement("p", null, fieldPick.instr || (isAirOut(fieldPick.label)
                         ? "Tap the fielder who made the catch."
                         : "Tap the fielders in order (e.g. SS then 1B = 6-3).")),
-                    !isAirOut(fieldPick.label) && (React.createElement("div", { style: { textAlign: "center", fontFamily: "'IBM Plex Mono', monospace", fontSize: "26px", fontWeight: 700, color: "#F5C518", letterSpacing: ".05em", margin: "4px 0 10px", minHeight: "30px" } }, fieldNote(fieldPick.label, fieldSeq) || "\u2014")),
+                    !isAirOut(fieldPick.label) && (React.createElement("div", { style: { textAlign: "center", fontFamily: "'Roboto Mono', monospace", fontSize: "26px", fontWeight: 700, color: "#F5C518", letterSpacing: ".05em", margin: "4px 0 10px", minHeight: "30px" } }, fieldNote(fieldPick.label, fieldSeq) || "\u2014")),
                     React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "8px", marginBottom: "12px" } }, FPOS.map((p) => React.createElement("button", { key: p.n, className: "dg outb", onClick: () => pickField(p.n) },
                         p.l,
                         React.createElement("span", { style: { opacity: .55, fontSize: "11px", marginLeft: "5px" } }, p.n)))),

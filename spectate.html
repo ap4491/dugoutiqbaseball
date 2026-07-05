@@ -6,7 +6,7 @@
 <title>DugoutIQ — Live Game</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@600;700;800&family=Roboto+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
 <style>
   :root{ --navy:#14204A; --navy2:#1D2D5C; --deep:#0A1128; --royal:#134A8E; --line:#2B5AA0;
          --powder:#A9C5E8; --muted:#5F79AF; --red:#E8291C; --amber:#F5C518; --white:#F5F7FA; }
@@ -27,7 +27,7 @@
   .topbar{ max-width:520px; margin:0 auto; display:flex; align-items:center; justify-content:space-between; padding:10px 16px 0; }
   .brand{ display:flex; align-items:center; gap:7px; font-family:"Saira Condensed",sans-serif; font-weight:800; font-size:14px; letter-spacing:.14em; color:var(--powder); }
   .brand img{ height:22px; }
-  .live{ font-family:"IBM Plex Mono",monospace; font-size:10.5px; font-weight:600; display:flex; align-items:center; gap:6px; color:var(--powder); letter-spacing:.06em; }
+  .live{ font-family:"Roboto Mono",monospace; font-size:10.5px; font-weight:600; display:flex; align-items:center; gap:6px; color:var(--powder); letter-spacing:.06em; }
   .dot{ width:7px; height:7px; border-radius:50%; background:#3ad07a; box-shadow:0 0 0 0 rgba(58,208,122,.6); animation:p 1.6s infinite; }
   .dot.stale{ background:#8b95ad; animation:none; box-shadow:none; }
   @keyframes p{0%{box-shadow:0 0 0 0 rgba(58,208,122,.55)}70%{box-shadow:0 0 0 7px rgba(58,208,122,0)}100%{box-shadow:0 0 0 0 rgba(58,208,122,0)}}
@@ -47,7 +47,7 @@
   .sb-nm::after{ content:""; display:block; height:3px; border-radius:2px; background:transparent; margin-top:3px; }
   .bat .sb-nm::after{ background:var(--amber); box-shadow:0 0 10px rgba(245,197,24,.7); }
   .home.bat .sb-nm::after{ margin-left:auto; }
-  .sb-mid{ text-align:center; font-family:"IBM Plex Mono",monospace; color:var(--powder); padding:0 6px; min-width:44px; }
+  .sb-mid{ text-align:center; font-family:"Roboto Mono",monospace; color:var(--powder); padding:0 6px; min-width:44px; }
   .sb-half{ font-size:15px; color:var(--amber); line-height:1; }
   .sb-inn{ font-family:"Saira Condensed",sans-serif; font-size:24px; font-weight:700; color:var(--white); line-height:1.15; }
   .sb-final{ font-size:12px; letter-spacing:.22em; color:var(--amber); font-weight:600; }
@@ -69,7 +69,7 @@
   .field{ display:flex; align-items:center; gap:8px; }
   .fld-l{ flex:1; display:flex; flex-direction:column; gap:11px; }
   .crow{ display:flex; align-items:center; gap:7px; }
-  .crow span{ font-family:"IBM Plex Mono",monospace; font-size:13px; color:var(--muted); width:14px; }
+  .crow span{ font-family:"Roboto Mono",monospace; font-size:13px; color:var(--muted); width:14px; }
   .crow i{ width:13px; height:13px; border-radius:50%; background:rgba(255,255,255,.07); }
   .crow i.on{ background:var(--amber); box-shadow:0 0 12px rgba(245,197,24,.75); }
   .crow.o i.on{ background:var(--red); box-shadow:0 0 12px rgba(232,41,28,.7); }
@@ -80,20 +80,20 @@
   .dia .bs.on{ fill:var(--amber); stroke:var(--amber); filter:drop-shadow(0 0 8px rgba(245,197,24,.9)); }
   .dia .hp{ fill:var(--white); }
   .dia .ln{ fill:none; stroke:rgba(43,90,160,.65); stroke-width:1.6; }
-  .fld-r{ flex:1; text-align:right; font-family:"IBM Plex Mono",monospace; font-size:11px; letter-spacing:.14em; color:var(--muted); }
+  .fld-r{ flex:1; text-align:right; font-family:"Roboto Mono",monospace; font-size:11px; letter-spacing:.14em; color:var(--muted); }
   .fld-r b{ display:block; font-family:"Saira Condensed",sans-serif; font-size:28px; letter-spacing:.02em; color:var(--white); font-weight:700; margin-top:3px; }
 
   .strip{ margin-top:14px; padding-top:12px; border-top:1px solid rgba(255,255,255,.07);
           display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; font-size:13px; color:var(--powder); }
   .strip b{ color:var(--white); font-weight:600; }
   .lastplay{ margin-top:13px; background:rgba(10,17,40,.65); border-radius:12px;
-             padding:11px 14px; font-family:"IBM Plex Mono",monospace; font-size:13px; color:var(--white); text-align:center;
+             padding:11px 14px; font-family:"Roboto Mono",monospace; font-size:13px; color:var(--white); text-align:center;
              box-shadow:inset 0 1px 4px rgba(0,0,0,.35); }
 
   /* ---- linescore ---- */
   h3{ margin:0 0 12px; font-family:"Saira Condensed",sans-serif; font-weight:700; font-size:12.5px;
       letter-spacing:.22em; text-transform:uppercase; color:var(--muted); }
-  table.ls{ width:100%; border-collapse:collapse; font-family:"IBM Plex Mono",monospace; font-size:13.5px; }
+  table.ls{ width:100%; border-collapse:collapse; font-family:"Roboto Mono",monospace; font-size:13.5px; }
   .ls th{ color:var(--muted); font-weight:500; padding:3px 5px 7px; text-align:center; font-size:11.5px; }
   .ls td{ padding:7px 5px; text-align:center; color:var(--powder); font-family:"Saira Condensed",sans-serif; font-weight:600; font-size:15px; }
   .ls tr + tr td{ border-top:1px solid rgba(255,255,255,.06); }
@@ -116,7 +116,7 @@
   .pl .b{ font-family:"Saira Condensed",sans-serif; font-weight:700; font-size:16.5px; letter-spacing:.03em; }
   .pl .r{ font-size:14px; color:var(--powder); margin-top:2px; line-height:1.45; }
   .pl.scored .r{ color:var(--amber); }
-  .pl .q{ font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--muted); margin-top:5px; letter-spacing:.09em; }
+  .pl .q{ font-family:"Roboto Mono",monospace; font-size:11px; color:var(--muted); margin-top:5px; letter-spacing:.09em; }
   .pl.ev .r{ margin:0; color:var(--muted); font-size:13px; }
   .pl.ev::before{ width:8px; height:8px; left:-21px; background:transparent; border:2px solid var(--line); box-shadow:none; }
 
