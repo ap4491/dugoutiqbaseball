@@ -73,7 +73,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "79"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "80"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -518,6 +518,7 @@ function DugoutScorecard() {
         const record = {
             id: g.id || Date.now(),
             savedAt: Date.now(),
+            date: g.date || null, // the date the game was PLAYED — never changes
             away: { name: teams.away.name, color: teams.away.color || "", logo: teams.away.logo || "" },
             home: { name: teams.home.name, color: teams.home.color || "", logo: teams.home.logo || "" },
             awayRuns: sumRuns("away"),
@@ -525,6 +526,14 @@ function DugoutScorecard() {
             snapshot: { teams: snapshot(teams), game: snapshot(g), pitchLimit },
         };
         setGames((list) => {
+            const prev = list.find((x) => x.id === record.id);
+            if (prev) {
+                // re-archiving an existing game must not shift its dates
+                if (prev.savedAt)
+                    record.savedAt = prev.savedAt;
+                if (!record.date && prev.date)
+                    record.date = prev.date;
+            }
             const next = [record, ...list.filter((x) => x.id !== record.id)].slice(0, 100);
             persistGames(next);
             return next;
@@ -3941,7 +3950,8 @@ function DugoutScorecard() {
                     React.createElement("div", { className: "plog", style: { textAlign: "left" } },
                         games.length === 0 && (React.createElement("div", { className: "plog-row", style: { opacity: 0.7, padding: "8px 4px" } }, "No saved games yet.")),
                         games.map((gm) => {
-                            const dstr = new Date(gm.savedAt).toLocaleDateString(undefined, {
+                            const played = gm.date || (gm.snapshot && gm.snapshot.game && gm.snapshot.game.date) || null;
+                            const dstr = (played ? new Date(played + "T00:00:00") : new Date(gm.savedAt)).toLocaleDateString(undefined, {
                                 month: "short",
                                 day: "numeric",
                                 year: "numeric",
