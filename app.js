@@ -73,7 +73,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "78"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "79"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -2074,6 +2074,23 @@ function DugoutScorecard() {
         pp.uer = Math.max(0, Math.min(pp.r, (pp.uer || 0) + delta));
     });
     const endGame = () => mutate((g) => {
+        // If "final" is called before anything happened in the current half
+        // (no plate appearance, no pitch, no runs), the game really ended in
+        // the previous half — roll the book back so a 6-inning game doesn't
+        // read "Top 7".
+        let rolledBack = false;
+        if (g.half === "top" && g.inning > 1 && (g.halfPA || 0) === 0 && g.balls === 0 && g.strikes === 0) {
+            const idx = g.inning - 1;
+            const row = g.linescore[idx];
+            const rowUntouched = row && (row.away || 0) === 0 && row.home == null;
+            if (rowUntouched) {
+                if (idx === g.linescore.length - 1)
+                    g.linescore.pop(); // drop the untouched extra column
+                g.inning -= 1;
+                g.half = "bottom";
+                rolledBack = true;
+            }
+        }
         g.over = true;
         g.bases = emptyBases();
         if (!g.decisions)
@@ -2083,7 +2100,7 @@ function DugoutScorecard() {
         const ci = g.inning - 1;
         const row = g.linescore[ci];
         if (row && row.away != null) {
-            const homeDidNotBat = g.half === "top" ? true : (g.halfPA || 0) === 0;
+            const homeDidNotBat = rolledBack ? false : (g.half === "top" ? true : (g.halfPA || 0) === 0);
             if (homeDidNotBat)
                 row.homeX = true;
         }
