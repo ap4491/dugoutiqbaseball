@@ -73,7 +73,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "80"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "83"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -643,13 +643,16 @@ function DugoutScorecard() {
         return d > 0 ? ((b.h + b.bb + b.hbp) / d).toFixed(3).replace(/^0/, "") : ".000";
     };
     const era2 = (er, outs) => (outs > 0 ? ((er * 27) / outs).toFixed(2) : "—"); // 9-inning basis
-    // Auto-save a game to the archive the moment it goes final.
+    // Keep the archive in sync while a final game is open — the moment it goes
+    // final AND after any later edit (names, play-by-play fixes, decisions),
+    // so nothing is lost when the game is closed. Re-archiving preserves the
+    // original saved date (see archiveGame).
     useEffect(() => {
-        if (game && game.over && game.id && archivedIdRef.current !== game.id) {
+        if (game && game.over && game.id) {
             archivedIdRef.current = game.id;
             archiveGame(game);
         }
-    }, [game]);
+    }, [game, teams]);
     useEffect(() => { if (!gamesOpen)
         setConfirmGameDel(null); }, [gamesOpen]);
     useEffect(() => { if (!teamPickSide)
@@ -1651,6 +1654,7 @@ function DugoutScorecard() {
     const editLineup = (side, slot, newName, newPos, newNum) => {
         mutate((g) => {
             const cur = g.lineup[side][slot];
+            const oldName = cur.name;
             const nm = (newName || "").trim() || cur.name;
             const np = (newPos || "").trim();
             const hist = Array.isArray(cur.posHist) ? cur.posHist.slice() : (cur.pos ? [cur.pos] : []);
@@ -1658,6 +1662,14 @@ function DugoutScorecard() {
                 hist.push(np); // record each new position played
             const nn = newNum != null ? (newNum || "").trim() : (cur.num || ""); // preserve number if not supplied
             g.lineup[side][slot] = { name: nm, pos: np, num: nn, posHist: hist };
+            // Keep the pitching lines in step: any pitcher record on this side
+            // that carries the player's old name is the same player — rename it.
+            if (nm !== oldName && g.pitchers && g.pitchers[side]) {
+                g.pitchers[side].forEach((pp) => {
+                    if (pp.name === oldName)
+                        pp.name = nm;
+                });
+            }
             g.lastPlay = `Lineup updated: ${nm}`;
         });
         setSubMenu(false);

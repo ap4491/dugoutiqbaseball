@@ -102,6 +102,11 @@
   .ls .tot{ color:var(--amber); font-weight:700; font-size:17px; }
 
   /* ---- play-by-play: timeline ---- */
+  .feedwrap{ max-height:330px; overflow-y:auto; -webkit-overflow-scrolling:touch; overscroll-behavior:contain;
+             padding-right:6px; -webkit-mask-image:linear-gradient(to bottom, #000 88%, transparent);
+             mask-image:linear-gradient(to bottom, #000 88%, transparent); }
+  .feedwrap::-webkit-scrollbar{ width:4px; }
+  .feedwrap::-webkit-scrollbar-thumb{ background:rgba(169,197,232,.35); border-radius:2px; }
   .feed{ position:relative; padding-left:22px; }
   .feed::before{ content:""; position:absolute; left:5px; top:6px; bottom:6px; width:2px;
                  background:linear-gradient(180deg, rgba(43,90,160,.55), rgba(43,90,160,.12)); border-radius:1px; }
@@ -221,7 +226,7 @@
       }
     }
     if(!items.length) return "";
-    return `<div class="card"><h3>Play by play</h3><div class="feed">${items.join("")}</div></div>`;
+    return `<div class="card"><h3>Play by play</h3><div class="feedwrap"><div class="feed">${items.join("")}</div></div></div>`;
   }
 
   function render(s){
