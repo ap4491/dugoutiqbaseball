@@ -73,7 +73,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "84"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "85"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1668,6 +1668,36 @@ function DugoutScorecard() {
                 g.pitchers[side].forEach((pp) => {
                     if (pp.name === oldName)
                         pp.name = nm;
+                });
+            }
+            // Rename through the play-by-play too. Numeric "names" (jersey
+            // numbers used as placeholders) are matched only in the exact
+            // template positions names occupy, so real numbers in the text
+            // (pitch counts, "3rd", scores) are never touched.
+            if (nm !== oldName && Array.isArray(g.log)) {
+                const escRe = oldName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+                const numeric = /^\d+$/.test(oldName);
+                const fix = (txt) => {
+                    if (typeof txt !== "string" || txt.indexOf(oldName) === -1)
+                        return txt;
+                    let out = txt;
+                    if (numeric) {
+                        out = out.replace(new RegExp("(^|\\u2014\\s|\\u00B7\\s|,\\s|:\\s)" + escRe + "(?=:| (caught|out|picked|scores|steals|removed|takes|to|in)\\b)", "g"), "$1" + nm);
+                        out = out.replace(new RegExp("(RBI )" + escRe + "(?=$|[^\\w])", "g"), "$1" + nm);
+                        out = out.replace(new RegExp("(in for )" + escRe + "(?= \\()", "g"), "$1" + nm);
+                    }
+                    else {
+                        out = out.replace(new RegExp("(^|[^\\w])" + escRe + "(?=$|[^\\w])", "g"), "$1" + nm);
+                    }
+                    return out;
+                };
+                g.log.forEach((e) => {
+                    if (e.batter === oldName)
+                        e.batter = nm;
+                    if (e.t)
+                        e.t = fix(e.t);
+                    if (e.result)
+                        e.result = fix(e.result);
                 });
             }
             g.lastPlay = `Lineup updated: ${nm}`;
