@@ -148,6 +148,7 @@
 </div>
 
 <div class="wrap">
+  <div id="video"></div>
   <div id="content"><div class="msg">Loading the game…</div></div>
   <div class="foot">Live view · updates automatically · powered by DugoutIQ</div>
 </div>
@@ -226,18 +227,27 @@
       }
     }
     if(!items.length) return "";
-    return `<div class="card"><h3>Play by play</h3><div class="feedwrap"><div class="feed">${items.join("")}</div></div></div>`;
+    return `<div class="card"><h3>Play by play</h3><div class="feedwrap" id="feedwrap"><div class="feed">${items.join("")}</div></div></div>`;
   }
 
+  let lastVidKey = null;
+  function updateVideo(v){
+    const sv = safeVideo(v);
+    const key = sv ? sv.mode + "|" + sv.src : "";
+    if (key === lastVidKey) return;      // do NOT touch a playing iframe
+    lastVidKey = key;
+    $("video").innerHTML = videoBlock(sv);
+  }
   function render(s){
     scorebar(s);
+    updateVideo(s.video);
+    const fw0 = $("feedwrap");
+    const keepScroll = fw0 ? fw0.scrollTop : 0;
     const ls = (s.linescore||[]).map((r,i)=>`<th>${i+1}</th>`).join("");
     const lsA = (s.linescore||[]).map(r=>`<td>${r.away==null?"":r.away}</td>`).join("");
     const lsH = (s.linescore||[]).map(r=>`<td>${r.home==null?"·":r.home}</td>`).join("");
-    const vid = videoBlock(safeVideo(s.video));
     const rhe = (t)=>`<td class="tot">${t.runs}</td><td>${t.hits!=null?t.hits:""}</td><td>${t.errors!=null?t.errors:""}</td>`;
     $("content").innerHTML = `
-      ${vid}
       <div class="card">
         <div class="field">
           <div class="fld-l">${dots(s.balls,3,'')}${dots(s.strikes,2,'s')}${dots(s.outs,2,'o')}</div>
@@ -260,6 +270,8 @@
       </div>
       ${feed(s.log)}
     `;
+    const fw1 = $("feedwrap");
+    if (fw1 && keepScroll) fw1.scrollTop = keepScroll;
   }
 
   async function poll(){
