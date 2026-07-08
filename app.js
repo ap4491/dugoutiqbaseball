@@ -53,6 +53,60 @@ const FPOS = [
     { n: 4, l: "2B" }, { n: 5, l: "3B" }, { n: 6, l: "SS" },
     { n: 7, l: "LF" }, { n: 8, l: "CF" }, { n: 9, l: "RF" },
 ];
+// Rename a player inside a play-by-play text. Numeric placeholder "names"
+// are matched only in the template positions names occupy, so real numbers
+// (pitch counts, "3rd", notation) are never touched.
+const renameInLogText = (txt, oldName, nm) => {
+    if (typeof txt !== "string" || !oldName || txt.indexOf(oldName) === -1)
+        return txt;
+    const escRe = oldName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    let out = txt;
+    if (/^\d+$/.test(oldName)) {
+        out = out.replace(new RegExp("(^|\\u2014\\s|\\u00B7\\s|,\\s|:\\s)" + escRe + "(?=:| (caught|out|picked|scores|steals|removed|takes|to|in)\\b)", "g"), "$1" + nm);
+        out = out.replace(new RegExp("(RBI )" + escRe + "(?=$|[^\\w])", "g"), "$1" + nm);
+        out = out.replace(new RegExp("(in for )" + escRe + "(?= \\()", "g"), "$1" + nm);
+    }
+    else {
+        out = out.replace(new RegExp("(^|[^\\w])" + escRe + "(?=$|[^\\w])", "g"), "$1" + nm);
+    }
+    return out;
+};
+// Repair leftover jersey-number placeholders using the lineup's # field:
+// any log entry naming "12" becomes the player whose number is 12. Side-aware
+// (top half = away batting), so #12 on each team maps to the right player.
+const repairLogNames = (g) => {
+    if (!g || !Array.isArray(g.log) || !g.lineup)
+        return;
+    const byNum = (lu) => {
+        const m = {};
+        (lu || []).forEach((p) => {
+            const num = (p.num || "").trim();
+            const name = (p.name || "").trim();
+            if (num && name && name !== num)
+                m[num] = name;
+        });
+        return m;
+    };
+    const bat = { top: byNum(g.lineup.away), bottom: byNum(g.lineup.home) };
+    const fld = { top: byNum(g.lineup.home), bottom: byNum(g.lineup.away) };
+    g.log.forEach((e) => {
+        const side = e.h === "top" ? "top" : "bottom";
+        if (e.batter && bat[side][e.batter])
+            e.batter = bat[side][e.batter];
+        ["t", "result"].forEach((k) => {
+            if (typeof e[k] !== "string" || !e[k])
+                return;
+            const maps = e[k].indexOf("Pitching change") === 0 ? fld[side] : bat[side];
+            Object.keys(maps).forEach((num) => { e[k] = renameInLogText(e[k], num, maps[num]); });
+        });
+    });
+    if (g.pitchers && g.lineup) {
+        ["away", "home"].forEach((sd) => {
+            const m = byNum(g.lineup[sd]);
+            (g.pitchers[sd] || []).forEach((pp) => { if (m[pp.name]) pp.name = m[pp.name]; });
+        });
+    }
+};
 const fieldNote = (label, seq) => {
     if (!seq || !seq.length) return "";
     if (label === "flyout") return "F" + seq[0];
@@ -73,7 +127,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "85"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "86"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -543,8 +597,11 @@ function DugoutScorecard() {
         const snap = record.snapshot || {};
         if (snap.teams)
             setTeams(snapshot(snap.teams));
-        if (snap.game)
-            setGame(snapshot(snap.game));
+        if (snap.game) {
+            const g0 = snapshot(snap.game);
+            repairLogNames(g0); // heal jersey-number placeholders via the lineup's # field
+            setGame(g0);
+        }
         if (typeof snap.pitchLimit !== "undefined")
             setPitchLimit(snap.pitchLimit);
         archivedIdRef.current = record.id; // already saved — don't re-archive on the over-effect
@@ -1675,22 +1732,7 @@ function DugoutScorecard() {
             // template positions names occupy, so real numbers in the text
             // (pitch counts, "3rd", scores) are never touched.
             if (nm !== oldName && Array.isArray(g.log)) {
-                const escRe = oldName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-                const numeric = /^\d+$/.test(oldName);
-                const fix = (txt) => {
-                    if (typeof txt !== "string" || txt.indexOf(oldName) === -1)
-                        return txt;
-                    let out = txt;
-                    if (numeric) {
-                        out = out.replace(new RegExp("(^|\\u2014\\s|\\u00B7\\s|,\\s|:\\s)" + escRe + "(?=:| (caught|out|picked|scores|steals|removed|takes|to|in)\\b)", "g"), "$1" + nm);
-                        out = out.replace(new RegExp("(RBI )" + escRe + "(?=$|[^\\w])", "g"), "$1" + nm);
-                        out = out.replace(new RegExp("(in for )" + escRe + "(?= \\()", "g"), "$1" + nm);
-                    }
-                    else {
-                        out = out.replace(new RegExp("(^|[^\\w])" + escRe + "(?=$|[^\\w])", "g"), "$1" + nm);
-                    }
-                    return out;
-                };
+                const fix = (txt) => renameInLogText(txt, oldName, nm);
                 g.log.forEach((e) => {
                     if (e.batter === oldName)
                         e.batter = nm;
@@ -1700,6 +1742,7 @@ function DugoutScorecard() {
                         e.result = fix(e.result);
                 });
             }
+            repairLogNames(g); // and heal any older number-placeholders via the # field
             g.lastPlay = `Lineup updated: ${nm}`;
         });
         setSubMenu(false);
