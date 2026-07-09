@@ -127,7 +127,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "88"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "89"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -3685,7 +3685,40 @@ function DugoutScorecard() {
         }
         button.roster-load:hover { color: var(--amberw); }
         .roster-n { color: var(--powder); font-weight: 500; font-size: 12px; }
-        .teamname-in { margin-bottom: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+        .teamname-in { margin-bottom: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+
+        /* Scan lineup card — the fast path, sitting above the manual entry */
+        .scan-bar {
+          display: flex; align-items: center; gap: 12px; cursor: pointer;
+          padding: 12px 14px; border-radius: 12px; margin-bottom: 12px;
+          background: linear-gradient(180deg, rgba(43,90,160,.30), rgba(19,74,142,.18));
+          border: 1px solid rgba(245,197,24,.35);
+          box-shadow: inset 0 1px 0 rgba(255,255,255,.06), 0 8px 22px -12px rgba(0,0,0,.7);
+          transition: border-color .15s, transform .06s, background .15s;
+        }
+        .scan-bar:hover { border-color: rgba(245,197,24,.65); background: linear-gradient(180deg, rgba(43,90,160,.40), rgba(19,74,142,.24)); }
+        .scan-bar:active { transform: scale(.995); }
+        .scan-bar.busy { cursor: default; opacity: .85; }
+        .scan-bar:focus-within { outline: 2px solid var(--amber); outline-offset: 2px; }
+        .scan-ico {
+          flex: 0 0 auto; width: 38px; height: 38px; border-radius: 10px;
+          display: grid; place-items: center; color: var(--navy);
+          background: linear-gradient(180deg, #FFD84D, var(--amber));
+          box-shadow: 0 6px 16px -6px rgba(245,197,24,.8);
+        }
+        .scan-txt { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+        .scan-txt b { font-size: 15px; letter-spacing: .02em; color: var(--white); font-weight: 700; }
+        .scan-txt small { font-size: 11.5px; color: var(--powder); opacity: .85; }
+        .scan-arrow { color: var(--powder); font-size: 20px; opacity: .55; flex: 0 0 auto; }
+        .scan-spin {
+          width: 17px; height: 17px; border-radius: 50%;
+          border: 2px solid rgba(20,32,74,.35); border-top-color: var(--navy);
+          animation: scanspin .7s linear infinite;
+        }
+        @keyframes scanspin { to { transform: rotate(360deg); } }
+        .scan-msg { font-size: 12px; margin: -4px 2px 12px; line-height: 1.4; }
+        .scan-msg.ok { color: #3ad07a; }
+        .scan-msg.err { color: #E8915A; }
 
         /* ---- modal ---- */
         .modal-back {
@@ -3765,6 +3798,21 @@ function DugoutScorecard() {
                 React.createElement("div", { className: "setup-grid" }, ["away", "home"].map((side) => (React.createElement("div", { className: "setup-card", key: side },
                     React.createElement("h2", null, side === "away" ? "Visiting Club" : "Home Club"),
                     React.createElement("input", { className: "dg-in teamname-in", value: teams[side].name, onChange: (e) => setTeamName(side, e.target.value), "aria-label": `${side} team name` }),
+                    React.createElement("label", { className: `scan-bar ${scanBusy === side ? "busy" : ""}` },
+                        React.createElement("span", { className: "scan-ico", "aria-hidden": "true" }, scanBusy === side
+                            ? React.createElement("span", { className: "scan-spin" })
+                            : React.createElement("svg", { viewBox: "0 0 24 24", width: "19", height: "19", fill: "none", stroke: "currentColor", strokeWidth: "1.8", strokeLinecap: "round", strokeLinejoin: "round" },
+                                React.createElement("path", { d: "M3 8V5.5A1.5 1.5 0 0 1 4.5 4H7" }),
+                                React.createElement("path", { d: "M17 4h2.5A1.5 1.5 0 0 1 21 5.5V8" }),
+                                React.createElement("path", { d: "M21 16v2.5a1.5 1.5 0 0 1-1.5 1.5H17" }),
+                                React.createElement("path", { d: "M7 20H4.5A1.5 1.5 0 0 1 3 18.5V16" }),
+                                React.createElement("path", { d: "M7 9.5h10M7 12.5h7M7 15.5h4" }))),
+                        React.createElement("span", { className: "scan-txt" },
+                            React.createElement("b", null, scanBusy === side ? "Reading the card\u2026" : "Scan lineup card"),
+                            React.createElement("small", null, scanBusy === side ? "This takes a few seconds" : "Snap a photo \u2014 names, numbers, positions fill in")),
+                        scanBusy !== side && React.createElement("span", { className: "scan-arrow", "aria-hidden": "true" }, "\u203A"),
+                        React.createElement("input", { type: "file", accept: "image/*", capture: "environment", style: { display: "none" }, disabled: scanBusy != null, onChange: (e) => { const f = e.target.files && e.target.files[0]; e.target.value = ""; scanLineup(side, f); } })),
+                    scanMsg && scanMsg.side === side && (React.createElement("p", { className: `scan-msg ${scanMsg.ok ? "ok" : "err"}` }, scanMsg.text)),
                     React.createElement("div", { className: "team-custom" },
                         PRESET_TEAM_COLORS.map((c) => (React.createElement("button", { key: c, type: "button", className: `swatch ${teamColor(side) === c ? "sel" : ""}`, style: { background: c }, onClick: () => setTeamColor(side, c), "aria-label": `Set ${side} team color` }))),
                         React.createElement("input", { type: "color", className: "swatch-custom", value: teamColor(side), onChange: (e) => setTeamColor(side, e.target.value), "aria-label": `Custom ${side} team color` }),
@@ -3790,10 +3838,7 @@ function DugoutScorecard() {
                         "+ Add batter (",
                         teams[side].lineup.length,
                         ")"),
-                    React.createElement("label", { className: "dg ghost addrow", style: { textAlign: "center", cursor: "pointer", opacity: scanBusy === side ? .6 : 1 } },
-                        scanBusy === side ? "Reading photo\u2026" : "\uD83D\uDCF7 Scan lineup from a photo",
-                        React.createElement("input", { type: "file", accept: "image/*", capture: "environment", style: { display: "none" }, disabled: scanBusy != null, onChange: (e) => { const f = e.target.files && e.target.files[0]; e.target.value = ""; scanLineup(side, f); } })),
-                    scanMsg && scanMsg.side === side && (React.createElement("p", { style: { fontSize: 12, margin: "6px 2px 0", color: scanMsg.ok ? "#3ad07a" : "#E8915A" } }, scanMsg.text)))))),
+                    )))),
                 React.createElement("div", { className: "setup-card limitcard" },
                     React.createElement("h2", null, "League Pitch Limit"),
                     React.createElement("div", { className: "limitrow" },
