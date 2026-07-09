@@ -15,11 +15,11 @@ const json = (statusCode, body) => ({
 const MODEL = "claude-haiku-4-5-20251001"; // fast + cheap; handles handwriting
 
 const PROMPT =
-  'This photo shows a baseball lineup card (it may be handwritten). Extract the batting order from top to bottom. ' +
+  'This image shows a baseball lineup — a photo of a lineup card (possibly handwritten), a screenshot, or a text message. Extract the batting order from top to bottom. ' +
   'Respond with ONLY a JSON array — no prose, no markdown fences. Each item: ' +
   '{"num":"12","name":"Jaxon H","pos":"SS"}. Use "" for anything unreadable or absent. ' +
   'num is the jersey number (digits only). pos is a standard abbreviation (P, C, 1B, 2B, 3B, SS, LF, CF, RF, DH, EH) or "". ' +
-  'Write names exactly as written on the card. Ignore coach names, dates, and anything that is not a batting-order row.';
+  'Write names exactly as written. Ignore coach names, dates, team headers, phone UI, and anything that is not a batting-order row.';
 
 exports.handler = async (event) => {
   if (event.httpMethod !== "POST") return json(405, { ok: false, message: "Method not allowed" });
