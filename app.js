@@ -127,7 +127,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "86"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "88"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -529,6 +529,46 @@ function DugoutScorecard() {
         }
         catch (_a) { }
     }, [themeColor, themeLogo]);
+    // ---- Scan a lineup card photo into the batting order ----
+    const [scanBusy, setScanBusy] = useState(null); // side | null
+    const [scanMsg, setScanMsg] = useState(null); // {side, ok, text} | null
+    const scanLineup = (side, file) => {
+        if (!file)
+            return;
+        setScanBusy(side);
+        setScanMsg(null);
+        const img = new Image();
+        const url = URL.createObjectURL(file);
+        img.onload = async () => {
+            try {
+                const MAX = 1400;
+                const sc = Math.min(1, MAX / Math.max(img.width, img.height));
+                const cv = document.createElement("canvas");
+                cv.width = Math.round(img.width * sc);
+                cv.height = Math.round(img.height * sc);
+                cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
+                URL.revokeObjectURL(url);
+                const b64 = cv.toDataURL("image/jpeg", 0.8).split(",")[1];
+                const r = await fetch("/.netlify/functions/scan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ image: b64 }) });
+                const d = await r.json().catch(() => ({}));
+                if (!r.ok || !d.ok || !Array.isArray(d.players) || !d.players.length)
+                    throw new Error((d && d.message) || "Couldn't read that photo");
+                setTeams((t) => (Object.assign(Object.assign({}, t), { [side]: Object.assign(Object.assign({}, t[side]), { lineup: d.players.slice(0, MAX_BATTERS).map((pl) => ({
+                            name: pl.name || (pl.num ? pl.num : ""),
+                            num: pl.num || "",
+                            pos: POSITIONS.includes(pl.pos) ? pl.pos : "",
+                            posHist: POSITIONS.includes(pl.pos) && pl.pos ? [pl.pos] : [],
+                        })) }) })));
+                setScanMsg({ side, ok: true, text: "Read " + d.players.length + " batters — check names & numbers, then fix any misreads." });
+            }
+            catch (e) {
+                setScanMsg({ side, ok: false, text: (e && e.message) || "Scan failed — are you online?" });
+            }
+            setScanBusy(null);
+        };
+        img.onerror = () => { URL.revokeObjectURL(url); setScanMsg({ side, ok: false, text: "Couldn't open that photo." }); setScanBusy(null); };
+        img.src = url;
+    };
     const setPlayer = (side, idx, field, value) => setTeams((t) => {
         const lineup = t[side].lineup.map((p, i) => i === idx ? Object.assign(Object.assign({}, p), { [field]: value }) : p);
         return Object.assign(Object.assign({}, t), { [side]: Object.assign(Object.assign({}, t[side]), { lineup }) });
@@ -1757,8 +1797,6 @@ function DugoutScorecard() {
     const orderOpen = (side) => !(game && game.orderLocked && game.orderLocked[side]);
     const slotRemovable = (side, slot) => {
         if (!game || !game.lineup)
-            return false;
-        if (!orderOpen(side))
             return false;
         if (game.lineup[side].length <= 2)
             return false;
@@ -3751,7 +3789,11 @@ function DugoutScorecard() {
                     React.createElement("button", { className: "dg ghost addrow", onClick: () => addPlayer(side), disabled: teams[side].lineup.length >= MAX_BATTERS },
                         "+ Add batter (",
                         teams[side].lineup.length,
-                        ")"))))),
+                        ")"),
+                    React.createElement("label", { className: "dg ghost addrow", style: { textAlign: "center", cursor: "pointer", opacity: scanBusy === side ? .6 : 1 } },
+                        scanBusy === side ? "Reading photo\u2026" : "\uD83D\uDCF7 Scan lineup from a photo",
+                        React.createElement("input", { type: "file", accept: "image/*", capture: "environment", style: { display: "none" }, disabled: scanBusy != null, onChange: (e) => { const f = e.target.files && e.target.files[0]; e.target.value = ""; scanLineup(side, f); } })),
+                    scanMsg && scanMsg.side === side && (React.createElement("p", { style: { fontSize: 12, margin: "6px 2px 0", color: scanMsg.ok ? "#3ad07a" : "#E8915A" } }, scanMsg.text)))))),
                 React.createElement("div", { className: "setup-card limitcard" },
                     React.createElement("h2", null, "League Pitch Limit"),
                     React.createElement("div", { className: "limitrow" },
@@ -4512,13 +4554,15 @@ function DugoutScorecard() {
                         React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr", marginTop: 6 } },
                             React.createElement("button", { className: "dg", disabled: !subName.trim(), onClick: () => editLineup(subSide, subSlot, subName, subPos, subNum) }, "Save edit"),
                             React.createElement("button", { className: "dg hit", disabled: !subName.trim(), onClick: () => substitute(subSide, subSlot, subName, subPos, subNum) }, "Sub \u2014 new player")),
+                        slotRemovable(subSide, subSlot)
+                            ? React.createElement("button", { className: "dg outb", style: { width: "100%", marginTop: 8 }, onClick: () => removeBatter(subSide, subSlot) }, "Remove this spot from the order")
+                            : React.createElement("p", { className: "sub-hint", style: { opacity: .75, marginTop: 8 } }, "A spot can only be removed if that player has no game activity and isn\u2019t at bat or on base. If they\u2019re due up now, tap the next batter first, then remove."),
                         React.createElement("p", { className: "sub-hint" },
                             React.createElement("b", null, "Save edit"),
                             " fixes a name or position \u2014 stats untouched.",
                             " ",
                             React.createElement("b", null, "Sub"),
-                            " swaps in a new player; the original keeps their stats."),
-                        slotRemovable(subSide, subSlot) && (React.createElement("button", { className: "dg ghost rm-spot", onClick: () => removeBatter(subSide, subSlot) }, "Remove this spot from the order")))),
+                            " swaps in a new player; the original keeps their stats."))),
                     React.createElement("div", { className: "btnrow", style: {
                             gridTemplateColumns: orderOpen(subSide) ? "1fr 1fr" : "1fr",
                             marginTop: 10,
