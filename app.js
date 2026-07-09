@@ -25,12 +25,72 @@ const freshPitcher = (name) => ({
     uer: 0, // unearned runs (ER displayed = r - uer)
     bf: 0, // batters faced
     pInn: {}, // pitches thrown per inning, keyed by inning number
+    lastB: null, // {at, inning} — "last batter" called; credited with `at` pitches
 });
 const ipDisplay = (outs) => `${Math.floor(outs / 3)}.${outs % 3}`;
 const pInnStr = (pp, sep, pre) => {
     const m = (pp && pp.pInn) || {};
     const ks = Object.keys(m).map(Number).filter((n) => !isNaN(n)).sort((a, b) => a - b);
     return ks.length ? ks.map((k) => `${pre || ""}${k}: ${m[k]}`).join(sep || ", ") : "";
+};
+// Baseball Nova Scotia pitch count thresholds by division (5.2.7):
+// [no-rest max, 1-day, 2-day, 3-day, daily max (4 days rest)]
+const PITCH_DIVISIONS = {
+    "11U": [25, 40, 55, 65, 75],
+    "13U": [30, 45, 60, 75, 85],
+    "15U": [35, 50, 65, 80, 95],
+    "18U": [40, 55, 70, 85, 105],
+    "22U": [45, 60, 75, 90, 115],
+};
+// Credited pitch total — when "last batter" was called the pitcher is
+// credited with that number even if they threw more to finish the batter
+// (BNS 5.2.7.8 / 5.2.7.14, recorded as e.g. "35 (37)").
+const creditedOf = (pp) => (pp.lastB && pp.lastB.at != null ? pp.lastB.at : pp.pitches);
+// Days rest required (0-4) for a daily credited total in a division
+const daysRestFor = (division, pitches) => {
+    const t = PITCH_DIVISIONS[division];
+    if (!t || pitches <= 0)
+        return 0;
+    for (let i = 0; i < t.length; i++)
+        if (pitches <= t[i])
+            return i;
+    return 4;
+};
+// Sheet row: running (cumulative) pitch totals by inning, BNS-sheet style.
+// Returns { cells: (number|null)[], lastIdx, total } for innings 1..innCount.
+const pitchSheetRow = (pp, innCount) => {
+    const m = (pp && pp.pInn) || {};
+    let run = 0;
+    let lastIdx = -1;
+    const cells = [];
+    for (let k = 1; k <= innCount; k++) {
+        if (m[k] != null) {
+            run += m[k];
+            cells.push(run);
+            lastIdx = k - 1;
+        }
+        else
+            cells.push(null);
+    }
+    return { cells, lastIdx, total: run };
+};
+// Cell text for the sheet — the exit inning shows "35 (37)" when last
+// batter was called and the actual differs from the credited number
+const sheetCellText = (pp, row, idx) => {
+    const v = row.cells[idx];
+    if (v == null)
+        return "";
+    if (idx === row.lastIdx && pp.lastB && pp.lastB.at !== row.total)
+        return `${pp.lastB.at} (${row.total})`;
+    return String(v);
+};
+// Next BNS threshold at or above the given count, or null past daily max
+const nextThresholdFor = (division, pitches) => {
+    const t = PITCH_DIVISIONS[division] || [];
+    for (const x of t)
+        if (x >= pitches)
+            return x;
+    return null;
 };
 const snapshot = (s) => JSON.parse(JSON.stringify(s));
 // Scoreboard short name: "Clark's Harbour Foggies" -> "Foggies"; short names pass through;
@@ -127,7 +187,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "90"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "91"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -267,12 +327,14 @@ function DugoutScorecard() {
     const [baseMenu, setBaseMenu] = useState(null); // which occupied base was tapped
     const [pitchMenuSide, setPitchMenuSide] = useState(null); // null | "away" | "home"
     const [pitchLimit, setPitchLimit] = useState(saved0 && saved0.pitchLimit != null ? saved0.pitchLimit : 85); // 0 = off
+    const [division, setDivision] = useState((saved0 && saved0.division) || ""); // "" = off; BNS age division for pitch count rules
+    const [sheetOpen, setSheetOpen] = useState(false); // pitch count sheet view
     const [incomingName, setIncomingName] = useState("");
     const [showLog, setShowLog] = useState(false);
     useEffect(() => { try {
-        localStorage.setItem(SAVE_KEY, JSON.stringify({ phase, teams, game, pitchLimit }));
+        localStorage.setItem(SAVE_KEY, JSON.stringify({ phase, teams, game, pitchLimit, division }));
     }
-    catch (_a) { } }, [phase, teams, game, pitchLimit]);
+    catch (_a) { } }, [phase, teams, game, pitchLimit, division]);
     const [fcMenu, setFcMenu] = useState(false);
     const [fieldPick, setFieldPick] = useState(null); // {label, isK} | null — fielder picker for batted outs
     const [fieldSeq, setFieldSeq] = useState([]); // positions tapped, e.g. [6,3]
@@ -617,7 +679,7 @@ function DugoutScorecard() {
             home: { name: teams.home.name, color: teams.home.color || "", logo: teams.home.logo || "" },
             awayRuns: sumRuns("away"),
             homeRuns: sumRuns("home"),
-            snapshot: { teams: snapshot(teams), game: snapshot(g), pitchLimit },
+            snapshot: { teams: snapshot(teams), game: snapshot(g), pitchLimit, division },
         };
         setGames((list) => {
             const prev = list.find((x) => x.id === record.id);
@@ -644,6 +706,7 @@ function DugoutScorecard() {
         }
         if (typeof snap.pitchLimit !== "undefined")
             setPitchLimit(snap.pitchLimit);
+        setDivision(snap.division || "");
         archivedIdRef.current = record.id; // already saved — don't re-archive on the over-effect
         setHistory([]);
         setPhase("game");
@@ -877,6 +940,7 @@ function DugoutScorecard() {
         setGame({
             id: Date.now(),
             date: gameDate,
+            division: division || "",
             inning: 1,
             half: "top",
             balls: 0,
@@ -2205,6 +2269,31 @@ function DugoutScorecard() {
         const pp = curP(g, pitchMenuSide);
         pp.uer = Math.max(0, Math.min(pp.r, (pp.uer || 0) + delta));
     });
+    // BNS 5.2.7.8 — "last batter" called: credit the pitcher with the count
+    // at the time of the call; the live counter keeps counting actual pitches.
+    const callLastBatter = () => mutate((g) => {
+        const pp = curP(g, fieldingSide);
+        if (pp.lastB || pp.pitches <= 0)
+            return;
+        pp.lastB = { at: pp.pitches, inning: g.inning };
+        logPlay(g, `Last batter called — ${pp.name} credited with ${pp.pitches} pitches`, "info");
+    });
+    const clearLastBatter = () => mutate((g) => {
+        const pp = curP(g, pitchMenuSide || fieldingSide);
+        if (!pp.lastB)
+            return;
+        logPlay(g, `Last batter call cleared for ${pp.name}`, "info");
+        pp.lastB = null;
+    });
+    // adjust the credited number (e.g. bump 33 -> the official 35 threshold)
+    // without polluting undo history, like renamePitcher
+    const editLastBatter = (v) => setGame((g) => {
+        const n = snapshot(g);
+        const pp = curP(n, pitchMenuSide || fieldingSide);
+        if (pp.lastB)
+            pp.lastB.at = Math.max(0, Math.min(200, parseInt(v || "0", 10) || 0));
+        return n;
+    });
     const endGame = () => mutate((g) => {
         // If "final" is called before anything happened in the current half
         // (no plate appearance, no pitch, no runs), the game really ended in
@@ -3063,6 +3152,190 @@ function DugoutScorecard() {
             mutate((g) => (g.lastPlay = "Couldn't create the box score on this device"));
         }
     };
+    // BNS-style pitch count sheet as a printable image
+    const drawPitchSheetCanvas = () => {
+        const dv = (game.division || division) || "";
+        const innCount = Math.min(Math.max(game.linescore.length, 7), 9);
+        const W = 1600;
+        const m = 60;
+        const nameW = 300;
+        const restW = 150;
+        const innW = (W - m * 2 - nameW - restW) / innCount;
+        const rowH = 44;
+        const headH = 44;
+        const blockGap = 46;
+        const rowsFor = (side) => Math.max(game.pitchers[side].length, 6);
+        const blockH = (side) => 34 + headH + rowsFor(side) * rowH;
+        const refTop = 210 + blockH("home") + blockGap + blockH("away") + blockGap;
+        const H = refTop + 300;
+        const c = document.createElement("canvas");
+        c.width = W;
+        c.height = H;
+        const ctx = c.getContext("2d");
+        const ink = "#141414";
+        const grid = "#444";
+        ctx.fillStyle = "#FFFFFF";
+        ctx.fillRect(0, 0, W, H);
+        ctx.fillStyle = ink;
+        ctx.textAlign = "center";
+        ctx.font = "700 42px 'Saira Condensed', sans-serif";
+        ctx.fillText("PITCH COUNT SHEET", W / 2, 78);
+        ctx.font = "500 22px 'Saira Condensed', sans-serif";
+        ctx.fillStyle = "#666";
+        ctx.fillText(`DugoutIQ \u00B7 running pitch totals by inning \u00B7 "35 (37)" = last batter called, credited 35`, W / 2, 110);
+        ctx.textAlign = "left";
+        ctx.fillStyle = ink;
+        ctx.font = "600 26px 'Saira Condensed', sans-serif";
+        ctx.fillText(`Home Team:  ${teams.home.name}`, m, 158);
+        ctx.fillText(`Visiting Team:  ${teams.away.name}`, W / 2 + 20, 158);
+        ctx.fillText(`Game Date:  ${game.date || new Date().toISOString().slice(0, 10)}`, m, 194);
+        ctx.fillText(dv ? `Division:  ${dv}` : "Division:  ______", W / 2 + 20, 194);
+        const drawBlock = (side, top) => {
+            ctx.font = "700 26px 'Saira Condensed', sans-serif";
+            ctx.fillStyle = ink;
+            ctx.fillText(side === "home" ? "HOME TEAM" : "VISITING TEAM", m, top + 24);
+            const t0 = top + 34;
+            const rows = rowsFor(side);
+            const cols = [nameW];
+            for (let i = 0; i < innCount; i++)
+                cols.push(innW);
+            cols.push(restW);
+            // grid
+            ctx.strokeStyle = grid;
+            ctx.lineWidth = 1.5;
+            let x = m;
+            const tableW = W - m * 2;
+            const tableH = headH + rows * rowH;
+            ctx.strokeRect(m, t0, tableW, tableH);
+            cols.slice(0, -1).forEach((w) => {
+                x += w;
+                ctx.beginPath();
+                ctx.moveTo(x, t0);
+                ctx.lineTo(x, t0 + tableH);
+                ctx.stroke();
+            });
+            for (let r = 0; r <= rows; r++) {
+                const y = t0 + headH + r * rowH;
+                if (r < rows) {
+                    ctx.beginPath();
+                    ctx.moveTo(m, y);
+                    ctx.lineTo(m + tableW, y);
+                    ctx.stroke();
+                }
+            }
+            // header labels
+            ctx.font = "700 22px 'Saira Condensed', sans-serif";
+            ctx.fillStyle = ink;
+            ctx.textAlign = "left";
+            ctx.fillText("Pitcher", m + 12, t0 + 30);
+            ctx.textAlign = "center";
+            for (let i = 0; i < innCount; i++) {
+                const label = i < 7 ? String(i + 1) : `Extra (${i + 1})`;
+                ctx.fillText(label, m + nameW + innW * i + innW / 2, t0 + 30);
+            }
+            ctx.fillText("Days Rest", m + tableW - restW / 2, t0 + 30);
+            // rows
+            game.pitchers[side].forEach((pp, r) => {
+                const yTxt = t0 + headH + r * rowH + 30;
+                const row = pitchSheetRow(pp, innCount);
+                ctx.textAlign = "left";
+                ctx.font = "600 22px 'Saira Condensed', sans-serif";
+                ctx.fillText(pp.name.slice(0, 22), m + 12, yTxt);
+                ctx.textAlign = "center";
+                ctx.font = "500 22px 'Saira Condensed', sans-serif";
+                for (let i = 0; i < innCount; i++) {
+                    const txt = sheetCellText(pp, row, i);
+                    if (txt)
+                        ctx.fillText(txt, m + nameW + innW * i + innW / 2, yTxt);
+                }
+                const rest = dv ? String(daysRestFor(dv, creditedOf(pp))) : "";
+                if (rest)
+                    ctx.fillText(rest, m + tableW - restW / 2, yTxt);
+            });
+        };
+        const homeTop = 210;
+        drawBlock("home", homeTop);
+        drawBlock("away", homeTop + blockH("home") + blockGap);
+        // reference table (selected division highlighted)
+        const rTop = refTop;
+        const rCols = [110, 150, 150, 150, 150, 150, 110];
+        const rW = rCols.reduce((a, b) => a + b, 0);
+        const rRowH = 36;
+        const heads = ["Division", "No Rest", "1 Day Rest", "2 Days Rest", "3 Days Rest", "4 Days Rest", "Max"];
+        ctx.strokeStyle = grid;
+        const divs = Object.keys(PITCH_DIVISIONS);
+        ctx.strokeRect(m, rTop, rW, rRowH * (divs.length + 1));
+        let rx = m;
+        rCols.slice(0, -1).forEach((w) => {
+            rx += w;
+            ctx.beginPath();
+            ctx.moveTo(rx, rTop);
+            ctx.lineTo(rx, rTop + rRowH * (divs.length + 1));
+            ctx.stroke();
+        });
+        ctx.textAlign = "center";
+        ctx.font = "700 19px 'Saira Condensed', sans-serif";
+        ctx.fillStyle = ink;
+        heads.forEach((h, i) => {
+            const cx = m + rCols.slice(0, i).reduce((a, b) => a + b, 0) + rCols[i] / 2;
+            ctx.fillText(h, cx, rTop + 25);
+        });
+        divs.forEach((d, r) => {
+            const y0 = rTop + rRowH * (r + 1);
+            if (d === dv) {
+                ctx.fillStyle = "rgba(43,90,160,.15)";
+                ctx.fillRect(m + 1, y0 + 1, rW - 2, rRowH - 2);
+            }
+            ctx.beginPath();
+            ctx.moveTo(m, y0);
+            ctx.lineTo(m + rW, y0);
+            ctx.stroke();
+            const t = PITCH_DIVISIONS[d];
+            const vals = [d, `1 - ${t[0]}`, `${t[0] + 1} - ${t[1]}`, `${t[1] + 1} - ${t[2]}`, `${t[2] + 1} - ${t[3]}`, `${t[3] + 1} - ${t[4]}`, String(t[4])];
+            ctx.fillStyle = ink;
+            ctx.font = d === dv ? "700 19px 'Saira Condensed', sans-serif" : "500 19px 'Saira Condensed', sans-serif";
+            vals.forEach((v, i) => {
+                const cx = m + rCols.slice(0, i).reduce((a, b) => a + b, 0) + rCols[i] / 2;
+                ctx.fillText(v, cx, y0 + 25);
+            });
+        });
+        // signatures
+        const sx = m + rW + 60;
+        const sw = W - m - sx;
+        ctx.textAlign = "left";
+        ctx.font = "600 24px 'Saira Condensed', sans-serif";
+        ctx.fillStyle = ink;
+        ctx.fillText("Home Coach Signature:", sx, rTop + 60);
+        ctx.beginPath();
+        ctx.moveTo(sx, rTop + 90);
+        ctx.lineTo(sx + sw, rTop + 90);
+        ctx.stroke();
+        ctx.fillText("Visiting Coach Signature:", sx, rTop + 150);
+        ctx.beginPath();
+        ctx.moveTo(sx, rTop + 180);
+        ctx.lineTo(sx + sw, rTop + 180);
+        ctx.stroke();
+        return c;
+    };
+    const sharePitchSheet = async () => {
+        setSheetOpen(false);
+        try {
+            const c = drawPitchSheetCanvas();
+            const dataUrl = c.toDataURL("image/png");
+            const blob = await new Promise((res) => c.toBlob(res, "image/png"));
+            const file = new File([blob], "dugoutiq-pitchcount.png", { type: "image/png" });
+            const canShare = !!(navigator.canShare && navigator.canShare({ files: [file] }));
+            setRecapPreview({
+                dataUrl,
+                canShare,
+                title: `${teams.home.name} vs ${teams.away.name} — pitch count sheet`,
+                fname: "dugoutiq-pitchcount.png",
+            });
+        }
+        catch (_a) {
+            mutate((g) => (g.lastPlay = "Couldn't create the pitch count sheet on this device"));
+        }
+    };
     const shareRecapFile = async () => {
         if (!recapPreview)
             return;
@@ -3841,6 +4114,18 @@ function DugoutScorecard() {
                     )))),
                 React.createElement("div", { className: "setup-card limitcard" },
                     React.createElement("h2", null, "League Pitch Limit"),
+                    React.createElement("div", { className: "limitrow", style: { marginBottom: 8 } },
+                        React.createElement("select", { className: "dg-sel", style: { width: "auto", minWidth: 130 }, value: division, onChange: (e) => {
+                                const dv = e.target.value;
+                                setDivision(dv);
+                                if (dv && PITCH_DIVISIONS[dv])
+                                    setPitchLimit(PITCH_DIVISIONS[dv][4]); // daily max
+                            }, "aria-label": "Age division for pitch count rules" },
+                            React.createElement("option", { value: "" }, "Division\u2026 (off)"),
+                            Object.keys(PITCH_DIVISIONS).map((d) => (React.createElement("option", { key: d, value: d }, d)))),
+                        React.createElement("span", { className: "limithint" }, division
+                            ? `BNS thresholds ${PITCH_DIVISIONS[division].join(" / ")} \u00B7 enables pitch count sheet`
+                            : "pick a division for BNS thresholds + pitch count sheet")),
                     React.createElement("div", { className: "limitrow" },
                         React.createElement("input", { className: "dg-in", type: "number", min: "0", max: "200", value: pitchLimit, onChange: (e) => setPitchLimit(Math.max(0, parseInt(e.target.value || "0", 10))), "aria-label": "Pitch limit per pitcher" }),
                         React.createElement("span", { className: "limithint" },
@@ -3893,7 +4178,15 @@ function DugoutScorecard() {
                         pitchStatus(curP(game, fieldingSide).pitches) === "over" && (React.createElement("div", { className: "plimit-tag" }, "AT LIMIT")),
                         pitchStatus(curP(game, fieldingSide).pitches) === "warn" && (React.createElement("div", { className: "plimit-tag warn" },
                             pitchLimit - curP(game, fieldingSide).pitches,
-                            " LEFT")))),
+                            " LEFT")),
+                        division && pitchStatus(curP(game, fieldingSide).pitches) === "" && !curP(game, fieldingSide).lastB && (() => {
+                            // BNS 5.2.7.17 — flag an approaching threshold (within 3 pitches)
+                            const p = curP(game, fieldingSide);
+                            const nt = p.pitches > 0 ? nextThresholdFor(division, p.pitches) : null;
+                            return nt != null && nt - p.pitches <= 3
+                                ? React.createElement("div", { className: "plimit-tag warn" }, p.pitches >= nt ? `AT ${nt}` : `${nt} NEAR`)
+                                : null;
+                        })())),
                 React.createElement("div", { className: "linescore-wrap" },
                     React.createElement("table", { className: "linescore" },
                         React.createElement("thead", null,
@@ -4193,8 +4486,46 @@ function DugoutScorecard() {
                                 setShareOpen(false);
                                 setBookChoose(true);
                             } }, "\uD83D\uDCD2 Scorebook page (classic)"),
+                        React.createElement("button", { className: "dg", onClick: () => {
+                                setShareOpen(false);
+                                setSheetOpen(true);
+                            } }, "\uD83D\uDCCB Pitch count sheet (BNS)"),
                         React.createElement("button", { className: "dg", onClick: startLive }, "\uD83D\uDCE1 Live game link (spectators)"),
                         React.createElement("button", { className: "dg ghost", onClick: () => setShareOpen(false) }, "Cancel"))))),
+            sheetOpen && game && (() => {
+                const dv = (game.division || division) || "";
+                const innCount = Math.min(Math.max(game.linescore.length, 7), 9);
+                const cellStyle = { border: "1px solid rgba(255,255,255,.25)", padding: "5px 7px", textAlign: "center", fontSize: 13, whiteSpace: "nowrap" };
+                const nameStyle = Object.assign({}, cellStyle, { textAlign: "left", minWidth: 110 });
+                const sideTable = (side) => React.createElement("div", { key: side, style: { marginBottom: 16 } },
+                    React.createElement("div", { style: { fontSize: 12, letterSpacing: ".08em", textTransform: "uppercase", color: "#A9C5E8", margin: "0 0 6px" } }, `${side === "home" ? "Home" : "Visiting"} \u2014 ${teams[side].name}`),
+                    React.createElement("div", { style: { overflowX: "auto" } },
+                        React.createElement("table", { style: { borderCollapse: "collapse", width: "100%" } },
+                            React.createElement("thead", null,
+                                React.createElement("tr", null,
+                                    React.createElement("th", { style: nameStyle }, "Pitcher"),
+                                    Array.from({ length: innCount }, (_, i) => (React.createElement("th", { key: i, style: cellStyle }, i < 7 ? i + 1 : `E${i + 1}`))),
+                                    React.createElement("th", { style: cellStyle }, "Rest"))),
+                            React.createElement("tbody", null, game.pitchers[side].map((pp, r) => {
+                                const row = pitchSheetRow(pp, innCount);
+                                return React.createElement("tr", { key: r },
+                                    React.createElement("td", { style: nameStyle }, pp.name),
+                                    row.cells.map((_, i) => (React.createElement("td", { key: i, style: cellStyle }, sheetCellText(pp, row, i)))),
+                                    React.createElement("td", { style: cellStyle }, dv ? daysRestFor(dv, creditedOf(pp)) : "\u2014"));
+                            })))));
+                return React.createElement("div", { className: "modal-back", onClick: () => setSheetOpen(false) },
+                    React.createElement("div", { className: "modal season-modal", onClick: (e) => e.stopPropagation() },
+                        React.createElement("h3", null, "Pitch count sheet"),
+                        React.createElement("p", { style: { textTransform: "none", letterSpacing: 0 } },
+                            "Running totals by inning",
+                            dv ? ` \u00B7 BNS ${dv} rules` : " \u00B7 no division set (Rest column off)",
+                            " \u00B7 \u201C35 (37)\u201D = last batter called, credited 35"),
+                        sideTable("home"),
+                        sideTable("away"),
+                        React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr" } },
+                            React.createElement("button", { className: "dg hit", onClick: sharePitchSheet }, "\uD83D\uDDBC Export sheet (image)"),
+                            React.createElement("button", { className: "dg ghost", onClick: () => setSheetOpen(false) }, "Close"))));
+            })(),
             seasonOpen &&
                 (() => {
                     const data = computeSeason(seasonTeam);
@@ -4700,6 +5031,31 @@ function DugoutScorecard() {
                         game.pitchers[pitchMenuSide].filter((pp) => pInnStr(pp)).map((pp, i) => React.createElement("div", { key: i, style: { fontSize: "13px", margin: "3px 0", color: "#fff" } },
                             React.createElement("b", null, pp.name + ":  "),
                             pInnStr(pp, "  \u00B7  ", "Inn "))))),
+                    (() => {
+                        const pp = curP(game, pitchMenuSide);
+                        const cred = creditedOf(pp);
+                        const nt = division ? nextThresholdFor(division, pp.pitches + 1) : null;
+                        const rest = division ? daysRestFor(division, cred) : null;
+                        const boxStyle = { margin: "6px 0 12px", padding: "10px 12px", background: "rgba(198,57,57,.10)", border: "1px solid rgba(198,57,57,.4)", borderRadius: "10px" };
+                        return React.createElement("div", { style: boxStyle },
+                            division && (React.createElement("div", { style: { fontSize: "13px", color: "#fff", marginBottom: "8px" } },
+                                React.createElement("b", null, `BNS ${division}: `),
+                                nt != null
+                                    ? `next threshold ${nt} (${Math.max(0, nt - pp.pitches)} away)`
+                                    : "past daily max",
+                                ` \u00B7 ${rest} day${rest === 1 ? "" : "s"} rest required so far`)),
+                            pp.lastB
+                                ? React.createElement("div", { className: "limitrow" },
+                                    React.createElement("span", { style: { color: "#fff", fontSize: "13px", flex: 1 } },
+                                        "Last batter called \u2014 credited",
+                                        pp.pitches !== pp.lastB.at ? ` (threw ${pp.pitches})` : ""),
+                                    React.createElement("input", { className: "dg-in", type: "number", min: "0", max: "200", style: { width: 64 }, value: pp.lastB.at, onChange: (e) => editLastBatter(e.target.value), "aria-label": "Credited pitch count" }),
+                                    React.createElement("button", { className: "dg ghost", style: { padding: "6px 10px" }, onClick: clearLastBatter }, "Clear"))
+                                : React.createElement("button", { className: "dg outb", style: { width: "100%" }, disabled: pitchMenuSide !== fieldingSide || game.over || pp.pitches <= 0, onClick: callLastBatter },
+                                    "\uD83D\uDD90 Last batter called \u2014 credit at ",
+                                    pp.pitches,
+                                    " pitches"));
+                    })(),
                     pitchLimit > 0 && (React.createElement("p", { className: `limitstatus ${pitchStatus(curP(game, pitchMenuSide).pitches)}` }, pitchStatus(curP(game, pitchMenuSide).pitches) === "over"
                         ? `At/over the ${pitchLimit}-pitch limit — change pitchers`
                         : `${Math.max(0, pitchLimit - curP(game, pitchMenuSide).pitches)} pitches remaining of ${pitchLimit}`)),
@@ -4717,6 +5073,10 @@ function DugoutScorecard() {
                     pitchMenuSide === fieldingSide &&
                         !game.over &&
                         (game.bases.first || game.bases.second || game.bases.third) && (React.createElement("button", { className: "dg outb", style: { width: "100%", marginBottom: 8 }, onClick: playBalk }, "Balk \u2014 all runners advance one base")),
+                    React.createElement("button", { className: "dg ghost", style: { width: "100%", marginBottom: 8 }, onClick: () => {
+                            setPitchMenuSide(null);
+                            setSheetOpen(true);
+                        } }, "\uD83D\uDCCB Pitch count sheet"),
                     React.createElement("div", { className: "btnrow" },
                         React.createElement("button", { className: "dg hit", onClick: newPitcher }, "Bring in new pitcher"),
                         React.createElement("button", { className: "dg ghost", onClick: () => setPitchMenuSide(null) }, "Cancel"))))))));
