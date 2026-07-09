@@ -127,7 +127,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "89"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "90"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -3811,7 +3811,7 @@ function DugoutScorecard() {
                             React.createElement("b", null, scanBusy === side ? "Reading the card\u2026" : "Scan lineup card"),
                             React.createElement("small", null, scanBusy === side ? "This takes a few seconds" : "Snap a photo \u2014 names, numbers, positions fill in")),
                         scanBusy !== side && React.createElement("span", { className: "scan-arrow", "aria-hidden": "true" }, "\u203A"),
-                        React.createElement("input", { type: "file", accept: "image/*", capture: "environment", style: { display: "none" }, disabled: scanBusy != null, onChange: (e) => { const f = e.target.files && e.target.files[0]; e.target.value = ""; scanLineup(side, f); } })),
+                        React.createElement("input", { type: "file", accept: "image/*", style: { display: "none" }, disabled: scanBusy != null, onChange: (e) => { const f = e.target.files && e.target.files[0]; e.target.value = ""; scanLineup(side, f); } })),
                     scanMsg && scanMsg.side === side && (React.createElement("p", { className: `scan-msg ${scanMsg.ok ? "ok" : "err"}` }, scanMsg.text)),
                     React.createElement("div", { className: "team-custom" },
                         PRESET_TEAM_COLORS.map((c) => (React.createElement("button", { key: c, type: "button", className: `swatch ${teamColor(side) === c ? "sel" : ""}`, style: { background: c }, onClick: () => setTeamColor(side, c), "aria-label": `Set ${side} team color` }))),
