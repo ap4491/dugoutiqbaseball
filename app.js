@@ -12,8 +12,9 @@ const MAX_BATTERS = 15;
 const freshLineup = (label, n = 12) => Array.from({ length: n }, (_, i) => ({ name: `${label} ${i + 1}`, pos: "", num: "" }));
 const freshStats = (n) => Array.from({ length: n }, () => ({ ab: 0, h: 0, r: 0, rbi: 0, bb: 0, k: 0, x2b: 0, x3b: 0, xhr: 0, hbp: 0, sac: 0 }));
 const emptyBases = () => ({ first: false, second: false, third: false });
-const freshPitcher = (name) => ({
+const freshPitcher = (name, num) => ({
     name,
+    num: num || "",
     pitches: 0,
     strikes: 0,
     outs: 0, // outs recorded -> IP
@@ -243,8 +244,16 @@ if (saved0 && saved0.game) {
     if (!g.orderLocked)
         g.orderLocked = { away: false, home: false };
     if (g.pitchers) {
-        ["away", "home"].forEach((sd) => (g.pitchers[sd] || []).forEach((pp) => { if (pp.uer == null)
-            pp.uer = 0; }));
+        ["away", "home"].forEach((sd) => (g.pitchers[sd] || []).forEach((pp) => {
+            if (pp.uer == null)
+                pp.uer = 0;
+            if (pp.num == null) {
+                // older save: pull the jersey off the lineup by name
+                const roster = (g.lineup && g.lineup[sd]) || [];
+                const match = roster.find((pl) => pl.name === pp.name);
+                pp.num = match && match.num ? match.num : "";
+            }
+        }));
     }
 }
 const LICENSE_KEY_STORE = "dugoutiq-license-v1";
@@ -932,9 +941,9 @@ function DugoutScorecard() {
             setImportText("");
         }
     };
-    const starterName = (side) => {
+    const starterOf = (side) => {
         const p = teams[side].lineup.find((pl) => pl.pos === "P");
-        return p && p.name.trim() ? p.name : "P1";
+        return p && p.name.trim() ? { name: p.name, num: p.num || "" } : { name: "P1", num: "" };
     };
     const playBall = () => {
         setGame({
@@ -969,8 +978,8 @@ function DugoutScorecard() {
             hits: { away: 0, home: 0 },
             errors: { away: 0, home: 0 },
             pitchers: {
-                away: [freshPitcher(starterName("away"))],
-                home: [freshPitcher(starterName("home"))],
+                away: [freshPitcher(starterOf("away").name, starterOf("away").num)],
+                home: [freshPitcher(starterOf("home").name, starterOf("home").num)],
             },
             log: [{ type: "ev", i: 1, h: "top", t: "Play ball!", k: "info" }],
             openPA: null,
@@ -1145,10 +1154,25 @@ function DugoutScorecard() {
         }
     };
     /* --- scorebook card tracking --- */
-    const cardMark = (g, bIdx, res, base) => {
+    const cardMark = (g, bIdx, res, base, outNo) => {
         if (!g.card)
             g.card = { away: [], home: [] }; // resumed older save
-        g.card[battingSide].push({ b: bIdx, inning: g.inning, res, base });
+        // outNo: which out of the inning this was (1-3). Every out-marking call
+        // site runs before recordOut, so the pending out is g.outs + 1.
+        const out = outNo != null ? outNo : base === 0 ? g.outs + 1 : null;
+        g.card[battingSide].push({ b: bIdx, inning: g.inning, res, base, out });
+    };
+    // a runner was retired on the bases — number the out in their own cell
+    const cardOut = (g, runner, outNo) => {
+        if (!g.card || !runner || runner.b == null)
+            return;
+        const list = g.card[battingSide];
+        for (let i = list.length - 1; i >= 0; i--) {
+            if (list[i].b === runner.b && list[i].base < 4) {
+                list[i].out = outNo != null ? outNo : g.outs + 1;
+                return;
+            }
+        }
     };
     // a runner moved up: update how far their scorebook diamond is drawn
     const cardAdvance = (g, runner, base) => {
@@ -1216,6 +1240,45 @@ function DugoutScorecard() {
             g.bases.second = g.bases.first;
         }
         g.bases.first = { b: batterIdx };
+        return runs;
+    };
+    // Fielder's choice advancement. The runner at `outBase` is retired; every
+    // OTHER forced runner moves up one base. A runner is forced when every base
+    // behind them is occupied (the batter always forces 1st), so a 6-4 with
+    // runners on 1st and 2nd leaves 1st and 3rd. Unforced runners hold — tap
+    // the base to move them.
+    const fcAdvance = (g, outBase, batterIdx) => {
+        const b = g.bases;
+        const forced = {
+            first: !!b.first,
+            second: !!b.first && !!b.second,
+            third: !!b.first && !!b.second && !!b.third,
+        };
+        let runs = 0;
+        const next = emptyBases();
+        // deepest runner first so an advancing runner never clobbers a held one
+        if (b.third && outBase !== "third") {
+            if (forced.third) {
+                runs += 1;
+                creditRun(g, b.third);
+            }
+            else
+                next.third = b.third;
+        }
+        if (b.second && outBase !== "second") {
+            if (forced.second) {
+                cardAdvance(g, b.second, 3);
+                next.third = b.second;
+            }
+            else
+                next.second = b.second;
+        }
+        if (b.first && outBase !== "first") {
+            cardAdvance(g, b.first, 2);
+            next.second = b.first;
+        }
+        next.first = { b: batterIdx };
+        g.bases = next;
         return runs;
     };
     /* --- count buttons --- */
@@ -1461,12 +1524,12 @@ function DugoutScorecard() {
             const name = currentBatterName();
             st.ab += 1;
             chargeP(g, "outs");
-            g.bases[outBase] = false;
+            cardOut(g, g.bases[outBase], g.outs + 1); // the forced runner's own cell
             cardMark(g, bIdx, fnote || "FC", 1);
             closePA(g, `fielder's choice${fnote ? " " + fnote : ""} — runner from ${baseLabel(outBase)} forced out`, `${name}: fielder's choice${fnote ? " " + fnote : ""} — runner from ${baseLabel(outBase)} forced out`);
             const flipped = recordOut(g);
             if (!flipped) {
-                const runs = forceAdvance(g, bIdx);
+                const runs = fcAdvance(g, outBase, bIdx);
                 addRuns(g, runs);
                 chargeP(g, "r", runs);
                 if (runs)
@@ -1643,7 +1706,10 @@ function DugoutScorecard() {
             const st = g.stats[battingSide][bIdx];
             const name = currentBatterName();
             st.ab += 1;
-            cardMark(g, bIdx, fnote || "DP", 0);
+            // On a 6-4-3 the lead runner is retired first, then the batter.
+            const outsBefore = g.outs;
+            cardOut(g, g.bases[runnerBase], outsBefore + 1);
+            cardMark(g, bIdx, fnote || "DP", 0, outsBefore + 2);
             // snapshot the runners before the play resolves
             const had = {
                 first: g.bases.first,
@@ -2112,6 +2178,7 @@ function DugoutScorecard() {
     const runnerOut = (base) => {
         const who = runnerLabel(base);
         mutate((g) => {
+            cardOut(g, g.bases[base], g.outs + 1);
             g.bases[base] = false;
             chargeP(g, "outs");
             if (g.openHit != null) {
@@ -2128,6 +2195,7 @@ function DugoutScorecard() {
         const who = runnerLabel(base);
         const targetTxt = base === "third" ? "home" : baseLabel(base === "first" ? "second" : "third");
         mutate((g) => {
+            cardOut(g, g.bases[base], g.outs + 1);
             g.bases[base] = false;
             chargeP(g, "outs");
             logPlay(g, `${who} caught stealing ${targetTxt} (CS)`);
@@ -2138,6 +2206,7 @@ function DugoutScorecard() {
     const pickedOff = (base) => {
         const who = runnerLabel(base);
         mutate((g) => {
+            cardOut(g, g.bases[base], g.outs + 1);
             g.bases[base] = false;
             chargeP(g, "outs");
             logPlay(g, `${who} picked off ${baseLabel(base)} (PO)`);
@@ -2187,18 +2256,25 @@ function DugoutScorecard() {
     const newPitcher = () => {
         const side = pitchMenuSide || fieldingSide;
         const name = incomingName.trim() || `P${game.pitchers[side].length + 1}`;
+        const roster = (game.lineup && game.lineup[side]) || teams[side].lineup;
+        const match = roster.find((pl) => pl.name === name);
         mutate((g) => {
             const prev = curP(g, side);
-            g.pitchers[side].push(freshPitcher(name));
+            g.pitchers[side].push(freshPitcher(name, match ? match.num : ""));
             logPlay(g, `Pitching change (${teams[side].name}): ${name} in for ${prev.name} (${prev.pitches} pitches)`, "info");
         });
         setIncomingName("");
         setPitchMenuSide(null);
     };
-    // rename current pitcher without polluting undo history
+    // rename / renumber the current pitcher without polluting undo history
     const renamePitcher = (value) => setGame((g) => {
         const n = snapshot(g);
         curP(n, pitchMenuSide || fieldingSide).name = value;
+        return n;
+    });
+    const setPitcherNum = (value) => setGame((g) => {
+        const n = snapshot(g);
+        curP(n, pitchMenuSide || fieldingSide).num = value.replace(/[^0-9]/g, "").slice(0, 2);
         return n;
     });
     const adjustRun = (n) => mutate((g) => {
@@ -2788,6 +2864,24 @@ function DugoutScorecard() {
                             ctx.font = "700 18px 'Saira Condensed', sans-serif";
                             ctx.fillText("+" + (cell.length - 1), cx + rR + 6, y + 22);
                         }
+                        // circled out number, bottom-right — which out of the inning
+                        const outNo = cell.map((e) => e.out).find((o) => o);
+                        if (outNo) {
+                            const oR = Math.min(11, cellW * 0.13);
+                            const ox = cx + cellW / 2 - oR - 3;
+                            const oy = y + cellH - 22;
+                            ctx.beginPath();
+                            ctx.arc(ox, oy, oR, 0, Math.PI * 2);
+                            ctx.fillStyle = "#FAF6EC";
+                            ctx.fill();
+                            ctx.strokeStyle = "#9A938A";
+                            ctx.lineWidth = 1.5;
+                            ctx.stroke();
+                            ctx.fillStyle = "#4A443C";
+                            ctx.font = `700 ${Math.round(oR * 1.5)}px 'Saira Condensed', sans-serif`;
+                            ctx.textAlign = "center";
+                            ctx.fillText(String(outNo), ox, oy + oR * 0.55);
+                        }
                     }
                 }
                 // stat columns
@@ -3183,14 +3277,26 @@ function DugoutScorecard() {
         ctx.font = "500 22px 'Saira Condensed', sans-serif";
         ctx.fillStyle = "#666";
         ctx.fillText(`DugoutIQ \u00B7 running pitch totals by inning \u00B7 "35 (37)" = last batter called, credited 35`, W / 2, 110);
-        ctx.textAlign = "left";
         ctx.fillStyle = ink;
         ctx.font = "600 26px 'Saira Condensed', sans-serif";
-        ctx.fillText(`Home Team:  ${teams.home.name}`, m, 158);
-        ctx.fillText(`Visiting Team:  ${teams.away.name}`, W / 2 + 20, 158);
-        ctx.fillText(`Game Date:  ${game.date || new Date().toISOString().slice(0, 10)}`, m, 194);
-        ctx.fillText(dv ? `Division:  ${dv}` : "Division:  ______", W / 2 + 20, 194);
+        // Two columns: left grows right from the margin, right grows LEFT from
+        // the margin, so a long club name can never run off the sheet.
+        const clip = (s, n) => (s.length > n ? s.slice(0, n - 1) + "\u2026" : s);
+        const rowL = (label, value, y) => {
+            ctx.textAlign = "left";
+            ctx.fillText(`${label}  ${value}`, m, y);
+        };
+        const rowR = (label, value, y) => {
+            ctx.textAlign = "right";
+            ctx.fillText(`${label}  ${value}`, W - m, y);
+        };
+        rowL("Home Team:", clip(teams.home.name, 28), 158);
+        rowR("Visiting Team:", clip(teams.away.name, 28), 158);
+        rowL("Game Date:", game.date || new Date().toISOString().slice(0, 10), 194);
+        rowR("Division:", dv || "______", 194);
+        ctx.textAlign = "left";
         const drawBlock = (side, top) => {
+            ctx.textAlign = "left"; // drawBlock leaves textAlign centered — reset on entry
             ctx.font = "700 26px 'Saira Condensed', sans-serif";
             ctx.fillStyle = ink;
             ctx.fillText(side === "home" ? "HOME TEAM" : "VISITING TEAM", m, top + 24);
@@ -3240,7 +3346,7 @@ function DugoutScorecard() {
                 const row = pitchSheetRow(pp, innCount);
                 ctx.textAlign = "left";
                 ctx.font = "600 22px 'Saira Condensed', sans-serif";
-                ctx.fillText(pp.name.slice(0, 22), m + 12, yTxt);
+                ctx.fillText((pp.num ? `#${pp.num} ${pp.name}` : pp.name).slice(0, 24), m + 12, yTxt);
                 ctx.textAlign = "center";
                 ctx.font = "500 22px 'Saira Condensed', sans-serif";
                 for (let i = 0; i < innCount; i++) {
@@ -3798,6 +3904,7 @@ function DugoutScorecard() {
         button.rm-spot { width: 100%; margin-top: 8px; color: var(--red); border-color: var(--line); font-size: 13px; }
         .pn-wrap { display: flex; align-items: center; gap: 5px; }
         .pn-wrap .dg-in { max-width: 96px; }
+        .pn-wrap .jersey-in { width: 40px; min-width: 40px; flex: none; }
         b.dtag {
           background: var(--amber); color: var(--deep); border-radius: 4px;
           font-family: 'Saira Condensed', sans-serif; font-size: 11px; font-weight: 700;
@@ -4115,17 +4222,17 @@ function DugoutScorecard() {
                 React.createElement("div", { className: "setup-card limitcard" },
                     React.createElement("h2", null, "League Pitch Limit"),
                     React.createElement("div", { className: "limitrow", style: { marginBottom: 8 } },
-                        React.createElement("select", { className: "dg-sel", style: { width: "auto", minWidth: 130 }, value: division, onChange: (e) => {
+                        React.createElement("select", { className: "dg-sel", value: division, onChange: (e) => {
                                 const dv = e.target.value;
                                 setDivision(dv);
                                 if (dv && PITCH_DIVISIONS[dv])
                                     setPitchLimit(PITCH_DIVISIONS[dv][4]); // daily max
                             }, "aria-label": "Age division for pitch count rules" },
-                            React.createElement("option", { value: "" }, "Division\u2026 (off)"),
+                            React.createElement("option", { value: "" }, "Off"),
                             Object.keys(PITCH_DIVISIONS).map((d) => (React.createElement("option", { key: d, value: d }, d)))),
                         React.createElement("span", { className: "limithint" }, division
-                            ? `BNS thresholds ${PITCH_DIVISIONS[division].join(" / ")} \u00B7 enables pitch count sheet`
-                            : "pick a division for BNS thresholds + pitch count sheet")),
+                            ? `BNS ${division} thresholds ${PITCH_DIVISIONS[division].join(" / ")}`
+                            : "age division \u00B7 BNS thresholds + pitch count sheet")),
                     React.createElement("div", { className: "limitrow" },
                         React.createElement("input", { className: "dg-in", type: "number", min: "0", max: "200", value: pitchLimit, onChange: (e) => setPitchLimit(Math.max(0, parseInt(e.target.value || "0", 10))), "aria-label": "Pitch limit per pitcher" }),
                         React.createElement("span", { className: "limithint" },
@@ -4509,7 +4616,7 @@ function DugoutScorecard() {
                             React.createElement("tbody", null, game.pitchers[side].map((pp, r) => {
                                 const row = pitchSheetRow(pp, innCount);
                                 return React.createElement("tr", { key: r },
-                                    React.createElement("td", { style: nameStyle }, pp.name),
+                                    React.createElement("td", { style: nameStyle }, pp.num ? `#${pp.num} ${pp.name}` : pp.name),
                                     row.cells.map((_, i) => (React.createElement("td", { key: i, style: cellStyle }, sheetCellText(pp, row, i)))),
                                     React.createElement("td", { style: cellStyle }, dv ? daysRestFor(dv, creditedOf(pp)) : "\u2014"));
                             })))));
@@ -4804,10 +4911,20 @@ function DugoutScorecard() {
                     React.createElement("h3", null, "Fielder's choice"),
                     React.createElement("p", null, "Who was out on the play?"),
                     React.createElement("div", { className: "btnrow" },
-                        ["third", "second", "first"].map((b) => game.bases[b] && (React.createElement("button", { key: b, className: "dg outb", onClick: () => { setFcMenu(false); openFieldSeq("Fielder's choice", "Tap fielders in order (e.g. 6-4).", (note) => playFC(b, note)); } },
-                            "Runner from ",
-                            baseLabel(b),
-                            " out \u2014 batter reaches"))),
+                        ["third", "second", "first"].map((b) => game.bases[b] && (() => {
+                            // the base the out is recorded at, when it's a true force
+                            const isForced = b === "first"
+                                ? true
+                                : b === "second"
+                                    ? !!game.bases.first
+                                    : !!game.bases.first && !!game.bases.second;
+                            const at = b === "first" ? "2nd" : b === "second" ? "3rd" : "home";
+                            return React.createElement("button", { key: b, className: "dg outb", onClick: () => { setFcMenu(false); openFieldSeq("Fielder's choice", "Tap fielders in order (e.g. 6-4).", (note) => playFC(b, note)); } },
+                                "Runner from ",
+                                baseLabel(b),
+                                isForced ? ` out at ${at}` : " out",
+                                " \u2014 batter reaches");
+                        })()),
                         React.createElement("button", { className: "dg outb", onClick: () => { setFcMenu(false); openFieldSeq("Out at 1st", "Tap fielders in order (e.g. 5-3).", (note) => playFCBatterOut(note)); } }, "Batter out at 1st \u2014 runners advance"),
                         React.createElement("button", { className: "dg ghost", onClick: () => setFcMenu(false) }, "Cancel"))))),
             sacMenu && game && (React.createElement("div", { className: "modal-back", onClick: () => setSacMenu(false) },
@@ -4987,9 +5104,10 @@ function DugoutScorecard() {
                             const isCur = i === game.pitchers[pitchMenuSide].length - 1;
                             return (React.createElement("div", { className: `plog-row ${isCur ? "cur" : ""}`, key: i },
                                 isCur ? (React.createElement("span", { className: "plog-name pn-wrap" },
+                                    React.createElement("input", { className: "dg-in jersey-in", value: p.num || "", onChange: (e) => setPitcherNum(e.target.value), inputMode: "numeric", placeholder: "#", "aria-label": "Current pitcher number" }),
                                     React.createElement("input", { className: "dg-in", value: p.name, onChange: (e) => renamePitcher(e.target.value), "aria-label": "Current pitcher name" }),
                                     decisionTag(pitchMenuSide, i) && (React.createElement("b", { className: "dtag" }, decisionTag(pitchMenuSide, i))))) : (React.createElement("span", { className: "plog-name done" },
-                                    p.name,
+                                    p.num ? `#${p.num} ${p.name}` : p.name,
                                     decisionTag(pitchMenuSide, i) && (React.createElement("b", { className: "dtag" },
                                         " ",
                                         decisionTag(pitchMenuSide, i))))),
@@ -5068,8 +5186,10 @@ function DugoutScorecard() {
                             game.pitchers[pitchMenuSide].length + 1,
                             ")"),
                         ((game.lineup && game.lineup[pitchMenuSide]) || teams[pitchMenuSide].lineup).map((p, i) => (React.createElement("option", { key: i, value: p.name },
+                            p.num ? `#${p.num} ` : "",
                             p.name,
                             p.pos ? ` (${p.pos})` : "")))),
+                    React.createElement("button", { className: "dg hit", style: { width: "100%", marginBottom: 8 }, onClick: newPitcher }, "Bring in new pitcher"),
                     pitchMenuSide === fieldingSide &&
                         !game.over &&
                         (game.bases.first || game.bases.second || game.bases.third) && (React.createElement("button", { className: "dg outb", style: { width: "100%", marginBottom: 8 }, onClick: playBalk }, "Balk \u2014 all runners advance one base")),
@@ -5078,7 +5198,6 @@ function DugoutScorecard() {
                             setSheetOpen(true);
                         } }, "\uD83D\uDCCB Pitch count sheet"),
                     React.createElement("div", { className: "btnrow" },
-                        React.createElement("button", { className: "dg hit", onClick: newPitcher }, "Bring in new pitcher"),
                         React.createElement("button", { className: "dg ghost", onClick: () => setPitchMenuSide(null) }, "Cancel"))))))));
 }
 ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(DugoutScorecard));
