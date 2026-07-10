@@ -116,6 +116,8 @@ const FPOS = [
     { n: 4, l: "2B" }, { n: 5, l: "3B" }, { n: 6, l: "SS" },
     { n: 7, l: "LF" }, { n: 8, l: "CF" }, { n: 9, l: "RF" },
 ];
+// "8" -> "CF". Where a batted ball was hit.
+const posLabel = (n) => { const f = FPOS.find((p) => p.n === Number(n)); return f ? f.l : ""; };
 // Rename a player inside a play-by-play text. Numeric placeholder "names"
 // are matched only in the template positions names occupy, so real numbers
 // (pitch counts, "3rd", notation) are never touched.
@@ -190,7 +192,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "95"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "97"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1438,7 +1440,9 @@ function DugoutScorecard() {
             g.orderLocked[battingSide] = true;
     };
     /* --- play outcomes (one tap, auto baserunning) --- */
-    const playHit = (basesTaken, label) => mutate((g) => {
+    // loc: fielder position number (1-9) where the ball was hit, or "" if skipped.
+    // The scorebook cell reads "1B8" — a single to center.
+    const playHit = (basesTaken, label, loc) => mutate((g) => {
         addPitch(g);
         g.openK = null;
         const bIdxForHit = g.batter[battingSide];
@@ -1456,11 +1460,14 @@ function DugoutScorecard() {
         chargeP(g, "h");
         if (basesTaken >= 4)
             chargeP(g, "hr");
-        cardMark(g, bIdxForHit, ["1B", "2B", "3B", "HR"][Math.min(basesTaken, 4) - 1], Math.min(basesTaken, 4));
+        const hitTag = ["1B", "2B", "3B", "HR"][Math.min(basesTaken, 4) - 1];
+        const where = posLabel(loc);
+        cardMark(g, bIdxForHit, hitTag + (loc ? String(loc) : ""), Math.min(basesTaken, 4));
         const runs = advanceAll(g, basesTaken, g.batter[battingSide]);
         addRuns(g, runs);
         st.rbi += runs;
-        closePA(g, `${label}${runs ? ` — ${runs} score${runs > 1 ? "" : "s"}` : ""}`, `${name}: ${label}${runs ? ` — ${runs} score${runs > 1 ? "" : "s"}` : ""}`);
+        const desc = `${label}${where ? ` to ${where}` : ""}${runs ? ` — ${runs} score${runs > 1 ? "" : "s"}` : ""}`;
+        closePA(g, desc, `${name}: ${desc}`);
         g.openHit = { b: bIdxForHit, log: g.log.length - 1 };
         nextBatter(g);
     });
@@ -2390,6 +2397,33 @@ function DugoutScorecard() {
         });
         setBaseMenu(null);
     };
+    // One runner moves up on a wild pitch / passed ball. From third this is a
+    // run. Charges one WP or PB — if several runners moved on the same pitch,
+    // use More > Wild pitch instead so it's only charged once.
+    const runnerAdvanceOn = (base, cause) => {
+        if (base === "third") {
+            runnerScores(base, cause);
+            return;
+        }
+        const who = runnerLabel(base);
+        const target = base === "first" ? "second" : "third";
+        if (game.bases[target]) {
+            mutate((g) => logPlay(g, `${baseLabel(target)} is occupied \u2014 move blocked`, "info"));
+            setBaseMenu(null);
+            return;
+        }
+        mutate((g) => {
+            if (cause === "wp")
+                curP(g, fieldingSide).wp = (curP(g, fieldingSide).wp || 0) + 1;
+            else
+                g.pb[fieldingSide] = (g.pb[fieldingSide] || 0) + 1;
+            g.bases[target] = g.bases[base];
+            g.bases[base] = false;
+            cardAdvance(g, g.bases[target], target === "second" ? 2 : 3);
+            logPlay(g, `${who} takes ${baseLabel(target)} on a ${cause === "wp" ? "wild pitch" : "passed ball"}`);
+        });
+        setBaseMenu(null);
+    };
     // Runner takes home as part of the just-recorded hit — batter gets the RBI
     const runnerScoresOnPlay = (base) => {
         const who = runnerLabel(base);
@@ -3145,7 +3179,10 @@ function DugoutScorecard() {
                             ctx.fillText(e0.res, cx, cy + 8);
                         }
                         else {
-                            ctx.fillText(e0.res, cx - rR - 2, y + cellH - 12);
+                            // "1B8" is wider than "1B" — keep it inside the cell
+                            const w = ctx.measureText(e0.res).width;
+                            const lx = Math.max(cx - rR - 2, cx - cellW / 2 + 3 + w / 2);
+                            ctx.fillText(e0.res, lx, y + cellH - 12);
                         }
                         if (cell.length > 1) {
                             ctx.font = "700 18px 'Saira Condensed', sans-serif";
@@ -4693,10 +4730,10 @@ function DugoutScorecard() {
                         React.createElement("button", { className: "dg count", onClick: tapHBP }, "HBP"),
                         React.createElement("button", { className: "dg count", onClick: tapIBB }, "IBB")),
                     React.createElement("div", { className: "btnrow r4" },
-                        React.createElement("button", { className: "dg hit", onClick: () => playHit(1, "single") }, "1B"),
-                        React.createElement("button", { className: "dg hit", onClick: () => playHit(2, "double") }, "2B"),
-                        React.createElement("button", { className: "dg hit", onClick: () => playHit(3, "triple") }, "3B"),
-                        React.createElement("button", { className: "dg hit", onClick: () => playHit(4, "HOME RUN") }, "HR")),
+                        React.createElement("button", { className: "dg hit", onClick: () => openFieldOne("Single", "Tap where the ball was hit.", (loc) => playHit(1, "single", loc)) }, "1B"),
+                        React.createElement("button", { className: "dg hit", onClick: () => openFieldOne("Double", "Tap where the ball was hit.", (loc) => playHit(2, "double", loc)) }, "2B"),
+                        React.createElement("button", { className: "dg hit", onClick: () => openFieldOne("Triple", "Tap where the ball was hit.", (loc) => playHit(3, "triple", loc)) }, "3B"),
+                        React.createElement("button", { className: "dg hit", onClick: () => openFieldOne("Home run", "Tap where the ball was hit.", (loc) => playHit(4, "HOME RUN", loc)) }, "HR")),
                     React.createElement("div", { className: "btnrow r5" },
                         React.createElement("button", { className: "dg outb", onClick: () => openFieldPick("groundout", false) }, "Gnd"),
                         React.createElement("button", { className: "dg outb", onClick: () => openFieldPick("flyout", false) }, "Fly"),
@@ -5195,12 +5232,12 @@ function DugoutScorecard() {
                             game.lineup[battingSide][game.openHit.b].name,
                             ")")),
                         React.createElement("button", { className: "dg", onClick: () => stealBase(baseMenu) }, baseMenu === "third" ? "Steals home" : `Steals ${baseMenu === "first" ? "2nd" : "3rd"}`),
+                        React.createElement("button", { className: "dg", onClick: () => runnerAdvanceOn(baseMenu, "wp") }, baseMenu === "third" ? "Scores on wild pitch" : `Takes ${baseMenu === "first" ? "2nd" : "3rd"} on wild pitch`),
+                        React.createElement("button", { className: "dg", onClick: () => runnerAdvanceOn(baseMenu, "pb") }, baseMenu === "third" ? "Scores on passed ball" : `Takes ${baseMenu === "first" ? "2nd" : "3rd"} on passed ball`),
                         React.createElement("button", { className: "dg outb", onClick: () => caughtStealing(baseMenu) }, baseMenu === "third" ? "Caught stealing home" : `Caught stealing ${baseMenu === "first" ? "2nd" : "3rd"}`),
                         React.createElement("button", { className: "dg outb", onClick: () => pickedOff(baseMenu) }, `Picked off ${baseLabel(baseMenu)}`),
                         React.createElement("button", { className: "dg", onClick: () => { const b = baseMenu; setBaseMenu(null); openFieldOne("Error", "Tap the fielder who made the error.", (pos) => advanceOnError(b, pos)); } }, baseMenu === "third" ? "Scores on error (E)" : `Takes ${baseMenu === "first" ? "2nd" : "3rd"} on error (E)`),
                         React.createElement("button", { className: "dg", onClick: () => obstruction(baseMenu) }, baseMenu === "third" ? "Obstruction \u2014 awarded home" : `Obstruction \u2014 awarded ${baseMenu === "first" ? "2nd" : "3rd"}`),
-                        baseMenu === "third" && (React.createElement("button", { className: `dg ${game.openHit != null ? "" : "hit"}`, onClick: () => runnerScores(baseMenu, "wp") }, "Scores on wild pitch")),
-                        baseMenu === "third" && (React.createElement("button", { className: `dg ${game.openHit != null ? "" : "hit"}`, onClick: () => runnerScores(baseMenu, "pb") }, "Scores on passed ball")),
                         React.createElement("button", { className: `dg ${game.openHit != null ? "" : "hit"}`, onClick: () => runnerScores(baseMenu) }, "Scores \u2014 no RBI"),
                         React.createElement("button", { className: "dg outb", onClick: () => runnerOut(baseMenu) }, "Out on the bases"),
                         React.createElement("button", { className: "dg ghost", onClick: () => setCrMenu(baseMenu) }, game.bases[baseMenu] && game.bases[baseMenu].cr ? "Change / remove courtesy runner" : "Courtesy runner"),
