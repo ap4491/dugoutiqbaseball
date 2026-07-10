@@ -192,7 +192,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "97"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "98"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -2159,14 +2159,21 @@ function DugoutScorecard() {
                         pp.name = nm;
                 });
             }
-            // Rename through the play-by-play too. Numeric "names" (jersey
-            // numbers used as placeholders) are matched only in the exact
-            // template positions names occupy, so real numbers in the text
-            // (pitch counts, "3rd", scores) are never touched.
+            // Rename through the play-by-play too, but ONLY in the half-innings
+            // that belong to this player. Both teams can have a player with the
+            // same default name, so an unscoped rewrite would rename the other
+            // team's batter too. A batter appears in his own team's half; a
+            // pitching change names the FIELDING side, i.e. the other half.
             if (nm !== oldName && Array.isArray(g.log)) {
                 const fix = (txt) => renameInLogText(txt, oldName, nm);
+                const myHalf = side === "away" ? "top" : "bottom";
                 g.log.forEach((e) => {
-                    if (e.batter === oldName)
+                    const eHalf = e.h === "top" ? "top" : "bottom";
+                    const isChange = typeof e.t === "string" && e.t.indexOf("Pitching change") === 0;
+                    const mine = isChange ? eHalf !== myHalf : eHalf === myHalf;
+                    if (!mine)
+                        return;
+                    if (!isChange && e.batter === oldName)
                         e.batter = nm;
                     if (e.t)
                         e.t = fix(e.t);
@@ -3620,9 +3627,6 @@ function DugoutScorecard() {
         ctx.textAlign = "center";
         ctx.font = "700 42px 'Saira Condensed', sans-serif";
         ctx.fillText("PITCH COUNT SHEET", W / 2, 78);
-        ctx.font = "500 22px 'Saira Condensed', sans-serif";
-        ctx.fillStyle = "#666";
-        ctx.fillText(`DugoutIQ \u00B7 running pitch totals by inning \u00B7 "35 (37)" = last batter called, credited 35`, W / 2, 110);
         ctx.fillStyle = ink;
         ctx.font = "600 26px 'Saira Condensed', sans-serif";
         // Two columns: left grows right from the margin, right grows LEFT from
@@ -4458,6 +4462,19 @@ function DugoutScorecard() {
           max-height: 90vh; overflow-y: auto; margin: auto;
         }
         .modal h3 { margin: 0 0 4px; font-size: 20px; letter-spacing: .06em; }
+        /* Settings: one rhythm for every section instead of ad-hoc inline styles */
+        .set-modal { max-width: 520px; text-align: left; }
+        .set-group { border-top: 1px solid rgba(169,197,232,.16); margin-top: 18px; padding-top: 14px; }
+        .set-group:first-of-type { border-top: 0; margin-top: 10px; padding-top: 0; }
+        .set-sec { font-weight: 700; color: var(--powder); font-size: 12px; letter-spacing: .1em;
+                   text-transform: uppercase; margin: 0 0 10px; }
+        .set-hint { font-size: 12px; opacity: .68; line-height: 1.4; margin: 8px 0 0;
+                    text-transform: none; letter-spacing: 0; }
+        .set-foot { border-top: 1px solid rgba(169,197,232,.16); margin-top: 20px; padding-top: 14px; }
+        .set-ver { font-size: 11px; opacity: .5; text-align: center; margin: 12px 0 0;
+                   text-transform: none; letter-spacing: 0; }
+        .set-code { background: #0E1A3A; border: 1px solid #2B5AA0; border-radius: 8px;
+                    padding: 10px 12px; margin-bottom: 10px; }
         .season-modal { max-width: 680px; text-align: left; }
         .season-controls { display: flex; align-items: center; gap: 12px; margin: 8px 0 12px; }
         .season-controls select { flex: 1; }
@@ -5058,45 +5075,46 @@ function DugoutScorecard() {
                                 React.createElement("button", { className: "dg ghost", onClick: () => setSeasonOpen(false) }, "Done")))));
                 })(),
             settingsOpen && (React.createElement("div", { className: "modal-back", onClick: () => setSettingsOpen(false) },
-                React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
+                React.createElement("div", { className: "modal set-modal", onClick: (e) => e.stopPropagation() },
                     React.createElement("h3", null, "\u2699\uFE0F Settings"),
-                    React.createElement("div", { style: { fontWeight: 700, color: "#A9C5E8", fontSize: 13, margin: "4px 0 8px", letterSpacing: ".4px" } }, "APP LOOK"),
-                    React.createElement("div", { className: "theme-swatches", style: { marginBottom: 6 } },
-                        PRESET_TEAM_COLORS.map((c) => (React.createElement("button", { key: c, type: "button", className: `swatch ${themeColor === c ? "sel" : ""}`, style: { background: c }, onClick: () => setThemeColor(c), "aria-label": "Set app theme color" }))),
-                        React.createElement("input", { type: "color", className: "swatch-custom", value: themeColor, onChange: (e) => setThemeColor(e.target.value), "aria-label": "Custom app theme color" }),
-                        React.createElement("label", { className: "logo-btn" },
-                            themeLogo ? React.createElement("img", { src: themeLogo, alt: "app logo" }) : "＋ Logo",
-                            React.createElement("input", { type: "file", accept: "image/*", onChange: onThemeLogoPick, style: { display: "none" } })),
-                        themeLogo && (React.createElement("button", { type: "button", className: "logo-rm", onClick: () => setThemeLogo(""), "aria-label": "Remove logo" }, "\u2715"))),
-                    React.createElement("p", { style: { fontSize: 12, opacity: 0.7, margin: "0 0 16px" } }, "Sets the accent color and the watermark in the diamond."),
-                    React.createElement("div", { style: { fontWeight: 700, color: "#A9C5E8", fontSize: 13, margin: "4px 0 8px", letterSpacing: ".4px" } }, "PUBLIC GAMES"),
-                    React.createElement("a", { href: "/games.html", target: "_blank", rel: "noopener", className: "dg", style: { display: "block", textAlign: "center", textDecoration: "none", marginBottom: 6 } }, "Open the public Games page \u2192"),
-                    React.createElement("p", { style: { fontSize: 12, opacity: 0.7, margin: "0 0 16px" } }, "Games appear there only when a scorer ticks \u201Clist publicly\u201D in the live-share window."),
-                    React.createElement("div", { style: { fontWeight: 700, color: "#A9C5E8", fontSize: 13, margin: "4px 0 8px", letterSpacing: ".4px" } }, "BACKUP & RESTORE"),
-                    React.createElement("p", { style: { fontSize: 12, opacity: 0.75, margin: "0 0 8px" } }, "Backs up everything \u2014 saved games, teams, rosters, settings, and your activation \u2014 so a lost or new phone doesn't mean a lost season."),
-                    bkMeta && (React.createElement("div", { style: { background: "#0E1A3A", border: "1px solid #2B5AA0", borderRadius: 8, padding: "9px 11px", marginBottom: 8 } },
-                        React.createElement("div", { style: { fontSize: 11, color: "#A9C5E8", letterSpacing: ".05em", marginBottom: 2 } }, "YOUR BACKUP CODE"),
-                        React.createElement("div", { style: { fontFamily: "'Saira Condensed', sans-serif", fontSize: 17, fontWeight: 700, color: "#F5C518", letterSpacing: ".12em", userSelect: "all" } }, bkMeta.code),
-                        React.createElement("div", { style: { fontSize: 11, opacity: 0.65, marginTop: 3 } },
-                            "Last backed up ",
-                            new Date(bkMeta.t).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }),
-                            " \u00B7 enter this code on any device to restore"))),
-                    React.createElement("button", { className: "dg hit", style: { width: "100%", marginBottom: 8 }, onClick: runBackup, disabled: bkBusy }, bkBusy ? "Working\u2026" : bkMeta ? "\u2601\uFE0F Back up now (updates your code)" : "\u2601\uFE0F Back up now"),
-                    React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr", marginBottom: 10 } },
-                        React.createElement("button", { className: "dg ghost", onClick: exportBackupFile, disabled: bkBusy }, "\u2B07\uFE0F Export file"),
-                        React.createElement("label", { className: "dg ghost", style: { textAlign: "center", cursor: "pointer" } },
-                            "\uD83D\uDCC2 Import file",
-                            React.createElement("input", { type: "file", accept: "application/json,.json", onChange: importBackupFile, style: { display: "none" } }))),
-                    React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 6 } },
-                        React.createElement("input", { className: "dg-in", style: { flex: 1, textTransform: "uppercase" }, value: restoreIn, onChange: (e) => setRestoreIn(e.target.value), placeholder: "Backup code\u2026", "aria-label": "Backup code to restore", autoComplete: "off" }),
-                        React.createElement("button", { className: "dg ghost", onClick: runRestore, disabled: bkBusy || !restoreIn.trim() }, "Restore")),
-                    bkMsg && (React.createElement("p", { style: { fontSize: 12, margin: "0 0 10px", color: bkMsg.ok ? "#3ad07a" : "#E8915A" } }, bkMsg.text)),
-                    React.createElement("p", { style: { fontSize: 11, opacity: 0.55, margin: "0 0 16px" } }, "Cloud backup needs internet. Export file works fully offline \u2014 keep one before playoffs."),
-                    React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr" } },
-                        React.createElement("button", { className: "dg ghost", onClick: () => setSettingsOpen(false) }, "Done")),
-                    React.createElement("p", { style: { fontSize: 11, opacity: 0.55, textAlign: "center", marginTop: 12 } },
-                        "DugoutIQ \u2014 Manage the Game \u00B7 App v",
-                        APP_VERSION)))),
+                    React.createElement("div", { className: "set-group" },
+                        React.createElement("div", { className: "set-sec" }, "App look"),
+                        React.createElement("div", { className: "theme-swatches" },
+                            PRESET_TEAM_COLORS.map((c) => (React.createElement("button", { key: c, type: "button", className: `swatch ${themeColor === c ? "sel" : ""}`, style: { background: c }, onClick: () => setThemeColor(c), "aria-label": "Set app theme color" }))),
+                            React.createElement("input", { type: "color", className: "swatch-custom", value: themeColor, onChange: (e) => setThemeColor(e.target.value), "aria-label": "Custom app theme color" }),
+                            React.createElement("label", { className: "logo-btn" },
+                                themeLogo ? React.createElement("img", { src: themeLogo, alt: "app logo" }) : "\uFF0B Logo",
+                                React.createElement("input", { type: "file", accept: "image/*", onChange: onThemeLogoPick, style: { display: "none" } })),
+                            themeLogo && (React.createElement("button", { type: "button", className: "logo-rm", onClick: () => setThemeLogo(""), "aria-label": "Remove logo" }, "\u2715"))),
+                        React.createElement("p", { className: "set-hint" }, "Sets the accent color and the watermark in the diamond.")),
+                    React.createElement("div", { className: "set-group" },
+                        React.createElement("div", { className: "set-sec" }, "Backup & restore"),
+                        bkMeta && (React.createElement("div", { className: "set-code" },
+                            React.createElement("div", { style: { fontSize: 11, color: "#A9C5E8", letterSpacing: ".05em", marginBottom: 2 } }, "YOUR BACKUP CODE"),
+                            React.createElement("div", { style: { fontFamily: "'Saira Condensed', sans-serif", fontSize: 17, fontWeight: 700, color: "#F5C518", letterSpacing: ".12em", userSelect: "all" } }, bkMeta.code),
+                            React.createElement("div", { style: { fontSize: 11, opacity: 0.65, marginTop: 3 } },
+                                "Last backed up ",
+                                new Date(bkMeta.t).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })))),
+                        React.createElement("button", { className: "dg hit", style: { width: "100%", marginBottom: 8 }, onClick: runBackup, disabled: bkBusy }, bkBusy ? "Working\u2026" : bkMeta ? "\u2601\uFE0F Back up now (updates your code)" : "\u2601\uFE0F Back up now"),
+                        React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr", marginBottom: 8 } },
+                            React.createElement("button", { className: "dg ghost", onClick: exportBackupFile, disabled: bkBusy }, "\u2B07\uFE0F Export file"),
+                            React.createElement("label", { className: "dg ghost", style: { textAlign: "center", cursor: "pointer" } },
+                                "\uD83D\uDCC2 Import file",
+                                React.createElement("input", { type: "file", accept: "application/json,.json", onChange: importBackupFile, style: { display: "none" } }))),
+                        React.createElement("div", { style: { display: "flex", gap: 8 } },
+                            React.createElement("input", { className: "dg-in", style: { flex: 1, textTransform: "uppercase" }, value: restoreIn, onChange: (e) => setRestoreIn(e.target.value), placeholder: "Backup code\u2026", "aria-label": "Backup code to restore", autoComplete: "off" }),
+                            React.createElement("button", { className: "dg ghost", onClick: runRestore, disabled: bkBusy || !restoreIn.trim() }, "Restore")),
+                        bkMsg && (React.createElement("p", { className: "set-hint", style: { color: bkMsg.ok ? "#3ad07a" : "#E8915A", opacity: 1 } }, bkMsg.text)),
+                        React.createElement("p", { className: "set-hint" }, "Saves your games, teams, rosters, settings and activation. Cloud backup needs internet; Export file works offline \u2014 keep one before playoffs.")),
+                    React.createElement("div", { className: "set-group" },
+                        React.createElement("div", { className: "set-sec" }, "Public games"),
+                        React.createElement("a", { href: "/games.html", target: "_blank", rel: "noopener", className: "dg", style: { display: "block", textAlign: "center", textDecoration: "none" } }, "Open the public Games page \u2192"),
+                        React.createElement("p", { className: "set-hint" }, "Games appear there only when a scorer ticks \u201Clist publicly\u201D in the live-share window.")),
+                    React.createElement("div", { className: "set-foot" },
+                        React.createElement("button", { className: "dg ghost", style: { width: "100%" }, onClick: () => setSettingsOpen(false) }, "Done"),
+                        React.createElement("p", { className: "set-ver" },
+                            "DugoutIQ \u2014 Manage the Game \u00B7 App v",
+                            APP_VERSION))))),
             liveOpen && (React.createElement("div", { className: "modal-back", onClick: () => setLiveOpen(false) },
                 React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
                     React.createElement("h3", null, "Live spectator link"),
