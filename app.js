@@ -118,6 +118,198 @@ const FPOS = [
 ];
 // "8" -> "CF". Where a batted ball was hit.
 const posLabel = (n) => { const f = FPOS.find((p) => p.n === Number(n)); return f ? f.l : ""; };
+/* --- game story: deterministic recap prose built from structured facts --- */
+const NUMW = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+    "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty"];
+const numWord = (n) => (n >= 0 && n < NUMW.length ? NUMW[n] : String(n));
+const ORDW = ["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth",
+    "tenth", "eleventh", "twelfth"];
+const ordWord = (n) => ORDW[n - 1] || `${n}th`;
+const POS_LONG = {
+    P: "the pitcher", C: "the catcher", "1B": "first base", "2B": "second base", "3B": "third base",
+    SS: "shortstop", LF: "left field", CF: "center field", RF: "right field",
+};
+const POS_NAME = {
+    P: "pitcher", C: "catcher", "1B": "first baseman", "2B": "second baseman", "3B": "third baseman",
+    SS: "shortstop", LF: "left fielder", CF: "center fielder", RF: "right fielder", DH: "designated hitter",
+};
+const SPOTW = ["leadoff", "number two", "number three", "cleanup", "number five", "number six",
+    "number seven", "number eight", "number nine"];
+// One run-scoring play, in words. `e` = {batter, runs, kind}
+const scorePhrase = (e) => {
+    const [k, loc] = String(e.kind || "").split(":");
+    const r = e.runs;
+    const scoring = `scoring ${numWord(r)} run${r === 1 ? "" : "s"}`;
+    const b = e.batter;
+    const lbl = loc ? posLabel(loc) : "";
+    const to = lbl && POS_LONG[lbl] ? ` to ${POS_LONG[lbl]}` : "";
+    switch (k) {
+        case "1B": return `${b} singled${to}, ${scoring}`;
+        case "2B": return `${b} doubled${to}, ${scoring}`;
+        case "3B": return `${b} tripled${to}, ${scoring}`;
+        case "HR":
+            return r === 1 ? `${b} hit a solo home run${to}` : `${b} homered${to}, ${scoring}`;
+        case "walk": return `${b} walked, ${scoring}`;
+        case "ibb": return `${b} was intentionally walked, ${scoring}`;
+        case "hbp": return `${b} was hit by a pitch, ${scoring}`;
+        case "sacfly": return `${b ? `${b} hit a sacrifice fly` : "a sacrifice fly"}, ${scoring}`;
+        case "sacbunt": return `${b ? `${b} laid down a sacrifice bunt` : "a sacrifice bunt"}, ${scoring}`;
+        case "fc": return `${b ? `${b} reached on a fielder's choice` : "a fielder's choice"}, ${scoring}`;
+        case "groundout": return `${b ? `${b} grounded out` : "a groundout"}, ${scoring}`;
+        case "dp": return `${b ? `${b} grounded into a double play` : "a double play"}, ${scoring}`;
+        case "ci": return `${b} reached on catcher's interference, ${scoring}`;
+        case "error": return `an error ${scoring.replace("scoring", "scored")}`;
+        case "balk": return `a balk ${scoring.replace("scoring", "scored")}`;
+        case "wp": return `a wild pitch ${scoring.replace("scoring", "scored")}`;
+        case "pb": return `a passed ball ${scoring.replace("scoring", "scored")}`;
+        case "steal": return `a runner stole home`;
+        case "obstruction": return `obstruction ${scoring.replace("scoring", "scored")}`;
+        default: return `${numWord(r)} run${r === 1 ? "" : "s"} scored`;
+    }
+};
+// "a, b, and c"
+const listJoin = (arr) => {
+    if (!arr.length) return "";
+    if (arr.length === 1) return arr[0];
+    if (arr.length === 2) return `${arr[0]} and ${arr[1]}`;
+    return `${arr.slice(0, -1).join(", ")}, and ${arr[arr.length - 1]}`;
+};
+const runsIn = (g, side) => g.linescore.reduce((s, r) => s + (r[side] || 0), 0);
+// 15 outs -> "five innings"; 5 outs -> "one and two-thirds innings"
+const inningsWord = (outs) => {
+    const whole = Math.floor(outs / 3), part = outs % 3;
+    const frac = part === 1 ? "one-third" : "two-thirds";
+    if (!whole && !part) return "no innings";
+    if (!whole) return `${frac} of an inning`;
+    if (!part) return `${numWord(whole)} inning${whole === 1 ? "" : "s"}`;
+    return `${numWord(whole)} and ${frac} innings`;
+};
+
+// Build the whole story. `teams` for names, `g` for everything else.
+const buildGameStory = (g, teams) => {
+    const A = teams.away.name, H = teams.home.name;
+    const ar = runsIn(g, "away"), hr = runsIn(g, "home");
+    const tied = ar === hr;
+    const wSide = ar > hr ? "away" : "home", lSide = ar > hr ? "home" : "away";
+    const W = teams[wSide].name, L = teams[lSide].name;
+    const ws = Math.max(ar, hr), ls = Math.min(ar, hr);
+    const scoring = (g.scoring || []).filter((e) => e.runs > 0);
+    const paras = [];
+
+    // biggest single inning by the winner
+    let big = { i: 0, runs: 0 };
+    g.linescore.forEach((row, idx) => {
+        const n = row[wSide] || 0;
+        if (n > big.runs) big = { i: idx + 1, runs: n };
+    });
+
+    // ---- headline
+    const walkoff = !tied && wSide === "home" && g.linescore.length > 0 &&
+        (g.linescore[g.linescore.length - 1].home || 0) > 0 && g.over;
+    let head;
+    // most specific story first: a one-run game is "Edges", not "Big Inning"
+    const bigWord = ordWord(big.i).replace(/^./, (c) => c.toUpperCase());
+    if (tied) head = `${A} and ${H} Play to a ${ar}-${hr} Tie`;
+    else if (ls === 0) head = `${W} Blanks ${L}`;
+    else if (walkoff && ws - ls <= 2) head = `${W} Walks Off Against ${L}`;
+    else if (ws - ls === 1) head = `${W} Edges ${L}`;
+    else if (big.runs >= 4) head = `Big ${bigWord} Inning Leads ${W} Past ${L}`;
+    else if (ws - ls >= 10) head = `${W} Cruises Past ${L}`;
+    else head = `${W} Defeats ${L}`;
+
+    const dateStr = g.date ? ` on ${new Date(g.date + "T12:00:00").toLocaleDateString(undefined, { weekday: "long" })}` : "";
+    const inningOf = (i, side) => scoring.filter((e) => e.i === i && e.side === side);
+
+    // ---- lead: the big inning, if there was one
+    if (!tied && big.runs >= 3) {
+        const plays = inningOf(big.i, wSide).map(scorePhrase);
+        let lead = `${W} scored ${numWord(big.runs)} run${big.runs === 1 ? "" : "s"} in the ${ordWord(big.i)} inning, which helped them defeat ${L} ${ws}-${ls}${dateStr}.`;
+        if (plays.length) lead += ` In the frame, ${listJoin(plays)}.`;
+        paras.push(lead);
+    } else if (tied) {
+        paras.push(`${A} and ${H} finished level at ${ar}${dateStr}.`);
+    } else {
+        paras.push(`${W} defeated ${L} ${ws}-${ls}${dateStr}.`);
+    }
+
+    // ---- other scoring innings, in order
+    const seen = new Set([`${wSide}-${big.i}`]);
+    const halves = [];
+    g.linescore.forEach((row, idx) => {
+        ["away", "home"].forEach((sd) => {
+            const n = row[sd] || 0;
+            const key = `${sd}-${idx + 1}`;
+            if (!n || seen.has(key)) return;
+            seen.add(key);
+            halves.push({ i: idx + 1, side: sd, runs: n });
+        });
+    });
+    // was this the game's first run, in either half?
+    const firstScoreKey = (() => {
+        for (let i = 0; i < g.linescore.length; i++)
+            for (const sd of ["away", "home"])
+                if (g.linescore[i][sd] > 0) return `${sd}-${i + 1}`;
+        return null;
+    })();
+    halves.slice(0, 6).forEach((h) => {
+        const plays = inningOf(h.i, h.side).map(scorePhrase);
+        const tm = teams[h.side].name;
+        const body = plays.length ? listJoin(plays) : `${numWord(h.runs)} run${h.runs === 1 ? "" : "s"} scored`;
+        // manual run adjustments bypass the play funnel — if the captured plays
+        // don't account for the whole inning, don't claim a number we can't back
+        const acct = plays.length ? inningOf(h.i, h.side).reduce((n, e) => n + e.runs, 0) : 0;
+        if (`${h.side}-${h.i}` === firstScoreKey)
+            paras.push(`${tm} opened the scoring in the ${ordWord(h.i)} after ${body}.`);
+        else if (acct === h.runs)
+            paras.push(`${tm} added ${numWord(h.runs)} in the ${ordWord(h.i)} when ${body}.`);
+        else
+            paras.push(`${tm} scored again in the ${ordWord(h.i)} when ${body}.`);
+    });
+
+    // ---- pitching decisions
+    const decLine = (role, verb) => {
+        const d = g.decisions && g.decisions[role];
+        if (!d || !g.pitchers[d.side] || !g.pitchers[d.side][d.idx]) return null;
+        const p = g.pitchers[d.side][d.idx];
+        const er = Math.max(0, p.r - (p.uer || 0));
+        const runsTxt = `${numWord(p.r)} run${p.r === 1 ? "" : "s"}${p.r !== er ? ` (${numWord(er)} earned)` : ""}`;
+        const walked = p.bb === 0 ? "walking none" : `walking ${numWord(p.bb)}`;
+        return `${p.name} ${verb} for ${teams[d.side].name}. The pitcher went ${inningsWord(p.outs)}, giving up ${runsTxt} on ${numWord(p.h)} hit${p.h === 1 ? "" : "s"}, striking out ${numWord(p.k)} and ${walked}.`;
+    };
+    const w = decLine("w", "earned the win"), l = decLine("l", "took the loss"), sv = decLine("s", "picked up the save");
+    const pit = [w, l, sv].filter(Boolean);
+    if (pit.length) paras.push(pit.join(" "));
+
+    // ---- batting notes, winner first
+    [wSide, lSide].forEach((sd) => {
+        if (tied && sd === lSide) return;
+        const lu = g.lineup[sd] || [];
+        const st = g.stats[sd] || [];
+        const rows = lu.map((p, i) => ({ p, i, s: st[i] || {} })).filter((r) => r.s.ab || r.s.h || r.s.bb);
+        if (!rows.length) return;
+        const bits = [];
+        const hits = g.hits[sd] || 0;
+        bits.push(`${teams[sd].name} tallied ${numWord(hits)} hit${hits === 1 ? "" : "s"} in the game.`);
+        const rbiLead = rows.slice().sort((a, b) => (b.s.rbi || 0) - (a.s.rbi || 0))[0];
+        if (rbiLead && rbiLead.s.rbi > 0) {
+            const pos = POS_NAME[rbiLead.p.pos] || "";
+            const spot = SPOTW[rbiLead.i] || `number ${rbiLead.i + 1}`;
+            bits.push(`${rbiLead.p.name} led ${teams[sd].name} with ${numWord(rbiLead.s.rbi)} run${rbiLead.s.rbi === 1 ? "" : "s"} batted in from the ${spot} spot in the lineup.`);
+            if (pos && rbiLead.s.ab) bits.push(`The ${pos} went ${rbiLead.s.h}-for-${rbiLead.s.ab} on the day.`);
+        }
+        const three = rows.filter((r) => (r.s.h || 0) >= 3).map((r) => r.p.name);
+        if (three.length) bits.push(`${listJoin(three)} each collected three hits for ${teams[sd].name}.`);
+        const multi = rows.filter((r) => (r.s.h || 0) === 2 && r !== rbiLead).map((r) => r.p.name);
+        if (multi.length) bits.push(`${listJoin(multi)} each collected multiple hits for ${teams[sd].name}.`);
+        const errs = (g.errLog || []).filter((e) => e.side === sd).length;
+        if (sd === wSide) bits.push(errs === 0 ? `${teams[sd].name} didn't commit a single error in the field.` : `${teams[sd].name} committed ${numWord(errs)} error${errs === 1 ? "" : "s"} in the field.`);
+        paras.push(bits.join(" "));
+    });
+
+    if (!g.over) paras.push(`Game in progress through ${ordWord(g.inning)}.`);
+    return { headline: head, body: paras.join("\n\n") };
+};
+
 // Rename a player inside a play-by-play text. Numeric placeholder "names"
 // are matched only in the template positions names occupy, so real numbers
 // (pitch counts, "3rd", notation) are never touched.
@@ -192,7 +384,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "98"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "99"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -249,6 +441,8 @@ if (saved0 && saved0.game) {
         g.pb = { away: 0, home: 0 };
     if (!g.errLog)
         g.errLog = [];
+    if (!g.scoring)
+        g.scoring = [];
     if (!g.orderLocked)
         g.orderLocked = { away: false, home: false };
     if (g.pitchers) {
@@ -379,6 +573,8 @@ function DugoutScorecard() {
     const [moreMenu, setMoreMenu] = useState(false); // wild pitch / passed ball / interference
     const [dpKind, setDpKind] = useState("ground"); // "ground" (force) | "caught" (doubled off)
     const [crMenu, setCrMenu] = useState(null); // base string — courtesy runner picker
+    const [storyOpen, setStoryOpen] = useState(null); // {headline, body}
+    const [storyCopied, setStoryCopied] = useState(false);
     const [tpMenu, setTpMenu] = useState(false); // triple play picker
     const [tpSel, setTpSel] = useState([]); // bases of the two runners retired
     const LIVE_KEY = "dugoutiq-live-v1";
@@ -974,6 +1170,7 @@ function DugoutScorecard() {
             outs: 0,
             halfPA: 0, // plate appearances in the current half (to detect a home no-bat)
             bases: emptyBases(),
+            scoring: [], // {i,h,side,batter,runs,kind} — every run-scoring play
             pb: { away: 0, home: 0 }, // passed balls charged to the fielding team's catcher
             errLog: [], // {side, pos, name, inning} — errors charged to a fielder
             lastOut: null, // {side, b} — the batter who made the most recent out
@@ -1028,11 +1225,22 @@ function DugoutScorecard() {
             return n;
         });
     };
-    const addRuns = (g, n) => {
+    // Kinds driven by the batter at the plate. Everything else (balk, steal,
+    // wild pitch) belongs to no batter, so the story doesn't name one.
+    const BATTER_KINDS = ["1B", "2B", "3B", "HR", "walk", "hbp", "ibb", "error", "fc", "dp", "sacfly", "sacbunt", "groundout", "ci"];
+    // `kind` names the play that drove the runs in. Recorded here rather than
+    // in closePA because some plays (sac fly) score AFTER the PA is closed.
+    const addRuns = (g, n, kind) => {
         if (n <= 0)
             return;
         const row = g.linescore[g.inning - 1];
         row[battingSide] = (row[battingSide] || 0) + n;
+        if (!g.scoring)
+            g.scoring = [];
+        const k = (kind || "play").split(":")[0];
+        const pa = g.openPA != null ? g.log[g.openPA] : null;
+        const batter = BATTER_KINDS.indexOf(k) >= 0 ? (pa ? pa.batter : g.lastPAB || null) : null;
+        g.scoring.push({ i: g.inning, h: g.half, side: battingSide, batter, runs: n, kind: kind || "play" });
     };
     const nextBatter = (g) => {
         const wrapped = (g.batter[battingSide] + 1) % g.lineup[battingSide].length === 0;
@@ -1165,6 +1373,7 @@ function DugoutScorecard() {
     const closePA = (g, result, ticker) => {
         ensurePA(g);
         g.log[g.openPA].result = result;
+        g.lastPAB = g.log[g.openPA].batter; // sac flies score after the PA closes
         g.openPA = null;
         g.lastPlay = ticker;
         const p = curP(g, fieldingSide);
@@ -1341,7 +1550,7 @@ function DugoutScorecard() {
             chargeP(g, "bb");
             cardMark(g, g.batter[battingSide], "BB", 1);
             const runs = forceAdvance(g, g.batter[battingSide]);
-            addRuns(g, runs);
+            addRuns(g, runs, "walk");
             st.rbi += runs; // bases-loaded walk
             closePA(g, runs ? "walk, run forced in" : "walk", `${currentBatterName()} walks${runs ? ", run forced in" : ""}`);
             nextBatter(g);
@@ -1391,7 +1600,7 @@ function DugoutScorecard() {
         chargeP(g, "bb");
         cardMark(g, bIdx, "HP", 1);
         const runs = forceAdvance(g, bIdx);
-        addRuns(g, runs);
+        addRuns(g, runs, "hbp");
         st.rbi += runs;
         closePA(g, runs ? "hit by pitch, run forced in" : "hit by pitch", `${currentBatterName()} hit by pitch${runs ? ", run forced in" : ""}`);
         nextBatter(g);
@@ -1464,7 +1673,7 @@ function DugoutScorecard() {
         const where = posLabel(loc);
         cardMark(g, bIdxForHit, hitTag + (loc ? String(loc) : ""), Math.min(basesTaken, 4));
         const runs = advanceAll(g, basesTaken, g.batter[battingSide]);
-        addRuns(g, runs);
+        addRuns(g, runs, hitTag + (loc ? ":" + loc : ""));
         st.rbi += runs;
         const desc = `${label}${where ? ` to ${where}` : ""}${runs ? ` — ${runs} score${runs > 1 ? "" : "s"}` : ""}`;
         closePA(g, desc, `${name}: ${desc}`);
@@ -1486,7 +1695,7 @@ function DugoutScorecard() {
         if (g.bases.first && g.bases.second && g.bases.third)
             g.bases.third.ue = true;
         const runs = forceAdvance(g, g.batter[battingSide]);
-        addRuns(g, runs); // unearned, no RBI
+        addRuns(g, runs, "error"); // unearned, no RBI
         if (g.bases.first)
             g.bases.first.ue = true; // reached on error -> unearned if he scores
         closePA(g, `reached on ${enote}${runs ? ", run scores" : ""}`, `${name} reaches on error (${enote})${runs ? ", run scores" : ""}`);
@@ -1583,7 +1792,7 @@ function DugoutScorecard() {
             const flipped = recordOut(g);
             if (!flipped) {
                 const runs = fcAdvance(g, outBase, bIdx);
-                addRuns(g, runs);
+                addRuns(g, runs, "fc");
                 if (runs)
                     amendPA(g, lastPAIdx(g), runs === 1 ? "run forced in" : `${runs} runs forced in`, "Run forced in on the play");
                 nextBatter(g);
@@ -1608,7 +1817,7 @@ function DugoutScorecard() {
             st.ab += 1;
             cardMark(g, bIdx, fnote || "FC", 1);
             const runs = fcAdvance(g, null, bIdx); // nobody retired; forced runners move up
-            addRuns(g, runs);
+            addRuns(g, runs, "fc");
             st.rbi += runs;
             const tail = `${fnote ? " " + fnote : ""} — all safe${runs ? ` — ${runs} score${runs > 1 ? "" : "s"}` : ""}`;
             closePA(g, `fielder's choice${tail}`, `${name}: fielder's choice${tail}`);
@@ -1633,7 +1842,7 @@ function DugoutScorecard() {
             const flipped = recordOut(g);
             if (!flipped) {
                 const runs = advanceAll(g, 1, null); // station-to-station, no batter
-                addRuns(g, runs);
+                addRuns(g, runs, "groundout");
                 st.rbi += runs; // productive out — RBI credited
                 if (runs)
                     amendPA(g, lastPAIdx(g), runs === 1 ? "run scores — RBI" : `${runs} score — RBI`, "Run scores on the play");
@@ -1670,13 +1879,13 @@ function DugoutScorecard() {
                     if (g.bases.third) {
                         creditRun(g, g.bases.third);
                         g.bases.third = false;
-                        addRuns(g, 1);
+                        addRuns(g, 1, "sacfly");
                         st.rbi += 1;
                     }
                 }
                 else {
                     const runs = advanceAll(g, 1, null);
-                    addRuns(g, runs);
+                    addRuns(g, runs, "sacbunt");
                     st.rbi += runs;
                 }
                 nextBatter(g);
@@ -1760,7 +1969,7 @@ function DugoutScorecard() {
         chargeP(g, "bb");
         cardMark(g, bIdx, "IBB", 1);
         const runs = forceAdvance(g, bIdx);
-        addRuns(g, runs);
+        addRuns(g, runs, "ibb");
         st.rbi += runs;
         closePA(g, runs ? "intentional walk, run forced in" : "intentional walk", `${currentBatterName()} — intentional walk${runs ? ", run forced in" : ""}`);
         nextBatter(g);
@@ -1775,7 +1984,7 @@ function DugoutScorecard() {
             mutate((g) => {
                 creditRun(g, g.bases.third);
                 g.bases.third = false;
-                addRuns(g, 1);
+                addRuns(g, 1, "obstruction");
                 logPlay(g, `Obstruction \u2014 ${who} awarded home`);
             });
             setBaseMenu(null);
@@ -1849,7 +2058,7 @@ function DugoutScorecard() {
             else
                 g.pb[fieldingSide] = (g.pb[fieldingSide] || 0) + 1;
             const runs = advanceAll(g, 1, null); // no batter — he stays at the plate
-            addRuns(g, runs);
+            addRuns(g, runs, isWP ? "wp" : "pb");
             const label = isWP ? "Wild pitch" : "Passed ball";
             logPlay(g, `${label} — runners advance${runs ? `, ${runs} score${runs > 1 ? "" : "s"}` : ""}`);
         });
@@ -1873,7 +2082,7 @@ function DugoutScorecard() {
             const runs = forceAdvance(g, bIdx);
             if (g.bases.first)
                 g.bases.first.ue = true;
-            addRuns(g, runs);
+            addRuns(g, runs, "ci");
             st.rbi += runs;
             closePA(g, `catcher's interference${runs ? " — run forced in" : ""}`, `${name}: catcher's interference (E2) — awarded first${runs ? ", run forced in" : ""}`);
             nextBatter(g);
@@ -2020,7 +2229,7 @@ function DugoutScorecard() {
                 }
                 g.bases = nb;
                 if (runs) {
-                    addRuns(g, runs);
+                    addRuns(g, runs, "dp");
                 }
                 nextBatter(g);
             }
@@ -2039,7 +2248,7 @@ function DugoutScorecard() {
             const r3 = g.bases.third;
             g.bases.third = false;
             creditRun(g, r3);
-            addRuns(g, 1);
+            addRuns(g, 1, "groundout");
             g.stats[battingSide][g.openTag.b].rbi += 1; // RBI groundout — at-bat stands
             g.openTag = null;
             amendPA(g, tlog, "run scores — RBI", "Run scores on the groundout — RBI");
@@ -2052,7 +2261,7 @@ function DugoutScorecard() {
             const r3 = g.bases.third;
             g.bases.third = false;
             creditRun(g, r3);
-            addRuns(g, 1);
+            addRuns(g, 1, "sacfly");
             const b = g.openTag.b;
             const st = g.stats[battingSide][b];
             st.rbi += 1;
@@ -2099,7 +2308,7 @@ function DugoutScorecard() {
             g.openTag = null;
             g.openTag = null;
             const runs = advanceAll(g, 1, null);
-            addRuns(g, runs);
+            addRuns(g, runs, "balk");
             logPlay(g, `Balk — runners advance${runs ? ", run scores" : ""}`, "info");
         });
         setPitchMenuSide(null);
@@ -2307,7 +2516,7 @@ function DugoutScorecard() {
             mutate((g) => {
                 creditRun(g, g.bases[from]);
                 g.bases[from] = false;
-                addRuns(g, 1);
+                addRuns(g, 1, "advance");
                 if (g.openHit != null) {
                     g.stats[battingSide][g.openHit.b].rbi += 1;
                     const batterName = g.lineup[battingSide][g.openHit.b].name;
@@ -2398,7 +2607,7 @@ function DugoutScorecard() {
                 g.pb[fieldingSide] = (g.pb[fieldingSide] || 0) + 1;
             creditRun(g, g.bases[base]);
             g.bases[base] = false;
-            addRuns(g, 1);
+            addRuns(g, 1, cause === "wp" ? "wp" : cause === "pb" ? "pb" : "advance");
             const tag = cause === "wp" ? "wild pitch" : cause === "pb" ? "passed ball" : "no RBI";
             logPlay(g, `${who} scores from ${baseLabel(base)} (${tag}${cause ? " — no RBI" : ""})`);
         });
@@ -2437,7 +2646,7 @@ function DugoutScorecard() {
         mutate((g) => {
             creditRun(g, g.bases[base]);
             g.bases[base] = false;
-            addRuns(g, 1);
+            addRuns(g, 1, "hit");
             if (g.openHit != null) {
                 g.stats[battingSide][g.openHit.b].rbi += 1;
                 const batterName = g.lineup[battingSide][g.openHit.b].name;
@@ -2456,7 +2665,7 @@ function DugoutScorecard() {
             mutate((g) => {
                 creditRun(g, g.bases.third);
                 g.bases.third = false;
-                addRuns(g, 1);
+                addRuns(g, 1, "steal");
                 logPlay(g, `${who} steals home!`);
             });
             setBaseMenu(null);
@@ -2525,7 +2734,7 @@ function DugoutScorecard() {
                     g.bases.third.ue = true; // scored because of the error
                 creditRun(g, g.bases.third);
                 g.bases.third = false;
-                addRuns(g, 1);
+                addRuns(g, 1, "error");
                 const enote = logError(g, pos);
                 logPlay(g, `Throwing error \u2014 ${who} scores from 3rd (${enote})`);
             });
@@ -4961,8 +5170,38 @@ function DugoutScorecard() {
                                 setShareOpen(false);
                                 setSheetOpen(true);
                             } }, "\uD83D\uDCCB Pitch count sheet (BNS)"),
+                        React.createElement("button", { className: "dg", onClick: () => {
+                                setShareOpen(false);
+                                setStoryCopied(false);
+                                try {
+                                    setStoryOpen(buildGameStory(game, teams));
+                                }
+                                catch (_a) {
+                                    mutate((g) => (g.lastPlay = "Couldn't build the game story"));
+                                }
+                            } }, "\uD83D\uDCF0 Game story"),
                         React.createElement("button", { className: "dg", onClick: startLive }, "\uD83D\uDCE1 Live game link (spectators)"),
                         React.createElement("button", { className: "dg ghost", onClick: () => setShareOpen(false) }, "Cancel"))))),
+            storyOpen && (React.createElement("div", { className: "modal-back", onClick: () => setStoryOpen(null) },
+                React.createElement("div", { className: "modal set-modal", onClick: (e) => e.stopPropagation() },
+                    React.createElement("h3", null, "Game story"),
+                    React.createElement("div", { style: { fontFamily: "'Saira Condensed', sans-serif", fontSize: 22, fontWeight: 700, color: "#F5C518", lineHeight: 1.2, margin: "6px 0 12px" } }, storyOpen.headline),
+                    React.createElement("div", { style: { fontSize: 14, lineHeight: 1.55, whiteSpace: "pre-wrap", maxHeight: "46vh", overflowY: "auto", textTransform: "none", letterSpacing: 0, paddingRight: 4 } }, storyOpen.body),
+                    React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr", marginTop: 14 } },
+                        React.createElement("button", { className: "dg hit", onClick: async () => {
+                                const txt = `${storyOpen.headline}\n\n${storyOpen.body}`;
+                                try {
+                                    if (navigator.share)
+                                        await navigator.share({ title: storyOpen.headline, text: txt });
+                                    else {
+                                        await navigator.clipboard.writeText(txt);
+                                        setStoryCopied(true);
+                                    }
+                                }
+                                catch (_a) { }
+                            } }, navigator.share ? "Share" : storyCopied ? "Copied \u2713" : "Copy"),
+                        React.createElement("button", { className: "dg ghost", onClick: () => setStoryOpen(null) }, "Close")),
+                    React.createElement("p", { className: "set-hint" }, "Written from the plays you scored \u2014 no numbers are invented. Add W/L/S in the pitching menu to include the decisions.")))),
             sheetOpen && game && (() => {
                 const dv = (game.division || division) || "";
                 const innCount = Math.min(Math.max(game.linescore.length, 7), 9);
