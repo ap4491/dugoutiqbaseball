@@ -194,6 +194,7 @@ const buildGameStory = (g, teams) => {
     const W = teams[wSide].name, L = teams[lSide].name;
     const ws = Math.max(ar, hr), ls = Math.min(ar, hr);
     const scoring = (g.scoring || []).filter((e) => e.runs > 0);
+    const live = !g.over;
     const paras = [];
 
     // biggest single inning by the winner
@@ -209,7 +210,8 @@ const buildGameStory = (g, teams) => {
     let head;
     // most specific story first: a one-run game is "Edges", not "Big Inning"
     const bigWord = ordWord(big.i).replace(/^./, (c) => c.toUpperCase());
-    if (tied) head = `${A} and ${H} Play to a ${ar}-${hr} Tie`;
+    if (live) head = `${A} ${ar > hr ? "Lead" : ar < hr ? "Trail" : "Tied With"} ${H} Through ${ordWord(g.inning).replace(/^./, (c) => c.toUpperCase())}`;
+    else if (tied) head = `${A} and ${H} Play to a ${ar}-${hr} Tie`;
     else if (ls === 0) head = `${W} Blanks ${L}`;
     else if (walkoff && ws - ls <= 2) head = `${W} Walks Off Against ${L}`;
     else if (ws - ls === 1) head = `${W} Edges ${L}`;
@@ -221,7 +223,14 @@ const buildGameStory = (g, teams) => {
     const inningOf = (i, side) => scoring.filter((e) => e.i === i && e.side === side);
 
     // ---- lead: the big inning, if there was one
-    if (!tied && big.runs >= 3) {
+    if (live) {
+        const half = g.half === "top" ? "the top of " : "";
+        const lead = ar === hr
+            ? `${A} and ${H} are tied at ${ar} through ${half}the ${ordWord(g.inning)}.`
+            : `${teams[ar > hr ? "away" : "home"].name} lead ${teams[ar > hr ? "home" : "away"].name} ${Math.max(ar, hr)}-${Math.min(ar, hr)} through ${half}the ${ordWord(g.inning)}.`;
+        paras.push(lead);
+    }
+    else if (!tied && big.runs >= 3) {
         const plays = inningOf(big.i, wSide).map(scorePhrase);
         let lead = `${W} scored ${numWord(big.runs)} run${big.runs === 1 ? "" : "s"} in the ${ordWord(big.i)} inning, which helped them defeat ${L} ${ws}-${ls}${dateStr}.`;
         if (plays.length) lead += ` In the frame, ${listJoin(plays)}.`;
@@ -272,7 +281,7 @@ const buildGameStory = (g, teams) => {
         if (!d || !g.pitchers[d.side] || !g.pitchers[d.side][d.idx]) return null;
         const p = g.pitchers[d.side][d.idx];
         const er = Math.max(0, p.r - (p.uer || 0));
-        const runsTxt = `${numWord(p.r)} run${p.r === 1 ? "" : "s"}${p.r !== er ? ` (${numWord(er)} earned)` : ""}`;
+        const runsTxt = `${numWord(p.r)} run${p.r === 1 ? "" : "s"}${p.r !== er ? ` (${er === 0 ? "none" : numWord(er)} earned)` : ""}`;
         const walked = p.bb === 0 ? "walking none" : `walking ${numWord(p.bb)}`;
         return `${p.name} ${verb} for ${teams[d.side].name}. The pitcher went ${inningsWord(p.outs)}, giving up ${runsTxt} on ${numWord(p.h)} hit${p.h === 1 ? "" : "s"}, striking out ${numWord(p.k)} and ${walked}.`;
     };
@@ -297,17 +306,35 @@ const buildGameStory = (g, teams) => {
             bits.push(`${rbiLead.p.name} led ${teams[sd].name} with ${numWord(rbiLead.s.rbi)} run${rbiLead.s.rbi === 1 ? "" : "s"} batted in from the ${spot} spot in the lineup.`);
             if (pos && rbiLead.s.ab) bits.push(`The ${pos} went ${rbiLead.s.h}-for-${rbiLead.s.ab} on the day.`);
         }
-        const three = rows.filter((r) => (r.s.h || 0) >= 3).map((r) => r.p.name);
-        if (three.length) bits.push(`${listJoin(three)} each collected three hits for ${teams[sd].name}.`);
-        const multi = rows.filter((r) => (r.s.h || 0) === 2 && r !== rbiLead).map((r) => r.p.name);
-        if (multi.length) bits.push(`${listJoin(multi)} each collected multiple hits for ${teams[sd].name}.`);
+        // "X collected three hits" / "X and Y each collected three hits"
+        const collected = (names, what) => names.length === 1
+            ? `${names[0]} collected ${what} for ${teams[sd].name}.`
+            : `${listJoin(names)} each collected ${what} for ${teams[sd].name}.`;
+        const lead = rbiLead && rbiLead.s.rbi > 0 ? rbiLead : null;
+        const three = rows.filter((r) => (r.s.h || 0) >= 3 && r !== lead).map((r) => r.p.name);
+        if (three.length) bits.push(collected(three, "three hits"));
+        const multi = rows.filter((r) => (r.s.h || 0) === 2 && r !== lead).map((r) => r.p.name);
+        if (multi.length) bits.push(collected(multi, "multiple hits"));
         const errs = (g.errLog || []).filter((e) => e.side === sd).length;
         if (sd === wSide) bits.push(errs === 0 ? `${teams[sd].name} didn't commit a single error in the field.` : `${teams[sd].name} committed ${numWord(errs)} error${errs === 1 ? "" : "s"} in the field.`);
         paras.push(bits.join(" "));
     });
 
-    if (!g.over) paras.push(`Game in progress through ${ordWord(g.inning)}.`);
-    return { headline: head, body: paras.join("\n\n") };
+    // home run roll-call
+    const hrs = scoring.filter((e) => String(e.kind).split(":")[0] === "HR" && e.batter);
+    if (hrs.length) paras.push(`Home runs: ${listJoin(hrs.map((e) => `${e.batter} (${ordWord(e.i)})`))}.`);
+
+    // the loser's glove, when it mattered
+    if (!tied && !live) {
+        const le = (g.errLog || []).filter((e) => e.side === lSide).length;
+        if (le >= 2) paras.push(`${L} committed ${numWord(le)} errors in the field.`);
+    }
+
+    // linescore footer, kept out of the prose so it survives a copy/paste
+    const pad = Math.max(A.length, H.length, 12);
+    const lineFor = (sd) => `${teams[sd].name.padEnd(pad)} ${g.linescore.map((r) => (r[sd] == null ? "-" : r[sd])).join(" ")}  |  R ${runsIn(g, sd)}  H ${g.hits[sd] || 0}  E ${g.errors[sd] || 0}`;
+    const footer = `${lineFor("away")}\n${lineFor("home")}\n\n\u2014 scored with DugoutIQ`;
+    return { headline: head, body: paras.join("\n\n"), footer };
 };
 
 // Rename a player inside a play-by-play text. Numeric placeholder "names"
@@ -384,7 +411,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "99"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "100"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -4031,133 +4058,6 @@ function DugoutScorecard() {
         a.remove();
         mutate((g) => (g.lastPlay = "Saved to your Downloads folder (Files app on iPhone)"));
     };
-    // Narrative game story composed from the actual game data — free & offline
-    const buildGameStory = () => {
-        const ord = (n) => n + (n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][Math.min(n % 10, 4)] || "th");
-        const aT = totals("away");
-        const hT = totals("home");
-        const tied = aT === hT;
-        const winSide = aT > hT ? "away" : "home";
-        const loseSide = winSide === "away" ? "home" : "away";
-        const W = teams[winSide].name;
-        const L = teams[loseSide].name;
-        const wT = totals(winSide);
-        const lT = totals(loseSide);
-        const paras = [];
-        // headline
-        if (game.over && !tied) {
-            const margin = wT - lT;
-            const verb = margin >= 6 ? "rolled past" : margin >= 3 ? "beat" : "edged";
-            paras.push(`${W} ${verb} ${L} ${wT}-${lT}${game.inning > 9 ? ` in ${game.inning} innings` : ""}.`);
-        }
-        else if (game.over && tied) {
-            paras.push(`${teams.away.name} and ${teams.home.name} played to a ${aT}-${aT} tie.`);
-        }
-        else {
-            paras.push(`${teams.away.name} ${aT > hT ? "lead" : aT < hT ? "trail" : "are tied with"} ${teams.home.name} ${Math.max(aT, hT)}-${Math.min(aT, hT)} through ${game.half === "top" ? "the top of" : ""} the ${ord(game.inning)}.`);
-        }
-        // biggest inning + its scoring plays
-        let bigSide = null, bigInn = -1, bigRuns = 0;
-        ["away", "home"].forEach((side) => {
-            game.linescore.forEach((r, i) => {
-                if ((r[side] || 0) > bigRuns) {
-                    bigRuns = r[side] || 0;
-                    bigInn = i + 1;
-                    bigSide = side;
-                }
-            });
-        });
-        if (bigSide && bigRuns >= 2) {
-            const plays = game.log
-                .filter((e) => e.i === bigInn &&
-                (bigSide === "away") === (e.h === "top") &&
-                e.type === "pa" &&
-                e.result &&
-                /score|run forced/i.test(e.result))
-                .map((e) => `${e.batter}'s ${e.result.split(" — ")[0].split(",")[0]}`);
-            let sentence = `${teams[bigSide].name} did most of the damage with a ${bigRuns}-run ${ord(bigInn)}`;
-            if (plays.length)
-                sentence += `, keyed by ${plays.slice(0, 2).join(" and ")}`;
-            paras.push(sentence + ".");
-        }
-        // home runs
-        const hrs = game.log.filter((e) => e.type === "pa" && e.result && /HOME RUN/i.test(e.result));
-        if (hrs.length)
-            paras.push(hrs
-                .map((e) => `${e.batter} went deep in the ${ord(e.i)}`)
-                .join("; ") + ".");
-        // top hitter per team
-        const hitterLine = (side) => {
-            let best = null, bi = -1;
-            game.stats[side].forEach((st, i) => {
-                const score = st.h * 10 + st.rbi * 5 + st.r;
-                if (st.h >= 2 || st.rbi >= 2) {
-                    if (!best || score > bi) {
-                        best = Object.assign(Object.assign({}, st), { i });
-                        bi = score;
-                    }
-                }
-            });
-            if (!best)
-                return null;
-            const nm = game.lineup[side][best.i].name;
-            const bits = [`went ${best.h}-for-${best.ab}`];
-            if (best.rbi)
-                bits.push(`${best.rbi} RBI`);
-            if (best.r)
-                bits.push(`${best.r} run${best.r > 1 ? "s" : ""} scored`);
-            return `${nm} led ${teams[side].name}, ${bits.join(", ")}`;
-        };
-        const hl = [hitterLine(winSide), hitterLine(loseSide)].filter(Boolean);
-        if (hl.length)
-            paras.push(hl.join(". ") + ".");
-        // pitching for the winner (or home team if live/tied)
-        const pSide = game.over && !tied ? winSide : "home";
-        const starter = game.pitchers[pSide][0];
-        if (starter && starter.outs >= 3) {
-            const bits = [`${starter.name} threw ${ipDisplay(starter.outs)} innings for ${teams[pSide].name}`];
-            if (starter.k)
-                bits.push(`striking out ${starter.k}`);
-            if (starter.bb === 0 && starter.outs >= 9)
-                bits.push("without a walk");
-            let line = bits.join(", ");
-            const relievers = game.pitchers[pSide].length - 1;
-            if (relievers > 0)
-                line += `; ${relievers === 1 ? game.pitchers[pSide][1].name + " finished it off" : relievers + " relievers closed it out"}`;
-            paras.push(line + ".");
-        }
-        // errors note
-        if (game.errors[loseSide] >= 2 && game.over && !tied)
-            paras.push(`${L} didn't help their cause, committing ${game.errors[loseSide]} errors.`);
-        const line = (side) => `${teams[side].name.padEnd(14)} ${game.linescore
-            .map((r) => (r[side] === null ? "-" : r[side]))
-            .join(" ")}  |  R ${totals(side)}  H ${game.hits[side]}  E ${game.errors[side]}`;
-        return (paras.join("\n\n") +
-            `\n\n${line("away")}\n${line("home")}\n\n— scored with DugoutIQ`);
-    };
-    const shareGameStory = async () => {
-        setShareOpen(false);
-        const text = buildGameStory();
-        const title = `Game story: ${teams.away.name} ${totals("away")}, ${teams.home.name} ${totals("home")}`;
-        if (navigator.share) {
-            try {
-                await navigator.share({ title, text });
-                mutate((g) => (g.lastPlay = "Game story shared"));
-                return;
-            }
-            catch (err) {
-                if (err && err.name === "AbortError")
-                    return;
-            }
-        }
-        try {
-            await navigator.clipboard.writeText(text);
-            mutate((g) => (g.lastPlay = "Game story copied — paste into any message"));
-        }
-        catch (_a) {
-            mutate((g) => (g.lastPlay = "Sharing isn't available on this device"));
-        }
-    };
     const shareRecap = async () => {
         setShareOpen(false);
         const text = buildRecap();
@@ -5160,7 +5060,6 @@ function DugoutScorecard() {
                         game.over ? " · Final" : " · Live"),
                     React.createElement("div", { className: "btnrow" },
                         React.createElement("button", { className: "dg hit", onClick: shareImageRecap }, "\uD83D\uDDBC Score graphic (image)"),
-                        React.createElement("button", { className: "dg", onClick: shareGameStory }, "\uD83D\uDCF0 Game story (narrative)"),
                         React.createElement("button", { className: "dg", onClick: shareBoxScore }, "\uD83D\uDCCA Box score (image)"),
                         React.createElement("button", { className: "dg", onClick: () => {
                                 setShareOpen(false);
@@ -5186,10 +5085,11 @@ function DugoutScorecard() {
                 React.createElement("div", { className: "modal set-modal", onClick: (e) => e.stopPropagation() },
                     React.createElement("h3", null, "Game story"),
                     React.createElement("div", { style: { fontFamily: "'Saira Condensed', sans-serif", fontSize: 22, fontWeight: 700, color: "#F5C518", lineHeight: 1.2, margin: "6px 0 12px" } }, storyOpen.headline),
-                    React.createElement("div", { style: { fontSize: 14, lineHeight: 1.55, whiteSpace: "pre-wrap", maxHeight: "46vh", overflowY: "auto", textTransform: "none", letterSpacing: 0, paddingRight: 4 } }, storyOpen.body),
+                    React.createElement("div", { style: { fontSize: 14, lineHeight: 1.55, whiteSpace: "pre-wrap", maxHeight: "42vh", overflowY: "auto", textTransform: "none", letterSpacing: 0, paddingRight: 4 } }, storyOpen.body),
+                    React.createElement("pre", { style: { fontFamily: "'Roboto Mono', monospace", fontSize: 10.5, lineHeight: 1.5, color: "#A9C5E8", background: "#0E1A3A", border: "1px solid #2B5AA0", borderRadius: 8, padding: "8px 10px", margin: "12px 0 0", overflowX: "auto" } }, storyOpen.footer),
                     React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr", marginTop: 14 } },
                         React.createElement("button", { className: "dg hit", onClick: async () => {
-                                const txt = `${storyOpen.headline}\n\n${storyOpen.body}`;
+                                const txt = `${storyOpen.headline}\n\n${storyOpen.body}\n\n${storyOpen.footer}`;
                                 try {
                                     if (navigator.share)
                                         await navigator.share({ title: storyOpen.headline, text: txt });
