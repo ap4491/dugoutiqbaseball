@@ -411,7 +411,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "102"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "103"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -2549,6 +2549,16 @@ function DugoutScorecard() {
     const svgRef = useRef(null);
     const [drag, setDrag] = useState(null); // {from, x, y, moved, sx, sy}
     const dragRef = useRef(null); // synchronous mirror — guards against duplicate pointer events
+    const baseMenuAt = useRef(0); // when the base menu opened, to swallow the trailing click
+    const openBaseMenu = (b) => { baseMenuAt.current = (typeof performance !== "undefined" ? performance.now() : Date.now()); setBaseMenu(b); };
+    const closeBaseMenuBackdrop = () => {
+        // A tap on the diamond fires pointerup (which opens the menu) and then a
+        // synthesized click that lands on the freshly-rendered backdrop. Ignore
+        // dismiss clicks that arrive right after opening.
+        const since = (typeof performance !== "undefined" ? performance.now() : Date.now()) - baseMenuAt.current;
+        if (since > 350)
+            setBaseMenu(null);
+    };
     const setDragBoth = (v) => {
         dragRef.current = v;
         setDrag(v);
@@ -2630,6 +2640,7 @@ function DugoutScorecard() {
         const d = dragRef.current;
         if (!d)
             return;
+        e.preventDefault();
         e.stopPropagation();
         const p = svgPoint(e);
         // Touch needs a much larger slop than a mouse — fingers wobble on a
@@ -2640,20 +2651,38 @@ function DugoutScorecard() {
         const moved = d.moved || dist > slop;
         setDragBoth(Object.assign(Object.assign({}, d), { x: p.x, y: p.y, moved }));
     };
+    // Nearest base to an SVG point, or null if the point isn't near any bag.
+    // Uses geometry we already have instead of elementFromPoint, which behaves
+    // unpredictably while a pointer is captured (the source of phantom moves).
+    const BASE_XY = { first: { x: 172, y: 86 }, second: { x: 100, y: 14 }, third: { x: 28, y: 86 }, home: { x: 100, y: 158 } };
+    const nearestBase = (pt) => {
+        let best = null, bd = 1e9;
+        Object.keys(BASE_XY).forEach((b) => {
+            const dx = pt.x - BASE_XY[b].x, dy = pt.y - BASE_XY[b].y;
+            const d = dx * dx + dy * dy;
+            if (d < bd) { bd = d; best = b; }
+        });
+        return bd <= 34 * 34 ? best : null; // within ~34 SVG units of a bag
+    };
     const basePointerUp = (e) => {
         const d = dragRef.current;
         if (!d)
             return; // already resolved — duplicate event
+        e.preventDefault();
         e.stopPropagation();
+        try {
+            e.currentTarget.releasePointerCapture(e.pointerId);
+        }
+        catch (_a) { }
         setDragBoth(null);
         // A quick press is always a tap, even if the finger drifted past the
         // slop — this is what keeps a tablet tap from being read as a drag.
         const dt = (typeof performance !== "undefined" ? performance.now() : Date.now()) - (d.t0 || 0);
         const quick = dt < 250;
         if (!d.moved || quick) {
-            // plain tap
+            // plain tap → menu (occupied) or place a runner (empty)
             if (d.occupied)
-                setBaseMenu(d.from);
+                openBaseMenu(d.from);
             else
                 mutate((g) => {
                     g.bases[d.from] = { b: null, rp: curPIdx(g, fieldingSide) };
@@ -2663,11 +2692,9 @@ function DugoutScorecard() {
         }
         if (!d.occupied)
             return; // dragged from an empty base — nothing to move
-        const el = document.elementFromPoint(e.clientX, e.clientY);
-        const target = el && el.closest ? el.closest("[data-base]") : null;
-        const to = target ? target.getAttribute("data-base") : null;
+        const to = nearestBase(svgPoint(e));
         if (!to || to === d.from)
-            return; // dropped off the bases or back on itself — cancel, no menu
+            return; // released away from a base, or back on itself — cancel, no move
         moveRunner(d.from, to);
     };
     // A single runner scores with no RBI. `cause` is "wp" | "pb" | null; when
@@ -5423,7 +5450,7 @@ function DugoutScorecard() {
                                 setConfirmNew(false);
                             } }, "New game \u2014 fresh lineups"),
                         React.createElement("button", { className: "dg ghost", onClick: () => setConfirmNew(false) }, "Keep current game"))))),
-            baseMenu && game && (React.createElement("div", { className: "modal-back", onClick: () => setBaseMenu(null) },
+            baseMenu && game && (React.createElement("div", { className: "modal-back", onClick: closeBaseMenuBackdrop },
                 React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
                     React.createElement("h3", null,
                         runnerLabel(baseMenu),
