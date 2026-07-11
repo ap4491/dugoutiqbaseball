@@ -411,7 +411,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "105"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "107"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1203,6 +1203,7 @@ function DugoutScorecard() {
             lastOut: null, // {side, b} — the batter who made the most recent out
             card: { away: [], home: [] }, // scorebook cells: {b, inning, res, base 0-4}
             openHit: null,
+            openPlay: null, // log index of the last batted-ball PA; a runner drag folds onto this line until the next pitch
             openK: null, // {b} — just-recorded strikeout where a dropped 3rd strike is legal
             openTag: null, // {b, conv, note} — fly out just made; runners may tag up // {b: batter idx, log: PA log index} of the just-recorded hit
             batter: { away: 0, home: 0 },
@@ -1284,6 +1285,7 @@ function DugoutScorecard() {
         g.outs = 0;
         g.bases = emptyBases();
         g.openHit = null;
+        g.openPlay = null;
         g.openK = null;
         g.openTag = null;
         if (g.half === "top") {
@@ -1360,6 +1362,7 @@ function DugoutScorecard() {
     const ensurePA = (g) => {
         if (g.openPA != null && g.log[g.openPA] && !g.log[g.openPA].result)
             return;
+        g.openPlay = null; // a new plate appearance closes the previous play's drag window
         g.log.push({
             type: "pa",
             i: g.inning,
@@ -1728,6 +1731,8 @@ function DugoutScorecard() {
         const desc = `${label}${where ? ` to ${where}` : ""}${runs ? ` — ${runs} score${runs > 1 ? "" : "s"}` : ""}`;
         closePA(g, desc, `${name}: ${desc}`);
         g.openHit = { b: bIdxForHit, log: g.log.length - 1 };
+        if (g.bases.first || g.bases.second || g.bases.third)
+            g.openPlay = g.log.length - 1;
         nextBatter(g);
     });
     const playError = (pos) => mutate((g) => {
@@ -1805,6 +1810,11 @@ function DugoutScorecard() {
         // a forced run already scored above
         if (groundThirdUnforced && g.bases.third && !flipped)
             g.openTag = { b: bIdx, kind: "ground", note, log: lastPAIdx(g) };
+        // If runners are still on and the inning continues, a manual drag right
+        // after this out folds onto this out's line ("groundout 3; X takes 3rd")
+        // rather than spawning a separate play-by-play event.
+        if (!flipped && (g.bases.first || g.bases.second || g.bases.third))
+            g.openPlay = lastPAIdx(g);
     });
     // Fielder picker: choose fielder(s) -> 6-3, F8, 6-4-3, etc. Used by batted outs, DP and FC.
     const isAirOut = (lb) => lb === "flyout" || lb === "popup" || lb === "lineout";
@@ -2605,6 +2615,10 @@ function DugoutScorecard() {
                     const batterName = g.lineup[battingSide][g.openHit.b].name;
                     amendOpenHit(g, `${who} scores`, `${who} scores on the play — RBI ${batterName}`);
                 }
+                else if (g.openPlay != null && g.log[g.openPlay]) {
+                    // fold onto the last play's line (e.g. the groundout), no RBI
+                    amendPA(g, g.openPlay, `${who} scores`, `${who} scores on the play`);
+                }
                 else {
                     logPlay(g, `${who} scores from ${baseLabel(from)} (steal/PB/WP — no RBI)`);
                 }
@@ -2621,6 +2635,11 @@ function DugoutScorecard() {
             cardAdvance(g, g.bases[to], to === "second" ? 2 : to === "third" ? 3 : 1);
             if (g.openHit != null) {
                 amendOpenHit(g, `${who} to ${baseLabel(to)}`, `${who} takes ${baseLabel(to)} on the play`);
+                g.openHit = null; // the play's advance is credited; further drags are manual moves
+            }
+            else if (g.openPlay != null && g.log[g.openPlay]) {
+                // fold the advance onto the last play's line instead of a new event
+                amendPA(g, g.openPlay, `${who} takes ${baseLabel(to)}`, `${who} takes ${baseLabel(to)} on the play`);
             }
             else {
                 logPlay(g, `${who}: ${baseLabel(from)} → ${baseLabel(to)}`);
@@ -4198,7 +4217,9 @@ function DugoutScorecard() {
         React.createElement("g", { transform: "translate(100 158)" },
             React.createElement("circle", { r: "17", fill: "transparent", "data-base": "home" }),
             React.createElement("path", { d: "M-11 -6 L11 -6 L11 2 L0 11 L-11 2 Z", "data-base": "home", fill: "#FFFFFF", opacity: drag && drag.moved ? "1" : "0.85", className: drag && drag.moved ? "home-hot" : "" })),
-        drag && drag.moved && drag.occupied && (React.createElement("circle", { cx: drag.x, cy: drag.y, r: "11", className: "ghost-runner" }))));
+        drag && drag.moved && drag.occupied && (React.createElement("circle", { cx: drag.x, cy: drag.y, r: "11", className: "ghost-runner" })),
+        game.openPlay != null && (React.createElement("g", { style: { pointerEvents: "none" } },
+            React.createElement("text", { x: "100", y: "180", textAnchor: "middle", className: "play-live" }, "\u25CF PLAY LIVE \u2014 drag folds onto this play")))));
     /* ---------------- render ---------------- */
     return (React.createElement("div", { className: "dg-root", style: { "--accent": themeColor } },
         React.createElement("style", null, `
@@ -4388,6 +4409,11 @@ function DugoutScorecard() {
           font-size: 12px; font-weight: 700; letter-spacing: .04em;
           pointer-events: none; paint-order: stroke;
           stroke: rgba(20,32,74,.85); stroke-width: 3px;
+        }
+        .play-live {
+          fill: var(--amberw); font-family: 'Saira Condensed', sans-serif;
+          font-size: 9px; font-weight: 700; letter-spacing: .06em;
+          paint-order: stroke; stroke: rgba(20,32,74,.9); stroke-width: 2.5px;
         }
 
 
