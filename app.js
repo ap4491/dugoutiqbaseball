@@ -411,7 +411,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "107"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "108"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -4217,9 +4217,7 @@ function DugoutScorecard() {
         React.createElement("g", { transform: "translate(100 158)" },
             React.createElement("circle", { r: "17", fill: "transparent", "data-base": "home" }),
             React.createElement("path", { d: "M-11 -6 L11 -6 L11 2 L0 11 L-11 2 Z", "data-base": "home", fill: "#FFFFFF", opacity: drag && drag.moved ? "1" : "0.85", className: drag && drag.moved ? "home-hot" : "" })),
-        drag && drag.moved && drag.occupied && (React.createElement("circle", { cx: drag.x, cy: drag.y, r: "11", className: "ghost-runner" })),
-        game.openPlay != null && (React.createElement("g", { style: { pointerEvents: "none" } },
-            React.createElement("text", { x: "100", y: "180", textAnchor: "middle", className: "play-live" }, "\u25CF PLAY LIVE \u2014 drag folds onto this play")))));
+        drag && drag.moved && drag.occupied && (React.createElement("circle", { cx: drag.x, cy: drag.y, r: "11", className: "ghost-runner" }))));
     /* ---------------- render ---------------- */
     return (React.createElement("div", { className: "dg-root", style: { "--accent": themeColor } },
         React.createElement("style", null, `
@@ -4410,11 +4408,20 @@ function DugoutScorecard() {
           pointer-events: none; paint-order: stroke;
           stroke: rgba(20,32,74,.85); stroke-width: 3px;
         }
-        .play-live {
-          fill: var(--amberw); font-family: 'Saira Condensed', sans-serif;
-          font-size: 9px; font-weight: 700; letter-spacing: .06em;
-          paint-order: stroke; stroke: rgba(20,32,74,.9); stroke-width: 2.5px;
+        /* Play-live lamp — sits just above the pitcher (NP) box, bottom-right of
+           the diamond. Green pulse = a drag will fold onto the current play. */
+        .playlive-lamp {
+          position: absolute; right: 32px; bottom: 58px;
+          width: 12px; height: 12px; border-radius: 50%;
+          background: radial-gradient(circle at 35% 35%, #6BF0A0, #16C36A 60%, #0E9E52);
+          box-shadow: 0 0 6px 2px rgba(34, 220, 120, .75);
+          pointer-events: none; animation: playlive-pulse 1.1s ease-in-out infinite;
         }
+        @keyframes playlive-pulse {
+          0%, 100% { opacity: .55; transform: scale(.82); box-shadow: 0 0 4px 1px rgba(34,220,120,.5); }
+          50%      { opacity: 1;   transform: scale(1);   box-shadow: 0 0 9px 3px rgba(34,220,120,.9); }
+        }
+        @media (prefers-reduced-motion: reduce) { .playlive-lamp { animation: none; } }
 
 
         /* ---- linescore ---- */
@@ -4874,6 +4881,7 @@ function DugoutScorecard() {
                         React.createElement("div", { className: "crow" },
                             React.createElement("span", null, "O"),
                             [0, 1].map((i) => (React.createElement(Lamp, { key: i, on: game.outs > i, color: "red", mini: true }))))),
+                    game.openPlay != null && (React.createElement("div", { className: "playlive-lamp", title: "Play live — drag a runner to fold the move onto this play", "aria-label": "Play live — drag a runner to fold onto this play" })),
                     React.createElement("button", { className: `pitchbtn corner-r ${pitchStatus(curP(game, fieldingSide).pitches)}`, onClick: () => setPitchMenuSide(fieldingSide), "aria-label": `${curP(game, fieldingSide).name}, ${curP(game, fieldingSide).pitches} pitches, tap for pitcher options` },
                         React.createElement("div", { className: "glabel" }, curP(game, fieldingSide).name.slice(0, 10)),
                         React.createElement("div", { className: "pcount" }, curP(game, fieldingSide).pitches),
