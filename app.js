@@ -411,7 +411,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "100"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "102"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1526,6 +1526,29 @@ function DugoutScorecard() {
         g.bases.first = mkRunner(g, batterIdx);
         return runs;
     };
+    // Groundout advancement: the batter is OUT (unlike forceAdvance, which puts
+    // him on first). Forced runners still have to move up — a runner is forced
+    // only when every base behind him is occupied. So a runner on first with the
+    // batter grounding out is forced to second; a runner on second with first
+    // base empty is NOT forced and holds. A forced runner from third scores.
+    const groundoutAdvance = (g) => {
+        const b = g.bases;
+        let runs = 0;
+        if (b.first) {
+            if (b.second) {
+                if (b.third) {
+                    runs += 1;
+                    creditRun(g, b.third);
+                }
+                cardAdvance(g, b.second, 3);
+                b.third = b.second;
+            }
+            cardAdvance(g, b.first, 2);
+            b.second = b.first;
+        }
+        b.first = false; // batter was retired
+        return runs;
+    };
     // Fielder's choice advancement. The runner at `outBase` is retired; every
     // OTHER forced runner moves up one base. A runner is forced when every base
     // behind them is occupied (the batter always forces 1st), so a 6-4 with
@@ -1757,8 +1780,19 @@ function DugoutScorecard() {
         const d3kLegal = isK && (!g.bases.first || g.outs === 2);
         const flyType = label === "flyout" || label === "popup" || label === "lineout";
         const hadRunners = !!(g.bases.first || g.bases.second || g.bases.third);
+        // On a groundout the forced runners must advance. Capture whether the
+        // runner on third was FORCED (1st and 2nd also occupied) before we move
+        // anyone — a forced run scores automatically; an unforced runner on
+        // third is a judgment call left to the tag prompt below.
+        const groundThirdForced = label === "groundout" && !!(g.bases.first && g.bases.second && g.bases.third);
+        const groundThirdUnforced = label === "groundout" && !!g.bases.third && !groundThirdForced;
         closePA(g, `${label}${fnote ? " " + fnote : ""}`, `${name}: ${label}${fnote ? " " + fnote : ""}`);
         const flipped = recordOut(g);
+        if (label === "groundout" && !flipped) {
+            const runs = groundoutAdvance(g); // forced runners move; forced run from 3rd scores
+            if (runs)
+                addRuns(g, runs, "groundout");
+        }
         if (!flipped)
             nextBatter(g);
         else
@@ -1767,7 +1801,9 @@ function DugoutScorecard() {
             g.openK = { b: bIdx };
         if (flyType && hadRunners && !flipped)
             g.openTag = { b: bIdx, conv: false, note, log: lastPAIdx(g) };
-        if (label === "groundout" && g.bases.third && !flipped)
+        // only prompt for a manual RBI when the runner on 3rd was NOT forced —
+        // a forced run already scored above
+        if (groundThirdUnforced && g.bases.third && !flipped)
             g.openTag = { b: bIdx, kind: "ground", note, log: lastPAIdx(g) };
     });
     // Fielder picker: choose fielder(s) -> 6-3, F8, 6-4-3, etc. Used by batted outs, DP and FC.
@@ -2585,6 +2621,8 @@ function DugoutScorecard() {
             y: p.y,
             sx: e.clientX,
             sy: e.clientY,
+            t0: (typeof performance !== "undefined" ? performance.now() : Date.now()),
+            touch: e.pointerType === "touch" || e.pointerType === "pen",
             moved: false,
         });
     };
@@ -2594,7 +2632,12 @@ function DugoutScorecard() {
             return;
         e.stopPropagation();
         const p = svgPoint(e);
-        const moved = d.moved || Math.hypot(e.clientX - d.sx, e.clientY - d.sy) > 8;
+        // Touch needs a much larger slop than a mouse — fingers wobble on a
+        // "tap." Only count it as a drag past a generous distance; a quick tap
+        // is never a drag regardless of drift.
+        const dist = Math.hypot(e.clientX - d.sx, e.clientY - d.sy);
+        const slop = d.touch ? 22 : 8;
+        const moved = d.moved || dist > slop;
         setDragBoth(Object.assign(Object.assign({}, d), { x: p.x, y: p.y, moved }));
     };
     const basePointerUp = (e) => {
@@ -2603,7 +2646,11 @@ function DugoutScorecard() {
             return; // already resolved — duplicate event
         e.stopPropagation();
         setDragBoth(null);
-        if (!d.moved) {
+        // A quick press is always a tap, even if the finger drifted past the
+        // slop — this is what keeps a tablet tap from being read as a drag.
+        const dt = (typeof performance !== "undefined" ? performance.now() : Date.now()) - (d.t0 || 0);
+        const quick = dt < 250;
+        if (!d.moved || quick) {
             // plain tap
             if (d.occupied)
                 setBaseMenu(d.from);
@@ -2620,7 +2667,7 @@ function DugoutScorecard() {
         const target = el && el.closest ? el.closest("[data-base]") : null;
         const to = target ? target.getAttribute("data-base") : null;
         if (!to || to === d.from)
-            return; // dropped off the bases — cancel
+            return; // dropped off the bases or back on itself — cancel, no menu
         moveRunner(d.from, to);
     };
     // A single runner scores with no RBI. `cause` is "wp" | "pb" | null; when
