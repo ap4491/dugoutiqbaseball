@@ -411,7 +411,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "104"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "105"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -2550,14 +2550,24 @@ function DugoutScorecard() {
     const [drag, setDrag] = useState(null); // {from, x, y, moved, sx, sy}
     const dragRef = useRef(null); // synchronous mirror — guards against duplicate pointer events
     const baseMenuAt = useRef(0); // when the base menu opened, to swallow the trailing click
-    const openBaseMenu = (b) => { baseMenuAt.current = (typeof performance !== "undefined" ? performance.now() : Date.now()); setBaseMenu(b); };
+    const [menuArmed, setMenuArmed] = useState(false); // buttons live only after the opening gesture settles
+    const openBaseMenu = (b) => {
+        baseMenuAt.current = (typeof performance !== "undefined" ? performance.now() : Date.now());
+        setMenuArmed(false);
+        setBaseMenu(b);
+        // Arm the buttons only after the browser's synthesized click (fired
+        // ~300ms after a touch tap) has passed, so that phantom click can't
+        // land on a button like "Caught stealing 2nd".
+        setTimeout(() => setMenuArmed(true), 400);
+    };
+    const closeBaseMenu = () => { setBaseMenu(null); setMenuArmed(false); };
     const closeBaseMenuBackdrop = () => {
         // A tap on the diamond fires pointerup (which opens the menu) and then a
         // synthesized click that lands on the freshly-rendered backdrop. Ignore
         // dismiss clicks that arrive right after opening.
         const since = (typeof performance !== "undefined" ? performance.now() : Date.now()) - baseMenuAt.current;
         if (since > 350)
-            setBaseMenu(null);
+            closeBaseMenu();
     };
     const setDragBoth = (v) => {
         dragRef.current = v;
@@ -2635,8 +2645,10 @@ function DugoutScorecard() {
             return;
         const p = svgPoint(e);
         const base = nearestBase(p);
-        if (!base || base === "home")
+        if (!base || base === "home") {
+            dragRef.current = null; // clear any stale gesture
             return; // pressed empty infield or home plate — ignore
+        }
         e.preventDefault();
         e.stopPropagation();
         // Record the press FIRST, so a tap always resolves even if pointer
@@ -5462,7 +5474,8 @@ function DugoutScorecard() {
                             } }, "New game \u2014 fresh lineups"),
                         React.createElement("button", { className: "dg ghost", onClick: () => setConfirmNew(false) }, "Keep current game"))))),
             baseMenu && game && (React.createElement("div", { className: "modal-back", onClick: closeBaseMenuBackdrop },
-                React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
+                React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation(), style: { position: "relative" } },
+                    !menuArmed && (React.createElement("div", { style: { position: "absolute", inset: 0, zIndex: 5, background: "transparent" }, onClick: (e) => { e.stopPropagation(); e.preventDefault(); }, onPointerDown: (e) => { e.stopPropagation(); e.preventDefault(); }, "aria-hidden": "true" })),
                     React.createElement("h3", null,
                         runnerLabel(baseMenu),
                         " on ",
@@ -5484,7 +5497,7 @@ function DugoutScorecard() {
                         React.createElement("button", { className: "dg outb", onClick: () => runnerOut(baseMenu) }, "Out on the bases"),
                         React.createElement("button", { className: "dg ghost", onClick: () => setCrMenu(baseMenu) }, game.bases[baseMenu] && game.bases[baseMenu].cr ? "Change / remove courtesy runner" : "Courtesy runner"),
                         React.createElement("button", { className: "dg ghost", onClick: () => runnerClear(baseMenu) }, "Remove runner"),
-                        React.createElement("button", { className: "dg ghost", onClick: () => setBaseMenu(null) }, "Cancel"))))),
+                        React.createElement("button", { className: "dg ghost", onClick: closeBaseMenu }, "Cancel"))))),
             crMenu && game && (React.createElement("div", { className: "modal-back", onClick: () => setCrMenu(null) },
                 React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
                     React.createElement("h3", null, "Courtesy runner"),
