@@ -411,7 +411,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "103"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "104"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -2617,13 +2617,31 @@ function DugoutScorecard() {
             }
         });
     };
-    const basePointerDown = (base) => (e) => {
+    // Nearest base to an SVG point, or null if the point isn't near any bag.
+    // Geometry-based hit-testing — robust on all touch devices, unlike
+    // elementFromPoint (which misbehaves while a pointer is captured).
+    const BASE_XY = { first: { x: 172, y: 86 }, second: { x: 100, y: 14 }, third: { x: 28, y: 86 }, home: { x: 100, y: 158 } };
+    const nearestBase = (pt) => {
+        let best = null, bd = 1e9;
+        Object.keys(BASE_XY).forEach((b) => {
+            const dx = pt.x - BASE_XY[b].x, dy = pt.y - BASE_XY[b].y;
+            const d = dx * dx + dy * dy;
+            if (d < bd) { bd = d; best = b; }
+        });
+        return bd <= 34 * 34 ? best : null; // within ~34 SVG units of a bag
+    };
+    const basePointerDown = (e) => {
         if (game.over)
             return;
+        const p = svgPoint(e);
+        const base = nearestBase(p);
+        if (!base || base === "home")
+            return; // pressed empty infield or home plate — ignore
         e.preventDefault();
         e.stopPropagation();
-        e.currentTarget.setPointerCapture(e.pointerId);
-        const p = svgPoint(e);
+        // Record the press FIRST, so a tap always resolves even if pointer
+        // capture fails. Some Android tablet browsers throw on setPointerCapture;
+        // that must not abort the tap-to-menu path.
         setDragBoth({
             from: base,
             occupied: !!game.bases[base],
@@ -2631,10 +2649,15 @@ function DugoutScorecard() {
             y: p.y,
             sx: e.clientX,
             sy: e.clientY,
+            pid: e.pointerId,
             t0: (typeof performance !== "undefined" ? performance.now() : Date.now()),
             touch: e.pointerType === "touch" || e.pointerType === "pen",
             moved: false,
         });
+        try {
+            e.currentTarget.setPointerCapture(e.pointerId);
+        }
+        catch (_a) { /* capture is optional; dragging still works via move/up */ }
     };
     const basePointerMove = (e) => {
         const d = dragRef.current;
@@ -2650,19 +2673,6 @@ function DugoutScorecard() {
         const slop = d.touch ? 22 : 8;
         const moved = d.moved || dist > slop;
         setDragBoth(Object.assign(Object.assign({}, d), { x: p.x, y: p.y, moved }));
-    };
-    // Nearest base to an SVG point, or null if the point isn't near any bag.
-    // Uses geometry we already have instead of elementFromPoint, which behaves
-    // unpredictably while a pointer is captured (the source of phantom moves).
-    const BASE_XY = { first: { x: 172, y: 86 }, second: { x: 100, y: 14 }, third: { x: 28, y: 86 }, home: { x: 100, y: 158 } };
-    const nearestBase = (pt) => {
-        let best = null, bd = 1e9;
-        Object.keys(BASE_XY).forEach((b) => {
-            const dx = pt.x - BASE_XY[b].x, dy = pt.y - BASE_XY[b].y;
-            const d = dx * dx + dy * dy;
-            if (d < bd) { bd = d; best = b; }
-        });
-        return bd <= 34 * 34 ? best : null; // within ~34 SVG units of a bag
     };
     const basePointerUp = (e) => {
         const d = dragRef.current;
@@ -4157,15 +4167,16 @@ function DugoutScorecard() {
     };
     /* ---------------- small components ---------------- */
     const Lamp = ({ on, color, mini }) => (React.createElement("span", { className: `lamp ${mini ? "mini" : ""} ${on ? "on " + color : ""}`, "aria-hidden": "true" }));
-    const Diamond = () => (React.createElement("svg", { ref: svgRef, viewBox: "0 -12 200 186", className: "diamond", role: "group", "aria-label": "Baserunners \u2014 tap a base for options, drag a runner to move them" },
-        React.createElement("path", { d: "M100 158 L172 86 L100 14 L28 86 Z", fill: "rgba(255,255,255,0.04)", stroke: "#3D6FB4", strokeWidth: "2" }),
+    const Diamond = () => (React.createElement("svg", { ref: svgRef, viewBox: "0 -12 200 186", className: "diamond", role: "group", onPointerDown: basePointerDown, onPointerMove: basePointerMove, onPointerUp: basePointerUp, onPointerCancel: basePointerUp, "aria-label": "Baserunners \u2014 tap a base for options, drag a runner to move them" },
+        React.createElement("rect", { x: "0", y: "-12", width: "200", height: "186", fill: "transparent", "data-capture": "1" }),
+        React.createElement("path", { d: "M100 158 L172 86 L100 14 L28 86 Z", fill: "rgba(255,255,255,0.04)", stroke: "#3D6FB4", strokeWidth: "2", style: { pointerEvents: "none" } }),
         themeLogo && (React.createElement("image", { href: themeLogo, x: "68", y: "54", width: "64", height: "64", opacity: "0.45", preserveAspectRatio: "xMidYMid meet", style: { pointerEvents: "none" } })),
         [
             { base: "first", x: 172, y: 86, lx: 152, ly: 91, anchor: "end" },
             { base: "second", x: 100, y: 14, lx: 100, ly: 46, anchor: "middle" },
             { base: "third", x: 28, y: 86, lx: 48, ly: 91, anchor: "start" },
         ].map(({ base, x, y, lx, ly, anchor }) => (React.createElement("g", { key: base },
-            React.createElement("g", { transform: `translate(${x} ${y}) rotate(45)`, onPointerDown: basePointerDown(base), onPointerMove: basePointerMove, onPointerUp: basePointerUp, className: "basegrab", role: "button", "aria-label": `${baseLabel(base)} base — ${game.bases[base]
+            React.createElement("g", { transform: `translate(${x} ${y}) rotate(45)`, className: "basegrab", role: "button", "aria-label": `${baseLabel(base)} base — ${game.bases[base]
                     ? `${runnerLabel(base)} on, tap for options or drag to move`
                     : "empty, tap to place runner"}` },
                 React.createElement("rect", { x: "-13", y: "-13", width: "26", height: "26", rx: "3", "data-base": base, className: `basepad ${game.bases[base] ? "occ" : ""} ${drag && drag.moved && drag.from === base ? "dragging" : ""} ${drag && drag.moved && drag.occupied && drag.from !== base && !game.bases[base]
