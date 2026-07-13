@@ -45,6 +45,17 @@ const PITCH_DIVISIONS = {
     "18U": [40, 55, 70, 85, 105],
     "22U": [45, 60, 75, 90, 115],
 };
+// Regulation game length (innings) by division — ERA is scaled to this instead
+// of the usual 9-inning basis, so a complete-game line reads in the league's own
+// terms. Baseball Canada: 11U = 6 innings; 13U/15U/18U = 7; 22U (adult) = 9.
+const DIVISION_INNINGS = {
+    "11U": 6,
+    "13U": 7,
+    "15U": 7,
+    "18U": 7,
+    "22U": 9,
+};
+const inningsBasisFor = (division) => DIVISION_INNINGS[division] || 9;
 // Credited pitch total — when "last batter" was called the pitcher is
 // credited with that number even if they threw more to finish the batter
 // (BNS 5.2.7.8 / 5.2.7.14, recorded as e.g. "35 (37)").
@@ -220,7 +231,16 @@ const buildGameStory = (g, teams) => {
     else head = `${W} Defeats ${L}`;
 
     const dateStr = g.date ? ` on ${new Date(g.date + "T12:00:00").toLocaleDateString(undefined, { weekday: "long" })}` : "";
-    const inningOf = (i, side) => scoring.filter((e) => e.i === i && e.side === side);
+    // Resolve a scoring event's batter name from the CURRENT lineup by stored
+    // index, so a rename after the fact shows the right name; fall back to the
+    // name captured at the time for older saves without an index.
+    const nameOf = (e) => {
+        const lu = g.lineup && g.lineup[e.side];
+        if (e.bi != null && lu && lu[e.bi]) return lu[e.bi].name;
+        return e.batter;
+    };
+    const inningOf = (i, side) => scoring.filter((e) => e.i === i && e.side === side)
+        .map((e) => Object.assign({}, e, { batter: nameOf(e) }));
 
     // ---- lead: the big inning, if there was one
     if (live) {
@@ -320,9 +340,9 @@ const buildGameStory = (g, teams) => {
         paras.push(bits.join(" "));
     });
 
-    // home run roll-call
-    const hrs = scoring.filter((e) => String(e.kind).split(":")[0] === "HR" && e.batter);
-    if (hrs.length) paras.push(`Home runs: ${listJoin(hrs.map((e) => `${e.batter} (${ordWord(e.i)})`))}.`);
+    // home run roll-call — nameOf resolves the current name (defined above)
+    const hrs = scoring.filter((e) => String(e.kind).split(":")[0] === "HR" && nameOf(e));
+    if (hrs.length) paras.push(`Home runs: ${listJoin(hrs.map((e) => `${nameOf(e)} (${ordWord(e.i)})`))}.`);
 
     // the loser's glove, when it mattered
     if (!tied && !live) {
@@ -412,7 +432,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "115"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "117"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1054,7 +1074,15 @@ function DugoutScorecard() {
         const d = b.ab + b.bb + b.hbp + b.sac;
         return d > 0 ? ((b.h + b.bb + b.hbp) / d).toFixed(3).replace(/^0/, "") : ".000";
     };
-    const era2 = (er, outs) => (outs > 0 ? ((er * 27) / outs).toFixed(2) : "—"); // 9-inning basis
+    // ERA scaled to the division's regulation game length (3 outs per inning).
+    // 11U (6-inning games) uses 18 outs as the basis, 13U/15U/18U use 21, etc.
+    // Falls back to the standard 9-inning (27-out) basis when no division is set.
+    const era2 = (er, outs) => {
+        if (!(outs > 0))
+            return "—";
+        const basisOuts = inningsBasisFor(game && game.division || division) * 3;
+        return ((er * basisOuts) / outs).toFixed(2);
+    };
     // Keep the archive in sync while a final game is open — the moment it goes
     // final AND after any later edit (names, play-by-play fixes, decisions),
     // so nothing is lost when the game is closed. Re-archiving preserves the
@@ -1269,9 +1297,20 @@ function DugoutScorecard() {
         if (!g.scoring)
             g.scoring = [];
         const k = (kind || "play").split(":")[0];
-        const pa = g.openPA != null ? g.log[g.openPA] : null;
-        const batter = BATTER_KINDS.indexOf(k) >= 0 ? (pa ? pa.batter : g.lastPAB || null) : null;
-        g.scoring.push({ i: g.inning, h: g.half, side: battingSide, batter, runs: n, kind: kind || "play" });
+        // Batter-driven kinds (HR, hit, walk, sac...) belong to whoever is at the
+        // plate RIGHT NOW — not whatever PA row happens to be open. On a
+        // first-pitch home run no PA row exists yet, and g.openPA can still point
+        // at the PREVIOUS batter's just-closed PA, which would misattribute the
+        // run. Read the live batter from the lineup instead.
+        let batter = null;
+        let batterIdx = null;
+        if (BATTER_KINDS.indexOf(k) >= 0) {
+            const lu = g.lineup && g.lineup[battingSide];
+            batterIdx = g.batter[battingSide];
+            const cur = lu && lu[batterIdx];
+            batter = cur ? cur.name : (g.openPA != null && g.log[g.openPA] ? g.log[g.openPA].batter : g.lastPAB || null);
+        }
+        g.scoring.push({ i: g.inning, h: g.half, side: battingSide, batter, bi: batterIdx, runs: n, kind: kind || "play" });
     };
     const nextBatter = (g) => {
         const wrapped = (g.batter[battingSide] + 1) % g.lineup[battingSide].length === 0;
@@ -5384,7 +5423,7 @@ function DugoutScorecard() {
                         if (col === "ip")
                             return row.outs;
                         if (col === "era")
-                            return row.outs > 0 ? (row.er * 27) / row.outs : -1;
+                            return row.outs > 0 ? row.er / row.outs : -1;
                         return row[col] || 0;
                     };
                     const sorted = [...rows].sort((a, b) => {
@@ -5440,7 +5479,7 @@ function DugoutScorecard() {
                                     React.createElement("tbody", null, sorted.map((r, i) => (React.createElement("tr", { key: i }, cols.map(([col, , al]) => (React.createElement("td", { key: col, className: al === "l" ? "l" : "" }, cellVal(r, col))))))))))),
                             React.createElement("p", { className: "season-note" }, seasonTab === "bat"
                                 ? "AVG = H/AB · OBP = (H+BB+HBP)/(AB+BB+HBP+SF). Players matched by name within the team."
-                                : "ERA shown on a 9-inning basis · ER = runs minus unearned."),
+                                : `ERA shown on a ${inningsBasisFor(game && game.division || division)}-inning basis · ER = runs minus unearned.`),
                             React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr" } },
                                 React.createElement("button", { className: "dg ghost", onClick: copyText }, "Copy table"),
                                 React.createElement("button", { className: "dg ghost", onClick: () => setSeasonOpen(false) }, "Done")))));
