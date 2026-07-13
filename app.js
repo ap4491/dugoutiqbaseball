@@ -412,7 +412,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "113"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "115"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -3016,17 +3016,21 @@ function DugoutScorecard() {
         setPitchMenuSide(null);
     };
     // rename / renumber the current pitcher without polluting undo history
-    const renamePitcher = (value) => setGame((g) => {
+    const pitcherAt = (n, side, idx) => {
+        const arr = n.pitchers[side];
+        return idx != null && arr[idx] ? arr[idx] : arr[arr.length - 1];
+    };
+    const renamePitcher = (value, idx) => setGame((g) => {
         const n = snapshot(g);
-        curP(n, pitchMenuSide || fieldingSide).name = value;
+        pitcherAt(n, pitchMenuSide || fieldingSide, idx).name = value;
         return n;
     });
     // Commit an edited pitcher name back through the play-by-play, so a line
     // written as "P2 in for Diego F." reads with the real name. Called on blur
     // rather than per-keystroke so half-typed names never hit the log.
-    const commitPitcherName = () => setGame((g) => {
+    const commitPitcherName = (idx) => setGame((g) => {
         const n = snapshot(g);
-        const pp = curP(n, pitchMenuSide || fieldingSide);
+        const pp = pitcherAt(n, pitchMenuSide || fieldingSide, idx);
         const from = (pp.logName || "").trim();
         const to = (pp.name || "").trim();
         if (!from || !to || from === to)
@@ -3044,9 +3048,9 @@ function DugoutScorecard() {
         pp.logName = to;
         return n;
     });
-    const setPitcherNum = (value) => setGame((g) => {
+    const setPitcherNum = (value, idx) => setGame((g) => {
         const n = snapshot(g);
-        curP(n, pitchMenuSide || fieldingSide).num = value.replace(/[^0-9]/g, "").slice(0, 2);
+        pitcherAt(n, pitchMenuSide || fieldingSide, idx).num = value.replace(/[^0-9]/g, "").slice(0, 2);
         return n;
     });
     const adjustRun = (n) => mutate((g) => {
@@ -3863,9 +3867,9 @@ function DugoutScorecard() {
             };
             const battingRows = (lineup, side) => lineup.map((p, i) => {
                 const s = game.stats[side][i] || { ab: 0, r: 0, h: 0, rbi: 0, bb: 0, k: 0 };
-                const num = p.num ? ` #${p.num}` : "";
+                const num = p.num ? `#${p.num} ` : "";
                 const pl = posLabel(p);
-                const label = `${p.name}${num}${pl ? `  ${pl}` : ""}`;
+                const label = `${num}${p.name}${pl ? `  ${pl}` : ""}`;
                 return { label, vals: [s.ab, s.r, s.h, s.rbi, s.bb, s.k] };
             });
             const battingTot = (side, n) => {
@@ -4382,6 +4386,12 @@ function DugoutScorecard() {
         .team-custom .logo-btn { display:inline-flex; align-items:center; justify-content:center; min-width:60px; height:30px; padding:0 8px; border:1px dashed var(--line); border-radius:8px; color:var(--powder); font-size:13px; cursor:pointer; }
         .team-custom .logo-btn img { height:24px; width:24px; object-fit:contain; border-radius:4px; }
         .team-custom .logo-rm { width:24px; height:24px; border-radius:50%; border:none; background:rgba(51,65,85,.6); color:#fff; cursor:pointer; }
+        /* Mid-game team identity editor inside Lineup & subs */
+        .team-ident { display:flex; align-items:center; gap:8px; margin-bottom:12px; }
+        .team-ident .team-color { width:32px; height:30px; padding:0; border:none; background:none; cursor:pointer; flex:none; }
+        .team-ident .team-logo-btn { display:inline-flex; align-items:center; justify-content:center; min-width:62px; height:32px; padding:0 8px; border:1px dashed var(--line); border-radius:8px; color:var(--powder); font-size:13px; cursor:pointer; flex:none; }
+        .team-ident .team-logo-btn img { height:26px; width:26px; object-fit:contain; border-radius:4px; }
+        .team-ident .team-logo-rm { width:26px; height:26px; border-radius:50%; border:none; background:rgba(51,65,85,.6); color:#fff; cursor:pointer; flex:none; }
         .tlogo { height:22px; width:22px; object-fit:contain; vertical-align:middle; margin-right:6px; border-radius:4px; }
         .theme-bar { display:flex; align-items:center; gap:12px; flex-wrap:wrap; background:rgba(255,255,255,.05); border:1px solid var(--line); border-radius:12px; padding:10px 14px; margin-bottom:14px; }
         .theme-bar .theme-label { font-weight:700; color:var(--white); font-size:15px; }
@@ -5755,6 +5765,13 @@ function DugoutScorecard() {
                             setSubSide(sd);
                             setSubSlot(null);
                         } }, teams[sd].name.slice(0, 12))))),
+                    React.createElement("div", { className: "team-ident" },
+                        React.createElement("input", { className: "dg-in", style: { flex: 1 }, value: teams[subSide].name, onChange: (e) => setTeamName(subSide, e.target.value), placeholder: subSide === "away" ? "Visitors" : "Home", "aria-label": "Team name" }),
+                        React.createElement("input", { type: "color", className: "team-color", value: teamColor(subSide), onChange: (e) => setTeamColor(subSide, e.target.value), "aria-label": "Team color", title: "Team color" }),
+                        React.createElement("label", { className: "team-logo-btn", title: "Add or change logo" },
+                            teams[subSide].logo ? React.createElement("img", { src: teams[subSide].logo, alt: "logo" }) : "\uFF0B Logo",
+                            React.createElement("input", { type: "file", accept: "image/*", onChange: (e) => onLogoPick(subSide, e), style: { display: "none" } })),
+                        teams[subSide].logo && React.createElement("button", { type: "button", className: "team-logo-rm", onClick: () => setTeamLogo(subSide, ""), "aria-label": "Remove logo", title: "Remove logo" }, "\u2715")),
                     React.createElement("p", { style: { marginTop: 0 } }, "Tap a spot to fix a name or position, swap in a sub, or add a late arrival. Your game data stays put."),
                     React.createElement("p", { className: "order-state" }, orderOpen(subSide)
                         ? "Order open — add or remove spots until it turns over once."
@@ -5903,14 +5920,10 @@ function DugoutScorecard() {
                         game.pitchers[pitchMenuSide].map((p, i) => {
                             const isCur = i === game.pitchers[pitchMenuSide].length - 1;
                             return (React.createElement("div", { className: `plog-row ${isCur ? "cur" : ""}`, key: i },
-                                isCur ? (React.createElement("span", { className: "plog-name pn-wrap" },
-                                    React.createElement("input", { className: "dg-in jersey-in", value: p.num || "", onChange: (e) => setPitcherNum(e.target.value), inputMode: "numeric", placeholder: "#", "aria-label": "Current pitcher number" }),
-                                    React.createElement("input", { className: "dg-in", value: p.name, onChange: (e) => renamePitcher(e.target.value), onBlur: commitPitcherName, "aria-label": "Current pitcher name" }),
-                                    decisionTag(pitchMenuSide, i) && (React.createElement("b", { className: "dtag" }, decisionTag(pitchMenuSide, i))))) : (React.createElement("span", { className: "plog-name done" },
-                                    p.num ? `#${p.num} ${p.name}` : p.name,
-                                    decisionTag(pitchMenuSide, i) && (React.createElement("b", { className: "dtag" },
-                                        " ",
-                                        decisionTag(pitchMenuSide, i))))),
+                                React.createElement("span", { className: "plog-name pn-wrap" },
+                                    React.createElement("input", { className: "dg-in jersey-in", value: p.num || "", onChange: (e) => setPitcherNum(e.target.value, i), inputMode: "numeric", placeholder: "#", "aria-label": "Pitcher number" }),
+                                    React.createElement("input", { className: "dg-in", value: p.name, onChange: (e) => renamePitcher(e.target.value, i), onBlur: () => commitPitcherName(i), "aria-label": "Pitcher name" }),
+                                    decisionTag(pitchMenuSide, i) && (React.createElement("b", { className: "dtag" }, decisionTag(pitchMenuSide, i)))),
                                 React.createElement("span", { className: "plog-stats" },
                                     React.createElement("span", null, ipDisplay(p.outs)),
                                     React.createElement("span", null, p.h),
