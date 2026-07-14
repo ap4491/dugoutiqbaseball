@@ -1,5 +1,5 @@
 "use strict";
-const { useState, useRef, useEffect } = React;
+const { useState, useRef, useEffect, useLayoutEffect } = React;
 /* ------------------------------------------------------------------
    DugoutIQ — Interactive Lineup Card & Game Tracker
    Toronto colourway: navy / royal blue / white / red accents.
@@ -432,7 +432,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "117"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "119"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -2520,6 +2520,55 @@ function DugoutScorecard() {
     };
     // Correct a name or position in place — NOT a substitution.
     // Stats stay exactly where they are; nothing is retired.
+    // Live inline lineup editing: update a single field as the user types
+    // WITHOUT rewriting the play-by-play on every keystroke. The name's log
+    // rewrite is deferred to blur via commitBatterName, mirroring how the
+    // pitching log is edited. Number and position are pure data, safe live.
+    const setBatterField = (side, slot, field, value) => setGame((g) => {
+        const n = snapshot(g);
+        const cur = n.lineup[side][slot];
+        if (!cur)
+            return n;
+        if (field === "num")
+            cur.num = value.replace(/[^0-9]/g, "").slice(0, 2);
+        else if (field === "pos") {
+            const np = value.trim();
+            cur.pos = np;
+            if (np) {
+                const hist = Array.isArray(cur.posHist) ? cur.posHist : (cur.pos ? [cur.pos] : []);
+                if (!hist.includes(np))
+                    hist.push(np);
+                cur.posHist = hist;
+            }
+        }
+        else if (field === "name")
+            cur.name = value; // raw while typing; committed (with log rewrite) on blur
+        return n;
+    });
+    // On blur, propagate a finished name change through pitchers + play-by-play.
+    // The original (pre-edit) name is captured in editNameRef on focus, so
+    // editLineup can see the change and do its scoped rewrite.
+    const editNameRef = useRef({});
+    const commitBatterName = (side, slot) => {
+        const cur = game.lineup[side][slot];
+        if (!cur)
+            return;
+        const key = `${side}:${slot}`;
+        const oldName = editNameRef.current[key];
+        const to = (cur.name || "").trim();
+        delete editNameRef.current[key];
+        if (oldName == null)
+            return;
+        if (!to) {
+            setBatterField(side, slot, "name", oldName); // don't allow a blank name
+            return;
+        }
+        if (to === oldName)
+            return;
+        // put the old name back in state, then let editLineup rename through
+        setGame((g) => { const n = snapshot(g); if (n.lineup[side][slot]) n.lineup[side][slot].name = oldName; return n; });
+        editLineup(side, slot, to, cur.pos || "", cur.num != null ? cur.num : "");
+    };
     const editLineup = (side, slot, newName, newPos, newNum) => {
         mutate((g) => {
             const cur = g.lineup[side][slot];
@@ -4346,6 +4395,27 @@ function DugoutScorecard() {
         }
     };
     /* ---------------- small components ---------------- */
+    // Team name that shrinks to fit its fixed-width box. Measures the rendered
+    // text against the container and scales the font down (never up past the CSS
+    // size) so a long name never stretches the scoreboard cell.
+    const FitName = ({ name }) => {
+        const ref = useRef(null);
+        const [scale, setScale] = useState(1);
+        useLayoutEffect(() => {
+            const el = ref.current;
+            if (!el)
+                return;
+            const parent = el.parentElement;
+            if (!parent)
+                return;
+            el.style.transform = "scale(1)";
+            const avail = parent.clientWidth;
+            const needed = el.scrollWidth;
+            const s = needed > 0 && avail > 0 ? Math.min(1, avail / needed) : 1;
+            setScale(s < 0.5 ? 0.5 : s);
+        }, [name]);
+        return React.createElement("span", { ref, className: "fit-name", style: { transform: `scale(${scale})` } }, name);
+    };
     const Lamp = ({ on, color, mini }) => (React.createElement("span", { className: `lamp ${mini ? "mini" : ""} ${on ? "on " + color : ""}`, "aria-hidden": "true" }));
     const Diamond = () => (React.createElement("svg", { ref: svgRef, viewBox: "0 -12 200 186", className: "diamond", role: "group", onPointerDown: basePointerDown, onPointerMove: basePointerMove, onPointerUp: basePointerUp, onPointerCancel: basePointerUp, "aria-label": "Baserunners \u2014 tap a base for options, drag a runner to move them" },
         React.createElement("rect", { x: "0", y: "-12", width: "200", height: "186", fill: "transparent", "data-capture": "1" }),
@@ -4406,12 +4476,17 @@ function DugoutScorecard() {
         .team-cell {
           background: var(--navy-deep); border: 1px solid var(--line);
           border-radius: 6px; padding: 10px 12px; text-align: center;
+          min-width: 0; overflow: hidden;
         }
         .team-cell .tname {
           font-size: 15px; font-weight: 700; letter-spacing: .12em;
           text-transform: uppercase; color: var(--powder);
-          white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+          white-space: nowrap; overflow: hidden;
+          height: 20px; display: flex; align-items: center; justify-content: center;
         }
+        .team-cell .tname .fit-name { display: inline-block; transform-origin: center; white-space: nowrap; }
+        .team-cell .tname.logo-only { overflow: visible; }
+        .team-cell .tlogo-lg { height: 34px; width: 34px; object-fit: contain; border-radius: 5px; }
         .team-cell .tscore {
           font-family: 'Saira Condensed', sans-serif; font-weight: 700;
           font-size: 44px; line-height: 1; color: var(--white);
@@ -4431,7 +4506,6 @@ function DugoutScorecard() {
         .team-ident .team-logo-btn { display:inline-flex; align-items:center; justify-content:center; min-width:62px; height:32px; padding:0 8px; border:1px dashed var(--line); border-radius:8px; color:var(--powder); font-size:13px; cursor:pointer; flex:none; }
         .team-ident .team-logo-btn img { height:26px; width:26px; object-fit:contain; border-radius:4px; }
         .team-ident .team-logo-rm { width:26px; height:26px; border-radius:50%; border:none; background:rgba(51,65,85,.6); color:#fff; cursor:pointer; flex:none; }
-        .tlogo { height:22px; width:22px; object-fit:contain; vertical-align:middle; margin-right:6px; border-radius:4px; }
         .theme-bar { display:flex; align-items:center; gap:12px; flex-wrap:wrap; background:rgba(255,255,255,.05); border:1px solid var(--line); border-radius:12px; padding:10px 14px; margin-bottom:14px; }
         .theme-bar .theme-label { font-weight:700; color:var(--white); font-size:15px; }
         .theme-bar .theme-swatches { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
@@ -4617,7 +4691,16 @@ function DugoutScorecard() {
         button.d3k-banner.tagup { border-color: var(--powder); color: var(--powder); }
         table.lineup tr.retired td { color: var(--powder); opacity: .7; font-style: italic; }
         table.lineup tr.retired em { font-style: normal; opacity: .8; }
-        .sub-list { display: flex; flex-direction: column; gap: 5px; max-height: 30vh; overflow-y: auto; margin-bottom: 8px; }
+        .sub-list { display: flex; flex-direction: column; gap: 5px; max-height: 44vh; overflow-y: auto; margin-bottom: 8px; }
+        .lu-row { display: flex; align-items: center; gap: 6px; padding: 3px 2px; border-radius: 8px; }
+        .lu-row.open { background: rgba(255,255,255,.06); }
+        .lu-idx { flex: none; width: 18px; text-align: right; color: var(--powder); font-weight: 700; font-size: 13px; }
+        .lu-row .dg-in { padding: 6px 8px; font-size: 14px; }
+        .lu-num { flex: none; width: 42px; text-align: center; }
+        .lu-name { flex: 1; min-width: 0; }
+        .lu-pos { flex: none; width: 54px; text-align: center; }
+        .lu-tag { flex: none; font-size: 11px; color: var(--amberw); font-weight: 700; white-space: nowrap; }
+        .lu-more { flex: none; width: 30px; height: 32px; border: 1px solid var(--line); background: rgba(255,255,255,.04); color: var(--powder); border-radius: 8px; cursor: pointer; font-size: 15px; line-height: 1; }
         button.sub-row {
           display: flex; justify-content: space-between; align-items: center; gap: 8px;
           background: #18295A; border: 1px solid var(--line); border-radius: 6px;
@@ -4996,18 +5079,18 @@ function DugoutScorecard() {
                 game.over && React.createElement("div", { className: "final-banner" }, "Final"),
                 React.createElement("div", { className: "board" },
                     React.createElement("div", { className: `team-cell ${battingSide === "away" && !game.over ? "atbat" : ""}`, style: Object.assign({ cursor: "pointer" }, (battingSide === "away" && !game.over ? { borderColor: teamColor("away") } : {})), onClick: () => { setSubSide("away"); setSubSlot(null); setSubMenu(true); }, title: "Edit lineup" },
-                        React.createElement("div", { className: "tname", style: { color: teamColor("away") } },
-                            teams.away.logo && React.createElement("img", { src: teams.away.logo, className: "tlogo", alt: "" }),
-                            teams.away.name),
+                        teams.away.logo
+                            ? React.createElement("div", { className: "tname logo-only" }, React.createElement("img", { src: teams.away.logo, className: "tlogo-lg", alt: teams.away.name }))
+                            : React.createElement("div", { className: "tname", style: { color: teamColor("away") } }, React.createElement(FitName, { name: teams.away.name })),
                         React.createElement("div", { className: "tscore" }, totals("away"))),
                     React.createElement("div", { className: "inning-cell" },
                         React.createElement("div", { className: "arrow" }, game.half === "top" ? "▲" : "▽"),
                         React.createElement("div", { className: "num" }, game.inning),
                         React.createElement("div", { className: "lbl" }, game.half === "top" ? "TOP" : "BOT")),
                     React.createElement("div", { className: `team-cell ${battingSide === "home" && !game.over ? "atbat" : ""}`, style: Object.assign({ cursor: "pointer" }, (battingSide === "home" && !game.over ? { borderColor: teamColor("home") } : {})), onClick: () => { setSubSide("home"); setSubSlot(null); setSubMenu(true); }, title: "Edit lineup" },
-                        React.createElement("div", { className: "tname", style: { color: teamColor("home") } },
-                            teams.home.logo && React.createElement("img", { src: teams.home.logo, className: "tlogo", alt: "" }),
-                            teams.home.name),
+                        teams.home.logo
+                            ? React.createElement("div", { className: "tname logo-only" }, React.createElement("img", { src: teams.home.logo, className: "tlogo-lg", alt: teams.home.name }))
+                            : React.createElement("div", { className: "tname", style: { color: teamColor("home") } }, React.createElement(FitName, { name: teams.home.name })),
                         React.createElement("div", { className: "tscore" }, totals("home")))),
                 React.createElement("div", { className: "diamond-card" },
                     React.createElement("div", { className: "diamond-hint" }, "Drag runner \u00B7 tap = options"),
@@ -5811,7 +5894,7 @@ function DugoutScorecard() {
                             teams[subSide].logo ? React.createElement("img", { src: teams[subSide].logo, alt: "logo" }) : "\uFF0B Logo",
                             React.createElement("input", { type: "file", accept: "image/*", onChange: (e) => onLogoPick(subSide, e), style: { display: "none" } })),
                         teams[subSide].logo && React.createElement("button", { type: "button", className: "team-logo-rm", onClick: () => setTeamLogo(subSide, ""), "aria-label": "Remove logo", title: "Remove logo" }, "\u2715")),
-                    React.createElement("p", { style: { marginTop: 0 } }, "Tap a spot to fix a name or position, swap in a sub, or add a late arrival. Your game data stays put."),
+                    React.createElement("p", { style: { marginTop: 0 } }, "Edit any name, number, or position directly \u2014 changes save as you go. Tap a spot for subs, pinch-hitters, or to remove it."),
                     React.createElement("p", { className: "order-state" }, orderOpen(subSide)
                         ? "Order open — add or remove spots until it turns over once."
                         : "Order set — first time through the order is complete."),
@@ -5820,46 +5903,30 @@ function DugoutScorecard() {
                             game.bases[b] &&
                             game.bases[b].b === i);
                         const atBat = subSide === battingSide && i === game.batter[battingSide];
-                        return (React.createElement("button", { key: i, className: `sub-row ${subSlot === i ? "sel" : ""}`, onClick: () => {
-                                setSubSlot(i);
-                                setSubName(p.name);
-                                setSubPos(p.pos || "");
-                                setSubNum(p.num || "");
-                            } },
-                            React.createElement("span", { className: "sub-n" },
-                                i + 1,
-                                ". ",
-                                p.name,
-                                p.pos ? ` · ${p.pos}` : ""),
-                            atBat && React.createElement("span", { className: "sub-tag" }, "at bat \u2192 PH"),
-                            onBase && (React.createElement("span", { className: "sub-tag" },
-                                "on",
-                                " ",
-                                onBase === "first"
-                                    ? "1B"
-                                    : onBase === "second"
-                                        ? "2B"
-                                        : "3B",
-                                " ",
-                                "\u2192 PR"))));
+                        return (React.createElement("div", { key: i, className: `lu-row ${subSlot === i ? "open" : ""}` },
+                            React.createElement("span", { className: "lu-idx" }, i + 1),
+                            React.createElement("input", { className: "dg-in lu-num", value: p.num || "", onChange: (e) => setBatterField(subSide, i, "num", e.target.value), inputMode: "numeric", placeholder: "#", "aria-label": `Spot ${i + 1} number` }),
+                            React.createElement("input", { className: "dg-in lu-name", value: p.name, onFocus: () => { editNameRef.current[`${subSide}:${i}`] = p.name; }, onChange: (e) => setBatterField(subSide, i, "name", e.target.value), onBlur: () => commitBatterName(subSide, i), "aria-label": `Spot ${i + 1} name` }),
+                            React.createElement("input", { className: "dg-in lu-pos", value: p.pos || "", onChange: (e) => setBatterField(subSide, i, "pos", e.target.value), placeholder: "Pos", "aria-label": `Spot ${i + 1} position` }),
+                            (atBat || onBase) && React.createElement("span", { className: "lu-tag" }, atBat ? "AB" : onBase === "first" ? "1B" : onBase === "second" ? "2B" : "3B"),
+                            React.createElement("button", { className: "lu-more", onClick: () => {
+                                    if (subSlot === i) { setSubSlot(null); return; }
+                                    setSubSlot(i);
+                                    setSubName(p.name);
+                                    setSubPos(p.pos || "");
+                                    setSubNum(p.num || "");
+                                }, title: "Sub or remove", "aria-label": "Sub or remove this spot" }, subSlot === i ? "\u2715" : "\u22EF")));
                     })),
                     subSlot != null && (React.createElement("div", { className: "sub-form-wrap" },
+                        React.createElement("p", { className: "sub-hint", style: { marginTop: 0 } }, "Swap in a different player (the current one keeps their stats), or remove an empty spot."),
                         React.createElement("div", { className: "sub-form" },
-                            React.createElement("input", { className: "dg-in", placeholder: "Player name", value: subName, onChange: (e) => setSubName(e.target.value) }),
+                            React.createElement("input", { className: "dg-in", placeholder: "New player name", value: subName, onChange: (e) => setSubName(e.target.value) }),
                             React.createElement("input", { className: "dg-in", placeholder: "#", inputMode: "numeric", style: { maxWidth: 64 }, value: subNum, onChange: (e) => setSubNum(e.target.value) }),
                             React.createElement("input", { className: "dg-in", placeholder: "Pos", style: { maxWidth: 84 }, value: subPos, onChange: (e) => setSubPos(e.target.value) })),
-                        React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr", marginTop: 6 } },
-                            React.createElement("button", { className: "dg", disabled: !subName.trim(), onClick: () => editLineup(subSide, subSlot, subName, subPos, subNum) }, "Save edit"),
-                            React.createElement("button", { className: "dg hit", disabled: !subName.trim(), onClick: () => substitute(subSide, subSlot, subName, subPos, subNum) }, "Sub \u2014 new player")),
+                        React.createElement("button", { className: "dg hit", style: { width: "100%", marginTop: 6 }, disabled: !subName.trim(), onClick: () => substitute(subSide, subSlot, subName, subPos, subNum) }, "Sub in this new player"),
                         slotRemovable(subSide, subSlot)
                             ? React.createElement("button", { className: "dg outb", style: { width: "100%", marginTop: 8 }, onClick: () => removeBatter(subSide, subSlot) }, "Remove this spot from the order")
-                            : React.createElement("p", { className: "sub-hint", style: { opacity: .75, marginTop: 8 } }, "A spot can only be removed if that player has no game activity and isn\u2019t at bat or on base. If they\u2019re due up now, tap the next batter first, then remove."),
-                        React.createElement("p", { className: "sub-hint" },
-                            React.createElement("b", null, "Save edit"),
-                            " fixes a name or position \u2014 stats untouched.",
-                            " ",
-                            React.createElement("b", null, "Sub"),
-                            " swaps in a new player; the original keeps their stats."))),
+                            : React.createElement("p", { className: "sub-hint", style: { opacity: .75, marginTop: 8 } }, "A spot can only be removed if that player has no game activity and isn\u2019t at bat or on base. If they\u2019re due up now, tap the next batter first, then remove."))),
                     React.createElement("div", { className: "btnrow", style: {
                             gridTemplateColumns: orderOpen(subSide) ? "1fr 1fr" : "1fr",
                             marginTop: 10,
