@@ -432,7 +432,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "120"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "121"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -521,6 +521,14 @@ const persistActivation = (k) => { try {
     localStorage.setItem(LICENSE_KEY_STORE, k);
 }
 catch (_a) { } };
+// Fire-and-forget activation ping. Never blocks or surfaces an error — an
+// offline scorer at the field must never be held up by this.
+const pingActivation = (k) => { try {
+    if (!k)
+        return;
+    fetch("/.netlify/functions/activate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: k }) }).catch(() => { });
+}
+catch (_a) { } };
 const verifyLicense = async (key) => {
     try {
         const r = await fetch("/.netlify/functions/verify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: key.trim() }) });
@@ -571,6 +579,7 @@ function DugoutScorecard() {
             if (res && res.ok) {
                 persistActivation(k);
                 setLicensed(true);
+                pingActivation(k);
             }
             else {
                 setLicenseErr((res && res.message) || "That key didn't verify — check it for typos.");
@@ -581,6 +590,8 @@ function DugoutScorecard() {
         }
         setLicenseBusy(false);
     };
+    // Returning owners: report the stored key once per app load.
+    useEffect(() => { pingActivation(loadActivation()); }, []);
     const [phase, setPhase] = useState((saved0 && saved0.phase) || "setup");
     const [teams, setTeams] = useState((saved0 && saved0.teams) || {
         away: { name: "VISITORS", color: "#134A8E", logo: "", lineup: freshLineup("Batter") },
