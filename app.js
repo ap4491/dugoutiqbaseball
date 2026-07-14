@@ -432,7 +432,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "119"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "120"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -4692,15 +4692,15 @@ function DugoutScorecard() {
         table.lineup tr.retired td { color: var(--powder); opacity: .7; font-style: italic; }
         table.lineup tr.retired em { font-style: normal; opacity: .8; }
         .sub-list { display: flex; flex-direction: column; gap: 5px; max-height: 44vh; overflow-y: auto; margin-bottom: 8px; }
-        .lu-row { display: flex; align-items: center; gap: 6px; padding: 3px 2px; border-radius: 8px; }
+        .lu-row { display: flex; align-items: center; gap: 5px; padding: 3px 2px; border-radius: 8px; }
         .lu-row.open { background: rgba(255,255,255,.06); }
-        .lu-idx { flex: none; width: 18px; text-align: right; color: var(--powder); font-weight: 700; font-size: 13px; }
-        .lu-row .dg-in { padding: 6px 8px; font-size: 14px; }
-        .lu-num { flex: none; width: 42px; text-align: center; }
-        .lu-name { flex: 1; min-width: 0; }
-        .lu-pos { flex: none; width: 54px; text-align: center; }
+        .lu-idx { flex: none; width: 16px; text-align: right; color: var(--powder); font-weight: 700; font-size: 13px; }
+        .lu-row .dg-in { padding: 7px 6px; font-size: 14px; width: auto; min-width: 0; box-sizing: border-box; }
+        .lu-num { flex: 0 0 34px; width: 34px; text-align: center; }
+        .lu-name { flex: 1 1 auto; min-width: 0; }
+        .lu-pos { flex: 0 0 44px; width: 44px; text-align: center; }
         .lu-tag { flex: none; font-size: 11px; color: var(--amberw); font-weight: 700; white-space: nowrap; }
-        .lu-more { flex: none; width: 30px; height: 32px; border: 1px solid var(--line); background: rgba(255,255,255,.04); color: var(--powder); border-radius: 8px; cursor: pointer; font-size: 15px; line-height: 1; }
+        .lu-more { flex: none; width: 28px; height: 32px; border: 1px solid var(--line); background: rgba(255,255,255,.04); color: var(--powder); border-radius: 8px; cursor: pointer; font-size: 15px; line-height: 1; padding: 0; }
         button.sub-row {
           display: flex; justify-content: space-between; align-items: center; gap: 8px;
           background: #18295A; border: 1px solid var(--line); border-radius: 6px;
@@ -4715,9 +4715,9 @@ function DugoutScorecard() {
         .sub-hint b { color: var(--white); font-weight: 700; }
         .order-state { font-size: 12px; color: var(--amberw); margin: 0 0 8px; letter-spacing: .02em; }
         button.rm-spot { width: 100%; margin-top: 8px; color: var(--red); border-color: var(--line); font-size: 13px; }
-        .pn-wrap { display: flex; align-items: center; gap: 5px; }
-        .pn-wrap .dg-in { max-width: 96px; }
-        .pn-wrap .jersey-in { width: 40px; min-width: 40px; flex: none; }
+        .pn-wrap { display: flex; align-items: center; gap: 5px; min-width: 0; }
+        .pn-wrap .dg-in { flex: 1 1 auto; min-width: 0; width: auto; max-width: none; padding: 6px 6px; font-size: 13px; box-sizing: border-box; }
+        .pn-wrap .jersey-in { width: 38px; min-width: 38px; flex: none; }
         b.dtag {
           background: var(--amber); color: var(--deep); border-radius: 4px;
           font-family: 'Saira Condensed', sans-serif; font-size: 11px; font-weight: 700;
@@ -4832,7 +4832,7 @@ function DugoutScorecard() {
         .plog-name.done { color: var(--powder); }
         input.plog-name { max-width: 110px; padding: 4px 6px; font-size: 13px; }
         .plog-stats {
-          display: grid; grid-template-columns: repeat(8, 27px);
+          display: grid; grid-template-columns: repeat(8, 23px);
           font-family: 'Saira Condensed', sans-serif; font-size: 12px;
           text-align: right; white-space: nowrap;
         }
