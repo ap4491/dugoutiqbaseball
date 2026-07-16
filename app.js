@@ -432,7 +432,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "121"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "122"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1453,6 +1453,17 @@ function DugoutScorecard() {
         if (ticker)
             g.lastPlay = ticker;
     };
+    // Something that happened as PART of the batted ball still resolving (an
+    // error on the throw, obstruction) belongs on that play's line, not on a
+    // line of its own. Outside that window it's a standalone event.
+    // Deliberately NOT used for steals / caught stealing / wild pitch — those
+    // happen on a pitch, so they really are their own events.
+    const foldOrLog = (g, extra, ticker, standalone) => {
+        if (g.openPlay != null && g.log[g.openPlay])
+            amendPA(g, g.openPlay, extra, ticker);
+        else
+            logPlay(g, standalone);
+    };
     const closePA = (g, result, ticker) => {
         ensurePA(g);
         g.log[g.openPA].result = result;
@@ -2167,7 +2178,7 @@ function DugoutScorecard() {
                 creditRun(g, g.bases.third);
                 g.bases.third = false;
                 addRuns(g, 1, "obstruction");
-                logPlay(g, `Obstruction \u2014 ${who} awarded home`);
+                foldOrLog(g, `${who} awarded home (obstruction)`, `Obstruction \u2014 ${who} awarded home`, `Obstruction \u2014 ${who} awarded home`);
             });
             setBaseMenu(null);
             return;
@@ -2182,7 +2193,7 @@ function DugoutScorecard() {
             g.bases[target] = g.bases[base];
             g.bases[base] = false;
             cardAdvance(g, g.bases[target], target === "second" ? 2 : 3);
-            logPlay(g, `Obstruction \u2014 ${who} awarded ${baseLabel(target)}`);
+            foldOrLog(g, `${who} awarded ${baseLabel(target)} (obstruction)`, `Obstruction \u2014 ${who} awarded ${baseLabel(target)}`, `Obstruction \u2014 ${who} awarded ${baseLabel(target)}`);
         });
         setBaseMenu(null);
     };
@@ -3072,7 +3083,7 @@ function DugoutScorecard() {
                 g.bases.third = false;
                 addRuns(g, 1, "error");
                 const enote = logError(g, pos);
-                logPlay(g, `Throwing error \u2014 ${who} scores from 3rd (${enote})`);
+                foldOrLog(g, `${who} scores (${enote})`, `${who} scores from 3rd on the error`, `Throwing error \u2014 ${who} scores from 3rd (${enote})`);
             });
             setBaseMenu(null);
             return;
@@ -3088,7 +3099,7 @@ function DugoutScorecard() {
             g.bases[base] = false;
             cardAdvance(g, g.bases[target], target === "second" ? 2 : 3);
             const enote = logError(g, pos);
-            logPlay(g, `Throw gets away \u2014 ${who} takes ${baseLabel(target)} (${enote})`);
+            foldOrLog(g, `${who} takes ${baseLabel(target)} (${enote})`, `${who} takes ${baseLabel(target)} on the error`, `Throw gets away \u2014 ${who} takes ${baseLabel(target)} (${enote})`);
         });
         setBaseMenu(null);
     };
