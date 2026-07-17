@@ -432,7 +432,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "122"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "124"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -2250,6 +2250,12 @@ function DugoutScorecard() {
                 curP(g, fieldingSide).wp = (curP(g, fieldingSide).wp || 0) + 1;
             else
                 g.pb[fieldingSide] = (g.pb[fieldingSide] || 0) + 1;
+            // Only the runner coming home on a passed ball is unearned (9.16(a)).
+            // Runners merely advancing 1st->2nd keep their existing status: that
+            // would need the whole inning reconstructed, which is the scorer's
+            // judgment call, not ours.
+            if (!isWP && g.bases.third)
+                g.bases.third.ue = true;
             const runs = advanceAll(g, 1, null); // no batter — he stays at the plate
             addRuns(g, runs, isWP ? "wp" : "pb");
             const label = isWP ? "Wild pitch" : "Passed ball";
@@ -2730,6 +2736,14 @@ function DugoutScorecard() {
     const dragRef = useRef(null); // synchronous mirror — guards against duplicate pointer events
     const baseMenuAt = useRef(0); // when the base menu opened, to swallow the trailing click
     const [menuArmed, setMenuArmed] = useState(false); // buttons live only after the opening gesture settles
+    /* --- demo-replay mode (?demo in the URL): drives the real engine from a
+       JSON play script for recording clean, repeatable feature footage.
+       Hooks declared LAST so existing harness useState indices stay stable. --- */
+    const [demoOpen, setDemoOpen] = useState(false);
+    const [demoText, setDemoText] = useState("");
+    const [demoPlaying, setDemoPlaying] = useState(false);
+    const demoTimer = useRef(null);
+    const demoMode = (() => { try { return /[?&]demo\b/.test(window.location.search); } catch (_a) { return false; } })();
     const openBaseMenu = (b) => {
         baseMenuAt.current = (typeof performance !== "undefined" ? performance.now() : Date.now());
         setMenuArmed(false);
@@ -2916,6 +2930,11 @@ function DugoutScorecard() {
                 curP(g, fieldingSide).wp = (curP(g, fieldingSide).wp || 0) + 1;
             else if (cause === "pb")
                 g.pb[fieldingSide] = (g.pb[fieldingSide] || 0) + 1;
+            // A run that scores on a passed ball is UNEARNED — 9.16(a) lists
+            // wild pitches as earned but reconstructs the inning without passed
+            // balls. The WP is the pitcher's miss; the PB is his catcher's.
+            if (cause === "pb" && g.bases[base])
+                g.bases[base].ue = true;
             creditRun(g, g.bases[base]);
             g.bases[base] = false;
             addRuns(g, 1, cause === "wp" ? "wp" : cause === "pb" ? "pb" : "advance");
@@ -3103,6 +3122,84 @@ function DugoutScorecard() {
         });
         setBaseMenu(null);
     };
+    /* --- demo-replay: JSON script -> real engine calls, human-paced.
+       Step: {"a":"<action>", ...args, "d":<ms delay override>}
+       Every action maps 1:1 onto the same functions the buttons call, so a
+       replay is indistinguishable from live scoring — because it IS live
+       scoring, just on a timer. --- */
+    const demoDispatch = (s) => {
+        const A = {
+            ball: () => tapBall(),
+            strike: () => tapStrike(s.kind), // kind: "looking"|"swinging" for K3
+            foul: () => tapFoul(),
+            tip: () => tapFoulTip(),
+            hbp: () => tapHBP(),
+            ibb: () => tapIBB(),
+            hit: () => playHit(s.bases || 1, s.bases === 4 ? "HOME RUN" : s.bases === 3 ? "triple" : s.bases === 2 ? "double" : "single", s.loc),
+            out: () => playOut(s.label || "groundout", false, s.note || ""),
+            fc: () => playFC(s.outBase || "first", s.note || ""),
+            fcAllSafe: () => playFCAllSafe(s.note || ""),
+            fcBatterOut: () => playFCBatterOut(s.note || ""),
+            dp: () => playDoublePlay(s.runnerBase || "first", s.note || "", s.kind || "ground"),
+            tp: () => playTriplePlay(s.runnerBases || ["first", "second"], s.note || "", s.kind || "ground"),
+            sac: () => playSac(s.kind || "fly"),
+            sacError: () => playSacError(s.kind || "bunt", s.pos || 1),
+            error: () => playError(s.pos || 6),
+            ci: () => playCatcherInt(),
+            bi: () => playBatterInt(),
+            runnerHit: () => playRunnerHit(s.base || "first"),
+            wp: () => playWildPitch("wp"),
+            pb: () => playWildPitch("pb"),
+            balk: () => playBalk(),
+            steal: () => stealBase(s.base || "first"),
+            cs: () => caughtStealing(s.base || "first"),
+            move: () => moveRunner(s.from, s.to),
+            scores: () => runnerScores(s.base || "third", s.cause),
+            advError: () => advanceOnError(s.base || "first", s.pos || 3),
+            obstruction: () => obstruction(s.base || "first"),
+            runnerOut: () => runnerOut(s.base || "first"),
+            wait: () => { }, // pure pause; use "d" for the length
+        };
+        const fn = A[s.a];
+        if (fn)
+            fn();
+    };
+    const demoStop = () => {
+        if (demoTimer.current)
+            clearTimeout(demoTimer.current);
+        demoTimer.current = null;
+        setDemoPlaying(false);
+    };
+    const demoRun = (steps) => {
+        demoStop();
+        setDemoOpen(false);
+        setDemoPlaying(true);
+        let i = 0;
+        const tick = () => {
+            if (i >= steps.length) {
+                setDemoPlaying(false);
+                demoTimer.current = null;
+                return;
+            }
+            const s = steps[i++];
+            try {
+                demoDispatch(s);
+            }
+            catch (_a) { } // a bad step never strands the replay
+            const base = s.d != null ? s.d : 850;
+            const jitter = base * 0.3 * (Math.random() * 2 - 1); // human, not metronome
+            demoTimer.current = setTimeout(tick, Math.max(140, base + jitter));
+        };
+        demoTimer.current = setTimeout(tick, 600);
+    };
+    const DEMO_SAMPLE = [
+        { a: "strike" }, { a: "ball" }, { a: "hit", bases: 1, loc: "7" },
+        { a: "steal", base: "first", d: 1400 },
+        { a: "ball" }, { a: "out", label: "groundout", note: "6-3", d: 1200 },
+        { a: "strike" }, { a: "strike" }, { a: "strike", kind: "swinging", d: 1100 },
+        { a: "ball" }, { a: "hit", bases: 4, loc: "8", d: 1600 },
+        { a: "out", label: "flyout", note: "F8", d: 1200 },
+    ];
     const runnerClear = (base) => {
         const who = runnerLabel(base);
         mutate((g) => {
@@ -4529,6 +4626,12 @@ function DugoutScorecard() {
         .team-ident .team-logo-btn img { height:26px; width:26px; object-fit:contain; border-radius:4px; }
         .team-ident .team-logo-rm { width:26px; height:26px; border-radius:50%; border:none; background:rgba(51,65,85,.6); color:#fff; cursor:pointer; flex:none; }
         .theme-bar { display:flex; align-items:center; gap:12px; flex-wrap:wrap; background:rgba(255,255,255,.05); border:1px solid var(--line); border-radius:12px; padding:10px 14px; margin-bottom:14px; }
+        /* demo-replay (only with ?demo in the URL) */
+        .demo-launch { position:fixed; left:10px; bottom:10px; z-index:60; padding:6px 10px;
+          font-family:'Saira Condensed',sans-serif; font-weight:700; font-size:12px; letter-spacing:.1em;
+          background:#0E1A3A; color:var(--amberw); border:1px solid var(--amberw); border-radius:8px; cursor:pointer; }
+        .demo-stop { position:fixed; left:8px; top:8px; z-index:60; width:22px; height:22px; padding:0;
+          background:transparent; color:rgba(255,255,255,.28); border:none; font-size:12px; cursor:pointer; }
         .theme-bar .theme-label { font-weight:700; color:var(--white); font-size:15px; }
         .theme-bar .theme-swatches { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
         .inning-cell {
@@ -5457,6 +5560,26 @@ function DugoutScorecard() {
                             } }, "\uD83D\uDCF0 Game story"),
                         React.createElement("button", { className: "dg", onClick: startLive }, "\uD83D\uDCE1 Live game link (spectators)"),
                         React.createElement("button", { className: "dg ghost", onClick: () => setShareOpen(false) }, "Cancel"))))),
+            demoMode && game && !demoPlaying && (React.createElement("button", { className: "demo-launch", onClick: () => { if (!demoText) setDemoText(JSON.stringify(DEMO_SAMPLE, null, 1)); setDemoOpen(true); }, "aria-label": "Open demo replay" }, "\u25B6 DEMO")),
+            demoMode && demoPlaying && (React.createElement("button", { className: "demo-stop", onClick: demoStop, "aria-label": "Stop demo replay" }, "\u25A0")),
+            demoOpen && (React.createElement("div", { className: "modal-back", onClick: () => setDemoOpen(false) },
+                React.createElement("div", { className: "modal set-modal", onClick: (e) => e.stopPropagation() },
+                    React.createElement("h3", null, "Demo replay"),
+                    React.createElement("p", { style: { textTransform: "none", letterSpacing: 0 } }, "Paste a play script (JSON) and press play. Steps drive the real scoring engine on a human-paced timer \u2014 record the screen while it runs. \u25A0 (top-left) stops it."),
+                    React.createElement("textarea", { className: "dg-in", style: { width: "100%", minHeight: "34vh", fontFamily: "'Roboto Mono', monospace", fontSize: 11, textTransform: "none", letterSpacing: 0 }, value: demoText, onChange: (e) => setDemoText(e.target.value), spellCheck: false }),
+                    React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr 1fr", marginTop: 10 } },
+                        React.createElement("button", { className: "dg ghost", onClick: () => setDemoText(JSON.stringify(DEMO_SAMPLE, null, 1)) }, "Sample"),
+                        React.createElement("button", { className: "dg hit", onClick: () => {
+                                try {
+                                    const steps = JSON.parse(demoText);
+                                    if (Array.isArray(steps) && steps.length)
+                                        demoRun(steps);
+                                }
+                                catch (_a) {
+                                    mutate((g) => (g.lastPlay = "Demo script isn't valid JSON"));
+                                }
+                            } }, "\u25B6 Play"),
+                        React.createElement("button", { className: "dg ghost", onClick: () => setDemoOpen(false) }, "Close"))))),
             storyOpen && (React.createElement("div", { className: "modal-back", onClick: () => setStoryOpen(null) },
                 React.createElement("div", { className: "modal set-modal", onClick: (e) => e.stopPropagation() },
                     React.createElement("h3", null, "Game story"),
