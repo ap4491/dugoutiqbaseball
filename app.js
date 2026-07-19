@@ -432,7 +432,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "124"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "126"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1601,20 +1601,25 @@ function DugoutScorecard() {
     const groundoutAdvance = (g) => {
         const b = g.bases;
         let runs = 0;
+        const moves = []; // {name, to} for each runner that advanced — for the log
+        const nameAt = (r) => (r && r.cr ? `${r.cr.name} (CR)` : (r && r.b != null ? g.lineup[battingSide][r.b].name : "Runner"));
         if (b.first) {
             if (b.second) {
                 if (b.third) {
                     runs += 1;
+                    moves.push({ name: nameAt(b.third), to: "home" });
                     creditRun(g, b.third);
                 }
                 cardAdvance(g, b.second, 3);
+                moves.push({ name: nameAt(b.second), to: "3rd" });
                 b.third = b.second;
             }
             cardAdvance(g, b.first, 2);
+            moves.push({ name: nameAt(b.first), to: "2nd" });
             b.second = b.first;
         }
         b.first = false; // batter was retired
-        return runs;
+        return { runs, moves };
     };
     // Fielder's choice advancement. The runner at `outBase` is retired; every
     // OTHER forced runner moves up one base. A runner is forced when every base
@@ -1865,9 +1870,17 @@ function DugoutScorecard() {
         closePA(g, `${labelText}${fnote ? " " + fnote : ""}`, `${name}: ${labelText}${fnote ? " " + fnote : ""}`);
         const flipped = recordOut(g);
         if (label === "groundout" && !flipped) {
-            const runs = groundoutAdvance(g); // forced runners move; forced run from 3rd scores
-            if (runs)
-                addRuns(g, runs, "groundout");
+            const adv = groundoutAdvance(g); // forced runners move; forced run from 3rd scores
+            if (adv.runs)
+                addRuns(g, adv.runs, "groundout");
+            // Fold the advances onto this out's line, e.g.
+            // "groundout 6-3; Batter 1 to 2nd" — runners that only score are
+            // covered by the run text, so mention non-scoring advances here.
+            const advanced = adv.moves.filter((m) => m.to !== "home");
+            if (advanced.length) {
+                const txt = advanced.map((m) => `${m.name} to ${m.to}`).join(", ");
+                amendPA(g, lastPAIdx(g), txt, `${txt} on the play`);
+            }
         }
         if (!flipped)
             nextBatter(g);
@@ -1940,6 +1953,10 @@ function DugoutScorecard() {
                 if (runs)
                     amendPA(g, lastPAIdx(g), runs === 1 ? "run forced in" : `${runs} runs forced in`, "Run forced in on the play");
                 nextBatter(g);
+                // runners still on -> a follow-up drag or error-advance folds
+                // onto this FC's play-by-play line instead of a separate event
+                if (g.bases.first || g.bases.second || g.bases.third)
+                    g.openPlay = lastPAIdx(g);
             }
             else
                 advanceOrder(g);
@@ -2742,6 +2759,7 @@ function DugoutScorecard() {
     const [demoOpen, setDemoOpen] = useState(false);
     const [demoText, setDemoText] = useState("");
     const [demoPlaying, setDemoPlaying] = useState(false);
+    const [demoSpeed, setDemoSpeed] = useState(1.6); // multiplier on every delay
     const demoTimer = useRef(null);
     const demoMode = (() => { try { return /[?&]demo\b/.test(window.location.search); } catch (_a) { return false; } })();
     const openBaseMenu = (b) => {
@@ -3186,7 +3204,7 @@ function DugoutScorecard() {
                 demoDispatch(s);
             }
             catch (_a) { } // a bad step never strands the replay
-            const base = s.d != null ? s.d : 850;
+            const base = (s.d != null ? s.d : 850) * demoSpeed;
             const jitter = base * 0.3 * (Math.random() * 2 - 1); // human, not metronome
             demoTimer.current = setTimeout(tick, Math.max(140, base + jitter));
         };
@@ -3496,7 +3514,10 @@ function DugoutScorecard() {
             pitcher: fp ? fp.name : "",
             lastPlay: g.lastPlay || "",
             linescore: g.linescore.map((r) => ({ away: r.away, home: r.home })),
-            log: (g.log || []).slice(-40).map((e) => e.type === "pa"
+            // Full game so spectators can scroll to the first inning. Capped
+            // high only as a runaway guard — a 9-inning game is ~150 entries,
+            // each a handful of short fields, so even 600 is a small payload.
+            log: (g.log || []).slice(-600).map((e) => e.type === "pa"
                 ? { p: 1, i: e.i, h: e.h, b: e.batter, r: e.result || "", q: (e.seq || []).join(" ") }
                 : { i: e.i, h: e.h, t: e.t || "" }),
             video: parseStreamUrl(liveVideo) || null,
@@ -5567,7 +5588,8 @@ function DugoutScorecard() {
                     React.createElement("h3", null, "Demo replay"),
                     React.createElement("p", { style: { textTransform: "none", letterSpacing: 0 } }, "Paste a play script (JSON) and press play. Steps drive the real scoring engine on a human-paced timer \u2014 record the screen while it runs. \u25A0 (top-left) stops it."),
                     React.createElement("textarea", { className: "dg-in", style: { width: "100%", minHeight: "34vh", fontFamily: "'Roboto Mono', monospace", fontSize: 11, textTransform: "none", letterSpacing: 0 }, value: demoText, onChange: (e) => setDemoText(e.target.value), spellCheck: false }),
-                    React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr 1fr", marginTop: 10 } },
+                    React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr 1fr 1fr", marginTop: 10 } }, [["Slow", 2.4], ["Relaxed", 1.6], ["Normal", 1], ["Quick", 0.7]].map(([lbl, m]) => (React.createElement("button", { key: lbl, className: `dg ${demoSpeed === m ? "" : "ghost"}`, onClick: () => setDemoSpeed(m) }, lbl)))),
+                    React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr 1fr", marginTop: 8 } },
                         React.createElement("button", { className: "dg ghost", onClick: () => setDemoText(JSON.stringify(DEMO_SAMPLE, null, 1)) }, "Sample"),
                         React.createElement("button", { className: "dg hit", onClick: () => {
                                 try {
