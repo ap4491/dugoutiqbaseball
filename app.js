@@ -442,7 +442,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "131"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "132"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -3855,7 +3855,7 @@ function DugoutScorecard() {
                 // in an inning (batting around, or twice around with no run rule),
                 // so a cell may hold 2, 3, or 4 plate appearances — split it into
                 // that many smaller diamonds side by side, each with its own result.
-                const drawOnePA = (e0, cx, cy, rR) => {
+                const drawOnePA = (e0, cx, cy, rR, rightX, bottomY) => {
                     const pts = {
                         home: [cx, cy + rR],
                         first: [cx + rR, cy],
@@ -3920,11 +3920,11 @@ function DugoutScorecard() {
                         const lx = Math.max(cx - rR - 2, cx - rR + w / 2);
                         ctx.fillText(e0.res, lx, cy + rR + 16);
                     }
-                    // circled out number, bottom-right — which out of the inning
+                    // circled out number, bottom-right corner of the (sub-)cell
                     if (e0.out) {
-                        const oR = Math.min(10, rR * 0.34);
-                        const ox = cx + rR - oR + 2;
-                        const oy = cy + rR - oR + 2;
+                        const oR = Math.min(11, rR * 0.5);
+                        const ox = rightX - oR - 3;
+                        const oy = bottomY - oR - 11;
                         ctx.beginPath();
                         ctx.arc(ox, oy, oR, 0, Math.PI * 2);
                         ctx.fillStyle = "#FAF6EC";
@@ -3943,9 +3943,11 @@ function DugoutScorecard() {
                     const ccy = y + cellH / 2 + 4;
                     const cell = entries.filter((e) => e.b === r && e.inning === skipped + i + 1);
                     const paCount = Math.max(1, cell.length);
+                    const cellLeft = gridX + cellW * i;
+                    const cellBottom = y + cellH;
                     if (paCount === 1) {
                         const rR = Math.min(24, cellW * 0.32);
-                        drawOnePA(cell[0], ccx, ccy, rR);
+                        drawOnePA(cell[0], ccx, ccy, rR, cellLeft + cellW, cellBottom);
                     }
                     else {
                         // split the inning cell into paCount sub-diamonds, left→right
@@ -3953,15 +3955,15 @@ function DugoutScorecard() {
                         const subW = cellW / n;
                         const rR = Math.max(5, Math.min(subW * 0.34, cellH * 0.26, 18));
                         for (let k = 0; k < n; k++) {
-                            const sx = gridX + cellW * i + subW * k + subW / 2;
-                            drawOnePA(cell[k], sx, ccy, rR);
+                            const sx = cellLeft + subW * k + subW / 2;
+                            drawOnePA(cell[k], sx, ccy, rR, cellLeft + subW * (k + 1), cellBottom);
                             // thin divider between sub-cells
                             if (k > 0) {
                                 ctx.strokeStyle = "#E2DBCE";
                                 ctx.lineWidth = 1;
                                 ctx.beginPath();
-                                ctx.moveTo(gridX + cellW * i + subW * k, y + 8);
-                                ctx.lineTo(gridX + cellW * i + subW * k, y + cellH - 8);
+                                ctx.moveTo(cellLeft + subW * k, y + 8);
+                                ctx.lineTo(cellLeft + subW * k, y + cellH - 8);
                                 ctx.stroke();
                             }
                         }
