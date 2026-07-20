@@ -360,6 +360,16 @@ const buildGameStory = (g, teams) => {
 // Rename a player inside a play-by-play text. Numeric placeholder "names"
 // are matched only in the template positions names occupy, so real numbers
 // (pitch counts, "3rd", notation) are never touched.
+// Resolve a logged play's batter to "#12 Name" using the current lineup. The
+// log stores only the raw name (so rename can match it), so the number is looked
+// up live at render/export time — keeping renames and number edits correct.
+const jerseyForLog = (lineup, e) => {
+    if (!e || !e.batter)
+        return e ? e.batter : "";
+    const lu = (lineup && lineup[e.h === "top" ? "away" : "home"]) || [];
+    const hit = lu.find((p) => p.name === e.batter);
+    return hit && hit.num != null && String(hit.num).trim() ? `#${String(hit.num).trim()} ${e.batter}` : e.batter;
+};
 const renameInLogText = (txt, oldName, nm) => {
     if (typeof txt !== "string" || !oldName || txt.indexOf(oldName) === -1)
         return txt;
@@ -425,14 +435,14 @@ const fieldNote = (label, seq) => {
         if (!document.querySelector('link[href*="fonts.googleapis.com/css2"]')) {
             var l = document.createElement("link");
             l.rel = "stylesheet";
-            l.href = "https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700;800&display=swap";
+            l.href = "https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700;800&family=Caveat:wght@500;600;700&display=swap";
             document.head.appendChild(l);
         }
     }
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "126"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "128"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1363,7 +1373,19 @@ function DugoutScorecard() {
         }
         return false;
     };
-    const currentBatterName = () => game.lineup[battingSide][game.batter[battingSide]].name;
+    // "#12 Marcus B." for the play-by-play, matching the box score format.
+    // The number is looked up live from the lineup, never baked into stored
+    // log fields, so renames and number edits keep working.
+    const numLabel = (name, num) => (num != null && String(num).trim() ? `#${String(num).trim()} ${name}` : name);
+    const batterLabelAt = (g, side, idx) => {
+        const p = g.lineup && g.lineup[side] && g.lineup[side][idx];
+        return p ? numLabel(p.name, p.num) : "";
+    };
+    const currentBatterName = () => batterLabelAt(game, battingSide, game.batter[battingSide]);
+    // Prefix a logged batter's jersey for display. The log stores the raw name
+    // (so rename can match it); resolve the number from the half-inning's lineup
+    // at render time, so number edits and renames both stay correct.
+    const logBatterLabel = (e) => jerseyForLog(game.lineup, e);
     // current pitcher = last entry in the team's pitcher list
     const curP = (g, side) => g.pitchers[side][g.pitchers[side].length - 1];
     const pLabel = (pp) => (pp && pp.num ? `#${pp.num} ${pp.name}` : (pp && pp.name) || "");
@@ -2760,6 +2782,7 @@ function DugoutScorecard() {
     const [demoText, setDemoText] = useState("");
     const [demoPlaying, setDemoPlaying] = useState(false);
     const [demoSpeed, setDemoSpeed] = useState(1.6); // multiplier on every delay
+    const [lineupCardSide, setLineupCardSide] = useState(null); // which team's lineup card to render
     const demoTimer = useRef(null);
     const demoMode = (() => { try { return /[?&]demo\b/.test(window.location.search); } catch (_a) { return false; } })();
     const openBaseMenu = (b) => {
@@ -3518,7 +3541,7 @@ function DugoutScorecard() {
             // high only as a runaway guard — a 9-inning game is ~150 entries,
             // each a handful of short fields, so even 600 is a small payload.
             log: (g.log || []).slice(-600).map((e) => e.type === "pa"
-                ? { p: 1, i: e.i, h: e.h, b: e.batter, r: e.result || "", q: (e.seq || []).join(" ") }
+                ? { p: 1, i: e.i, h: e.h, b: jerseyForLog(g.lineup, e), r: e.result || "", q: (e.seq || []).join(" ") }
                 : { i: e.i, h: e.h, t: e.t || "" }),
             video: parseStreamUrl(liveVideo) || null,
         };
@@ -3592,7 +3615,7 @@ function DugoutScorecard() {
             .filter((e) => (e.type === "pa" && e.result && /score|run forced/i.test(e.result)) ||
             (e.type === "ev" && /scores/i.test(e.t)))
             .map((e) => e.type === "pa"
-            ? `${e.h === "top" ? "T" : "B"}${e.i} — ${e.batter}: ${e.result}`
+            ? `${e.h === "top" ? "T" : "B"}${e.i} — ${jerseyForLog(game.lineup, e)}: ${e.result}`
             : `${e.h === "top" ? "T" : "B"}${e.i} — ${e.t}`)
             .join("\n");
         return (`${game.over ? "FINAL" : `LIVE (${game.half === "top" ? "T" : "B"}${game.inning})`} — ` +
@@ -4461,6 +4484,203 @@ function DugoutScorecard() {
         ctx.lineTo(sx + sw, rTop + 180);
         ctx.stroke();
         return c;
+    };
+    // Lineup card image — the classic two-column "System 17" layout: numbered
+    // batting order (No. / Name / Pos) on the left, subs on the right, notes box.
+    // Names render in a handwriting font (Caveat) so it reads like a filled card.
+    const drawLineupCardCanvas = (side) => {
+        const lineup = game.lineup[side] || [];
+        const subs = (game.subs && game.subs[side]) || [];
+        const teamName = teams[side].name || (side === "away" ? "Visitors" : "Home");
+        const oppName = teams[side === "away" ? "home" : "away"].name || "";
+        const STARTER_ROWS = Math.max(lineup.length, 15);
+        const SUB_ROWS = Math.max(subs.length, 8);
+        const W = 1100;
+        const m = 46;
+        const rowH = 56;
+        const headerH = 300;
+        const colGap = 40;
+        const leftW = (W - m * 2) * 0.56;
+        const rightX = m + leftW + colGap;
+        const rightW = W - m - rightX;
+        const H = headerH + STARTER_ROWS * rowH + 80;
+        const c = document.createElement("canvas");
+        c.width = W;
+        c.height = H;
+        const ctx = c.getContext("2d");
+        const ink = "#141414";
+        const grid = "#555";
+        const shade = "#ECECEC";
+        const hand = "'Caveat', 'Saira Condensed', cursive";
+        const block = "'Saira Condensed', sans-serif";
+        ctx.fillStyle = "#FFFFFF";
+        ctx.fillRect(0, 0, W, H);
+
+        // --- header: brand + title ---
+        ctx.fillStyle = ink;
+        ctx.textAlign = "left";
+        ctx.font = `800 30px ${block}`;
+        ctx.fillText("DugoutIQ", m, 56);
+        ctx.font = `600 20px ${block}`;
+        ctx.fillStyle = "#C1440E";
+        ctx.fillText("MANAGE THE GAME", m, 82);
+        ctx.fillStyle = ink;
+        ctx.textAlign = "right";
+        ctx.font = `800 62px ${block}`;
+        ctx.fillText("LINE-UP", W - m, 74);
+
+        // --- info band: team / opponent / date ---
+        const bandY = 110;
+        const bandH = 128;
+        ctx.strokeStyle = grid;
+        ctx.lineWidth = 2;
+        ctx.strokeRect(m, bandY, W - m * 2, bandH);
+        ctx.beginPath();
+        ctx.moveTo(m, bandY + bandH / 2);
+        ctx.lineTo(W - m, bandY + bandH / 2);
+        ctx.moveTo(W / 2, bandY);
+        ctx.lineTo(W / 2, bandY + bandH);
+        ctx.stroke();
+        const label = (t, x, y) => { ctx.textAlign = "left"; ctx.fillStyle = "#666"; ctx.font = `600 16px ${block}`; ctx.fillText(t, x + 10, y + 22); };
+        const handwrite = (t, x, y, size, maxW) => {
+            ctx.textAlign = "left";
+            ctx.fillStyle = "#1B3A6B";
+            ctx.font = `600 ${size}px ${hand}`;
+            let s = t || "";
+            while (s && ctx.measureText(s).width > maxW)
+                s = s.slice(0, -1);
+            ctx.fillText(s, x + 12, y + 50);
+        };
+        label("OUR TEAM", m, bandY);
+        handwrite(teamName, m, bandY, 38, W / 2 - m - 24);
+        label("OPPOSING TEAM", W / 2, bandY);
+        handwrite(oppName, W / 2, bandY, 38, W / 2 - m - 24);
+        label("DATE", m, bandY + bandH / 2);
+        handwrite(game.date || new Date().toISOString().slice(0, 10), m, bandY + bandH / 2, 34, W / 2 - m - 24);
+        label("GAME NOTES", W / 2, bandY + bandH / 2);
+
+        // --- column headers ---
+        const colTop = bandY + bandH + 26;
+        const drawColHead = (x, w, numLbl, nameLbl, posLbl) => {
+            ctx.fillStyle = shade;
+            ctx.fillRect(x, colTop, w, 46);
+            ctx.strokeStyle = grid;
+            ctx.strokeRect(x, colTop, w, 46);
+            ctx.fillStyle = ink;
+            ctx.textAlign = "center";
+            ctx.font = `700 22px ${block}`;
+            ctx.fillText(numLbl, x + 46, colTop + 31);
+            ctx.textAlign = "left";
+            ctx.fillText(nameLbl, x + 92, colTop + 31);
+            if (posLbl) {
+                ctx.textAlign = "center";
+                ctx.fillText(posLbl, x + w - 34, colTop + 31);
+            }
+        };
+        drawColHead(m, leftW, "NO.", "STARTERS", "POS");
+        drawColHead(rightX, rightW, "NO.", "SUBSTITUTES", "");
+
+        // --- rows ---
+        const numColW = 78;
+        const posColW = 68;
+        const drawRows = (x, w, rows, data, withPos) => {
+            const bodyTop = colTop + 46;
+            for (let i = 0; i < rows; i++) {
+                const y = bodyTop + i * rowH;
+                ctx.strokeStyle = grid;
+                ctx.lineWidth = 1.5;
+                ctx.strokeRect(x, y, w, rowH);
+                // number cell divider
+                ctx.beginPath();
+                ctx.moveTo(x + numColW, y);
+                ctx.lineTo(x + numColW, y + rowH);
+                if (withPos) {
+                    ctx.moveTo(x + w - posColW, y);
+                    ctx.lineTo(x + w - posColW, y + rowH);
+                }
+                ctx.stroke();
+                // row index
+                ctx.fillStyle = "#222";
+                ctx.textAlign = "center";
+                ctx.font = `700 24px ${block}`;
+                ctx.fillText(String(i + 1), x + numColW / 2, y + rowH / 2 + 9);
+                const p = data[i];
+                if (p) {
+                    ctx.fillStyle = "#1B3A6B";
+                    // jersey number (handwritten)
+                    if (p.num != null && String(p.num).trim()) {
+                        ctx.textAlign = "center";
+                        ctx.font = `600 34px ${hand}`;
+                        ctx.fillText(String(p.num).trim(), x + numColW + 34, y + rowH / 2 + 12);
+                    }
+                    // name (handwritten)
+                    ctx.textAlign = "left";
+                    ctx.font = `600 36px ${hand}`;
+                    const nameX = x + numColW + 74;
+                    const nameMax = (withPos ? x + w - posColW : x + w) - nameX - 10;
+                    let nm = p.name || "";
+                    while (nm && ctx.measureText(nm).width > nameMax)
+                        nm = nm.slice(0, -1);
+                    ctx.fillText(nm, nameX, y + rowH / 2 + 12);
+                    // position (handwritten)
+                    if (withPos && p.pos) {
+                        ctx.textAlign = "center";
+                        ctx.font = `600 30px ${hand}`;
+                        ctx.fillText(p.pos, x + w - posColW / 2, y + rowH / 2 + 11);
+                    }
+                }
+            }
+        };
+        drawRows(m, leftW, STARTER_ROWS, lineup, true);
+        drawRows(rightX, Math.min(rightW, W - rightX - m), SUB_ROWS, subs, false);
+
+        // --- game notes box under the subs column ---
+        const notesTop = colTop + 46 + SUB_ROWS * rowH + 20;
+        const notesBottom = colTop + 46 + STARTER_ROWS * rowH;
+        if (notesBottom - notesTop > 60) {
+            ctx.strokeStyle = grid;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(rightX, notesTop, rightW, notesBottom - notesTop);
+            ctx.fillStyle = "#666";
+            ctx.textAlign = "left";
+            ctx.font = `600 16px ${block}`;
+            ctx.fillText("GAME NOTES", rightX + 12, notesTop + 24);
+        }
+
+        // --- footer ---
+        ctx.fillStyle = "#999";
+        ctx.textAlign = "center";
+        ctx.font = `500 16px ${block}`;
+        ctx.fillText("app.dugoutiq.ca", W / 2, H - 24);
+        return c;
+    };
+    const shareLineupCard = async (side) => {
+        setLineupCardSide(null);
+        try {
+            // make sure the handwriting font is ready before the canvas draws,
+            // or the first render silently falls back to a default face
+            try {
+                if (document.fonts && document.fonts.load) {
+                    await document.fonts.load("36px 'Caveat'");
+                    await document.fonts.ready;
+                }
+            }
+            catch (_f) { }
+            const c = drawLineupCardCanvas(side);
+            const dataUrl = c.toDataURL("image/png");
+            const blob = await new Promise((res) => c.toBlob(res, "image/png"));
+            const file = new File([blob], "dugoutiq-lineup.png", { type: "image/png" });
+            const canShare = !!(navigator.canShare && navigator.canShare({ files: [file] }));
+            setRecapPreview({
+                dataUrl,
+                canShare,
+                title: `${teams[side].name} — lineup card`,
+                fname: "dugoutiq-lineup.png",
+            });
+        }
+        catch (_a) {
+            mutate((g) => (g.lastPlay = "Couldn't build the lineup card"));
+        }
     };
     const sharePitchSheet = async () => {
         setSheetOpen(false);
@@ -5447,7 +5667,7 @@ function DugoutScorecard() {
                             e.h === "top" ? "T" : "B",
                             e.i),
                         React.createElement("span", { className: "log-txt" },
-                            React.createElement("strong", null, e.batter),
+                            React.createElement("strong", null, logBatterLabel(e)),
                             " ",
                             React.createElement("span", { className: "log-seq" },
                                 e.seq.join("-"),
@@ -5480,7 +5700,7 @@ function DugoutScorecard() {
                                 React.createElement("input", { className: "dg-in", value: pbpText, onChange: (ev) => setPbpText(ev.target.value), "aria-label": "Edit play description" }),
                                 React.createElement("button", { className: "dg hit", onClick: saveLogEdit }, "Save"),
                                 React.createElement("button", { className: "dg ghost", onClick: () => { setPbpEdit(null); setPbpText(""); } }, "Cancel"))) : (React.createElement("button", { className: "pbp-tap", onClick: () => startLogEdit(idx) },
-                                e.type === "pa" && React.createElement("span", { className: "pbp-bat" }, e.batter),
+                                e.type === "pa" && React.createElement("span", { className: "pbp-bat" }, logBatterLabel(e)),
                                 React.createElement("span", { className: "pbp-text" }, text),
                                 e.type === "pa" && e.seq && e.seq.length > 0 && (React.createElement("span", { className: "pbp-seq" }, e.seq.join(" · ")))))));
                         });
@@ -5569,6 +5789,10 @@ function DugoutScorecard() {
                                 setShareOpen(false);
                                 setSheetOpen(true);
                             } }, "\uD83D\uDCCB Pitch count sheet (BNS)"),
+                        React.createElement("button", { className: "dg", onClick: () => {
+                                setShareOpen(false);
+                                setLineupCardSide("choose");
+                            } }, "\uD83D\uDCDD Lineup card (image)"),
                         React.createElement("button", { className: "dg", onClick: () => {
                                 setShareOpen(false);
                                 setStoryCopied(false);
@@ -5867,6 +6091,14 @@ function DugoutScorecard() {
                             teams.home.name,
                             " (home)"),
                         React.createElement("button", { className: "dg ghost", onClick: () => setBookChoose(false) }, "Cancel"))))),
+            lineupCardSide === "choose" && (React.createElement("div", { className: "modal-back", onClick: () => setLineupCardSide(null) },
+                React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
+                    React.createElement("h3", null, "Lineup card"),
+                    React.createElement("p", null, "Which team's lineup? Renders a printable card with the batting order, numbers, and positions."),
+                    React.createElement("div", { className: "btnrow" },
+                        React.createElement("button", { className: "dg hit", onClick: () => shareLineupCard("away") }, teams.away.name || "Visitors"),
+                        React.createElement("button", { className: "dg hit", onClick: () => shareLineupCard("home") }, teams.home.name || "Home"),
+                        React.createElement("button", { className: "dg ghost", onClick: () => setLineupCardSide(null) }, "Cancel"))))),
             recapPreview && (React.createElement("div", { className: "modal-back", onClick: () => setRecapPreview(null) },
                 React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
                     React.createElement("h3", null, recapPreview.title || "Score graphic"),
