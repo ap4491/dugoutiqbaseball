@@ -442,7 +442,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "128"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "130"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -3695,8 +3695,20 @@ function DugoutScorecard() {
                 }
                 ctx.textAlign = "left";
                 ctx.fillStyle = win && game.over ? "#F5C518" : (accent || "#FFFFFF");
-                ctx.font = "700 58px 'Saira Condensed', sans-serif";
-                ctx.fillText(name.toUpperCase().slice(0, logo ? 13 : 16), nx, ty);
+                // Fit the name to the space before the score instead of cutting
+                // characters: measure the score's width, then shrink the name
+                // font until the full name fits the gap.
+                const nm = name.toUpperCase();
+                ctx.font = "700 96px 'Saira Condensed', sans-serif";
+                const scoreW = ctx.measureText(String(score)).width;
+                const avail = (W - 110 - scoreW - 30) - nx; // gap between name start and score
+                let fs = 58;
+                ctx.font = `700 ${fs}px 'Saira Condensed', sans-serif`;
+                while (fs > 30 && ctx.measureText(nm).width > avail) {
+                    fs -= 2;
+                    ctx.font = `700 ${fs}px 'Saira Condensed', sans-serif`;
+                }
+                ctx.fillText(nm, nx, ty);
                 ctx.textAlign = "right";
                 ctx.font = "700 96px 'Saira Condensed', sans-serif";
                 ctx.fillStyle = win && game.over ? "#F5C518" : "#FFFFFF";
@@ -3777,7 +3789,7 @@ function DugoutScorecard() {
         const innCount = Math.min(allInns, maxInn);
         const skipped = Math.max(0, game.linescore.length - innCount);
         const W = 1080;
-        const nameW = 200;
+        const nameW = 230; // widened to fit "#12 Longname" without truncating
         const statW = 44;
         const statCols = ["AB", "R", "H", "BB"];
         const gridX = 40 + nameW;
@@ -3825,11 +3837,17 @@ function DugoutScorecard() {
             // rows
             lineup.forEach((p, r) => {
                 const y = rowsTop + r * cellH;
-                // name cell
+                // name cell: "1. #6 Marcus B." — batting-order number as the row
+                // label, jersey number in front of the name like the box score.
                 ctx.textAlign = "left";
                 ctx.fillStyle = ink;
                 ctx.font = "700 28px 'Saira Condensed', sans-serif";
-                ctx.fillText(`${r + 1}. ${p.name.slice(0, 14)}`, 48, y + 40);
+                const jersey = p.num != null && String(p.num).trim() ? `#${String(p.num).trim()} ` : "";
+                let nameStr = `${r + 1}. ${jersey}${p.name}`;
+                // keep it inside the name column (nameW) — trim the name, not the number
+                while (nameStr.length > 4 && ctx.measureText(nameStr).width > nameW - 12)
+                    nameStr = nameStr.slice(0, -1);
+                ctx.fillText(nameStr, 48, y + 40);
                 ctx.font = "500 20px 'Saira Condensed', sans-serif";
                 ctx.fillStyle = "#7A746B";
                 ctx.fillText(p.pos || "", 48, y + 68);
