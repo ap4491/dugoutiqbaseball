@@ -442,7 +442,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "130"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "131"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -3851,11 +3851,11 @@ function DugoutScorecard() {
                 ctx.font = "500 20px 'Saira Condensed', sans-serif";
                 ctx.fillStyle = "#7A746B";
                 ctx.fillText(p.pos || "", 48, y + 68);
-                // inning cells with diamonds
-                for (let i = 0; i < innCount; i++) {
-                    const cx = gridX + cellW * i + cellW / 2;
-                    const cy = y + cellH / 2 + 4;
-                    const rR = Math.min(24, cellW * 0.32);
+                // inning cells with diamonds. A batter can come up more than once
+                // in an inning (batting around, or twice around with no run rule),
+                // so a cell may hold 2, 3, or 4 plate appearances — split it into
+                // that many smaller diamonds side by side, each with its own result.
+                const drawOnePA = (e0, cx, cy, rR) => {
                     const pts = {
                         home: [cx, cy + rR],
                         first: [cx + rR, cy],
@@ -3872,76 +3872,98 @@ function DugoutScorecard() {
                     ctx.lineTo(...pts.third);
                     ctx.closePath();
                     ctx.stroke();
-                    const cell = entries.filter((e) => e.b === r && e.inning === skipped + i + 1);
-                    if (cell.length) {
-                        const e0 = cell[0];
-                        if (e0.base >= 4) {
-                            // scored: fill the diamond
-                            ctx.fillStyle = ink;
-                            ctx.beginPath();
-                            ctx.moveTo(...pts.home);
-                            ctx.lineTo(...pts.first);
-                            ctx.lineTo(...pts.second);
-                            ctx.lineTo(...pts.third);
-                            ctx.closePath();
-                            ctx.fill();
-                        }
-                        else if (e0.base > 0) {
-                            // bold the basepaths travelled
-                            const path = [pts.home, pts.first, pts.second, pts.third, pts.home];
-                            ctx.strokeStyle = ink;
-                            ctx.lineWidth = 4;
-                            ctx.beginPath();
-                            ctx.moveTo(...path[0]);
-                            for (let b = 1; b <= e0.base; b++)
-                                ctx.lineTo(...path[b]);
-                            ctx.stroke();
-                        }
-                        // result notation
-                        ctx.fillStyle = e0.base === 0 ? "#8A4A3C" : ink;
-                        ctx.font = "700 22px 'Saira Condensed', sans-serif";
-                        ctx.textAlign = "center";
-                        if (e0.base === 0) {
-                            if (e0.res === "\uA4D8") {
-                                // called strikeout — draw a horizontally-flipped K
-                                // so it renders regardless of font glyph coverage
-                                ctx.save();
-                                ctx.translate(cx, cy + 8);
-                                ctx.scale(-1, 1);
-                                ctx.fillText("K", 0, 0);
-                                ctx.restore();
-                            }
-                            else {
-                                ctx.fillText(e0.res, cx, cy + 8);
-                            }
+                    if (!e0)
+                        return;
+                    if (e0.base >= 4) {
+                        // scored: fill the diamond
+                        ctx.fillStyle = ink;
+                        ctx.beginPath();
+                        ctx.moveTo(...pts.home);
+                        ctx.lineTo(...pts.first);
+                        ctx.lineTo(...pts.second);
+                        ctx.lineTo(...pts.third);
+                        ctx.closePath();
+                        ctx.fill();
+                    }
+                    else if (e0.base > 0) {
+                        // bold the basepaths travelled
+                        const path = [pts.home, pts.first, pts.second, pts.third, pts.home];
+                        ctx.strokeStyle = ink;
+                        ctx.lineWidth = 4;
+                        ctx.beginPath();
+                        ctx.moveTo(...path[0]);
+                        for (let b = 1; b <= e0.base; b++)
+                            ctx.lineTo(...path[b]);
+                        ctx.stroke();
+                    }
+                    // result notation
+                    ctx.fillStyle = e0.base === 0 ? "#8A4A3C" : ink;
+                    ctx.font = `700 ${Math.round(rR * 0.92)}px 'Saira Condensed', sans-serif`;
+                    ctx.textAlign = "center";
+                    if (e0.base === 0) {
+                        if (e0.res === "\uA4D8") {
+                            // called strikeout — draw a horizontally-flipped K
+                            // so it renders regardless of font glyph coverage
+                            ctx.save();
+                            ctx.translate(cx, cy + rR * 0.33);
+                            ctx.scale(-1, 1);
+                            ctx.fillText("K", 0, 0);
+                            ctx.restore();
                         }
                         else {
-                            // "1B8" is wider than "1B" — keep it inside the cell
-                            const w = ctx.measureText(e0.res).width;
-                            const lx = Math.max(cx - rR - 2, cx - cellW / 2 + 3 + w / 2);
-                            ctx.fillText(e0.res, lx, y + cellH - 12);
+                            ctx.fillText(e0.res, cx, cy + rR * 0.33);
                         }
-                        if (cell.length > 1) {
-                            ctx.font = "700 18px 'Saira Condensed', sans-serif";
-                            ctx.fillText("+" + (cell.length - 1), cx + rR + 6, y + 22);
-                        }
-                        // circled out number, bottom-right — which out of the inning
-                        const outNo = cell.map((e) => e.out).find((o) => o);
-                        if (outNo) {
-                            const oR = Math.min(11, cellW * 0.13);
-                            const ox = cx + cellW / 2 - oR - 3;
-                            const oy = y + cellH - 22;
-                            ctx.beginPath();
-                            ctx.arc(ox, oy, oR, 0, Math.PI * 2);
-                            ctx.fillStyle = "#FAF6EC";
-                            ctx.fill();
-                            ctx.strokeStyle = "#9A938A";
-                            ctx.lineWidth = 1.5;
-                            ctx.stroke();
-                            ctx.fillStyle = "#4A443C";
-                            ctx.font = `700 ${Math.round(oR * 1.5)}px 'Saira Condensed', sans-serif`;
-                            ctx.textAlign = "center";
-                            ctx.fillText(String(outNo), ox, oy + oR * 0.55);
+                    }
+                    else {
+                        // keep the label inside the sub-cell
+                        const w = ctx.measureText(e0.res).width;
+                        const lx = Math.max(cx - rR - 2, cx - rR + w / 2);
+                        ctx.fillText(e0.res, lx, cy + rR + 16);
+                    }
+                    // circled out number, bottom-right — which out of the inning
+                    if (e0.out) {
+                        const oR = Math.min(10, rR * 0.34);
+                        const ox = cx + rR - oR + 2;
+                        const oy = cy + rR - oR + 2;
+                        ctx.beginPath();
+                        ctx.arc(ox, oy, oR, 0, Math.PI * 2);
+                        ctx.fillStyle = "#FAF6EC";
+                        ctx.fill();
+                        ctx.strokeStyle = "#9A938A";
+                        ctx.lineWidth = 1.5;
+                        ctx.stroke();
+                        ctx.fillStyle = "#4A443C";
+                        ctx.font = `700 ${Math.round(oR * 1.5)}px 'Saira Condensed', sans-serif`;
+                        ctx.textAlign = "center";
+                        ctx.fillText(String(e0.out), ox, oy + oR * 0.55);
+                    }
+                };
+                for (let i = 0; i < innCount; i++) {
+                    const ccx = gridX + cellW * i + cellW / 2;
+                    const ccy = y + cellH / 2 + 4;
+                    const cell = entries.filter((e) => e.b === r && e.inning === skipped + i + 1);
+                    const paCount = Math.max(1, cell.length);
+                    if (paCount === 1) {
+                        const rR = Math.min(24, cellW * 0.32);
+                        drawOnePA(cell[0], ccx, ccy, rR);
+                    }
+                    else {
+                        // split the inning cell into paCount sub-diamonds, left→right
+                        const n = Math.min(paCount, 4); // 4 trips through in one inning is the practical ceiling
+                        const subW = cellW / n;
+                        const rR = Math.max(5, Math.min(subW * 0.34, cellH * 0.26, 18));
+                        for (let k = 0; k < n; k++) {
+                            const sx = gridX + cellW * i + subW * k + subW / 2;
+                            drawOnePA(cell[k], sx, ccy, rR);
+                            // thin divider between sub-cells
+                            if (k > 0) {
+                                ctx.strokeStyle = "#E2DBCE";
+                                ctx.lineWidth = 1;
+                                ctx.beginPath();
+                                ctx.moveTo(gridX + cellW * i + subW * k, y + 8);
+                                ctx.lineTo(gridX + cellW * i + subW * k, y + cellH - 8);
+                                ctx.stroke();
+                            }
                         }
                     }
                 }
