@@ -532,7 +532,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "134"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "135"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -6358,6 +6358,12 @@ function DugoutScorecard() {
                         baseLabel(baseMenu)),
                     React.createElement("p", null, "What happened?"),
                     React.createElement("div", { className: "btnrow" },
+                        // Plain advance one/two bases — for scorers who tap the
+                        // runner instead of dragging. Reuses moveRunner so the
+                        // fold-onto-play behaviour is identical to a drag. The
+                        // "scores" cases keep their existing dedicated buttons below.
+                        baseMenu === "first" && React.createElement("button", { className: "dg", onClick: () => { const b = baseMenu; setBaseMenu(null); moveRunner(b, "second"); } }, "Advance to 2nd"),
+                        (baseMenu === "first" || baseMenu === "second") && React.createElement("button", { className: "dg", onClick: () => { const b = baseMenu; setBaseMenu(null); moveRunner(b, "third"); } }, "Advance to 3rd"),
                         game.openHit != null && (React.createElement("button", { className: "dg hit", onClick: () => runnerScoresOnPlay(baseMenu) },
                             "Scores on the play (RBI ",
                             game.lineup[battingSide][game.openHit.b].name,
