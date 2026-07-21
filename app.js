@@ -38,13 +38,40 @@ const pInnStr = (pp, sep, pre) => {
 };
 // Baseball Nova Scotia pitch count thresholds by division (5.2.7):
 // [no-rest max, 1-day, 2-day, 3-day, daily max (4 days rest)]
+// Canada (Baseball Nova Scotia): thresholds move per division.
+// USA — Little League & USSSA both use MLB Pitch Smart's fixed rest tiers
+// (verified against mlb.com/pitch-smart): rest at 20/35/50/65 for 14U-and-under
+// and 30/45/60/75(or 80) for 15-18, with only the daily cap changing by age.
+// USSSA officially uses innings caps, not pitch counts, so its entries are the
+// Pitch Smart guideline (clearly labelled as such in the picker), which travel
+// programs widely track voluntarily.
 const PITCH_DIVISIONS = {
     "11U": [25, 40, 55, 65, 75],
     "13U": [30, 45, 60, 75, 85],
     "15U": [35, 50, 65, 80, 95],
     "18U": [40, 55, 70, 85, 105],
     "22U": [45, 60, 75, 90, 115],
+    // Little League (by league age)
+    "LL 7-8": [20, 35, 50, 65, 50],
+    "LL 9-10": [20, 35, 50, 65, 75],
+    "LL 11-12": [20, 35, 50, 65, 85],
+    "LL 13-14": [20, 35, 50, 65, 95],
+    "LL 15-16": [30, 45, 60, 75, 95],
+    "LL 17-18": [30, 45, 60, 80, 105],
+    // USSSA — Pitch Smart guideline (USSSA itself uses innings caps)
+    "USSSA 7-8": [20, 35, 50, 65, 50],
+    "USSSA 9-10": [20, 35, 50, 65, 75],
+    "USSSA 11-12": [20, 35, 50, 65, 85],
+    "USSSA 13-14": [20, 35, 50, 65, 95],
+    "USSSA 15-16": [30, 45, 60, 75, 95],
+    "USSSA 17-18": [30, 45, 60, 80, 105],
 };
+// Picker grouping — keeps the country/organization sets visually separate.
+const DIVISION_GROUPS = [
+    { label: "Baseball Canada", keys: ["11U", "13U", "15U", "18U", "22U"] },
+    { label: "Little League (USA)", keys: ["LL 7-8", "LL 9-10", "LL 11-12", "LL 13-14", "LL 15-16", "LL 17-18"] },
+    { label: "USSSA · Pitch Smart (USA)", keys: ["USSSA 7-8", "USSSA 9-10", "USSSA 11-12", "USSSA 13-14", "USSSA 15-16", "USSSA 17-18"] },
+];
 // Regulation game length (innings) by division — ERA is scaled to this instead
 // of the usual 9-inning basis, so a complete-game line reads in the league's own
 // terms. Baseball Canada: 11U = 6 innings; 13U/15U/18U = 7; 22U (adult) = 9.
@@ -54,6 +81,10 @@ const DIVISION_INNINGS = {
     "15U": 7,
     "18U": 7,
     "22U": 9,
+    // Little League: 6-inning games through Majors (12U); 7 for Junior/Senior (13+)
+    "LL 7-8": 6, "LL 9-10": 6, "LL 11-12": 6, "LL 13-14": 7, "LL 15-16": 7, "LL 17-18": 7,
+    // USSSA typically 6 innings through 12U, 7 for 13U+
+    "USSSA 7-8": 6, "USSSA 9-10": 6, "USSSA 11-12": 6, "USSSA 13-14": 7, "USSSA 15-16": 7, "USSSA 17-18": 7,
 };
 const inningsBasisFor = (division) => DIVISION_INNINGS[division] || 9;
 // Credited pitch total — when "last batter" was called the pitcher is
@@ -197,6 +228,65 @@ const inningsWord = (outs) => {
 };
 
 // Build the whole story. `teams` for names, `g` for everything else.
+// ---- Situational splits --------------------------------------------------
+// Reduce the plate-appearance log into batting lines for game-state splits
+// (RISP, runners on, bases empty/loaded, two-out, leadoff) and count splits
+// (first pitch, two strikes, full count, ahead/behind). Each PA carries a `sit`
+// stamped at the plate; here we just classify outcomes and tally.
+const OC_HIT = { "1B": 1, "2B": 1, "3B": 1, "HR": 1 };
+const OC_AB = { "1B": 1, "2B": 1, "3B": 1, "HR": 1, "K": 1, "OUT": 1, "FC": 1, "DP": 1, "ROE": 1, "SACERR": 1 };
+const OC_ONBASE = { "1B": 1, "2B": 1, "3B": 1, "HR": 1, "BB": 1, "HBP": 1, "CI": 1 };
+// tb for slugging
+const OC_TB = { "1B": 1, "2B": 2, "3B": 3, "HR": 4 };
+const blankLine = () => ({ pa: 0, ab: 0, h: 0, bb: 0, hbp: 0, k: 0, tb: 0, ob: 0, so: 0 });
+const addPAtoLine = (L, oc) => {
+    L.pa += 1;
+    if (OC_AB[oc])
+        L.ab += 1;
+    if (OC_HIT[oc])
+        L.h += 1;
+    if (oc === "BB")
+        L.bb += 1;
+    if (oc === "HBP")
+        L.hbp += 1;
+    if (oc === "K")
+        L.k += 1;
+    if (OC_ONBASE[oc])
+        L.ob += 1;
+    L.tb += OC_TB[oc] || 0;
+};
+const lineAvg = (L) => (L.ab > 0 ? (L.h / L.ab) : null);
+const lineObp = (L) => { const d = L.ab + L.bb + L.hbp; return d > 0 ? (L.ob / d) : null; };
+const lineSlg = (L) => (L.ab > 0 ? (L.tb / L.ab) : null);
+const fmt3 = (v) => (v == null ? "\u2014" : v.toFixed(3).replace(/^0/, ""));
+// The game-state and count split definitions: [key, label, predicate(sit)]
+const GAME_STATE_SPLITS = [
+    ["empty", "Bases empty", (s) => s.empty],
+    ["runnersOn", "Runners on", (s) => s.runnersOn],
+    ["risp", "Scoring position", (s) => s.risp],
+    ["loaded", "Bases loaded", (s) => s.loaded],
+    ["leadoff", "Lead off inning", (s) => s.leadoff],
+    ["two_out", "Two outs", (s) => s.outs === 2],
+    ["two_out_risp", "2 out, RISP", (s) => s.outs === 2 && s.risp],
+];
+const COUNT_SPLITS = [
+    ["first_pitch", "First pitch", (s) => s.firstPitch],
+    ["two_strikes", "Two strikes", (s) => s.twoStrikes],
+    ["full", "Full count", (s) => s.fullCount],
+    ["ahead", "Ahead in count", (s) => s.countState === "ahead"],
+    ["behind", "Behind in count", (s) => s.countState === "behind"],
+];
+// Build split lines for one team ("away"/"home"), optionally for a single
+// batting-order slot (bi). Returns { gameState:[{label,line}], count:[...] }.
+const buildSituational = (g, side, bi) => {
+    const rows = (g.log || []).filter((e) => e.type === "pa" && e.side === side && e.sit && e.sit.oc && (bi == null || e.bi === bi));
+    const run = (defs) => defs.map(([key, label, pred]) => {
+        const L = blankLine();
+        rows.forEach((e) => { if (pred(e.sit)) addPAtoLine(L, e.sit.oc); });
+        return { key, label, line: L };
+    });
+    return { gameState: run(GAME_STATE_SPLITS), count: run(COUNT_SPLITS) };
+};
 const buildGameStory = (g, teams) => {
     const A = teams.away.name, H = teams.home.name;
     const ar = runsIn(g, "away"), hr = runsIn(g, "home");
@@ -442,7 +532,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "132"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "134"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1438,11 +1528,30 @@ function DugoutScorecard() {
         if (g.openPA != null && g.log[g.openPA] && !g.log[g.openPA].result)
             return;
         g.openPlay = null; // a new plate appearance closes the previous play's drag window
+        // Stamp the situation as the batter steps in — situational splits (RISP,
+        // two-out, leadoff, runners-on) can only be computed from state captured
+        // AT the plate appearance, never reconstructed from the final log.
+        const b = g.bases;
+        const on1 = !!b.first, on2 = !!b.second, on3 = !!b.third;
+        const anyOn = on1 || on2 || on3;
+        // leadoff = first plate appearance of this half-inning
+        const leadoff = !g.log.some((e) => e.type === "pa" && e.i === g.inning && e.h === g.half);
         g.log.push({
             type: "pa",
             i: g.inning,
             h: g.half,
             batter: g.lineup[battingSide][g.batter[battingSide]].name,
+            bi: g.batter[battingSide],
+            side: battingSide,
+            sit: {
+                outs: g.outs,
+                on1, on2, on3,
+                runnersOn: anyOn,
+                risp: on2 || on3, // runner in scoring position (2nd or 3rd)
+                loaded: on1 && on2 && on3,
+                empty: !anyOn,
+                leadoff,
+            },
             seq: [],
             result: null,
         });
@@ -1486,10 +1595,27 @@ function DugoutScorecard() {
         else
             logPlay(g, standalone);
     };
-    const closePA = (g, result, ticker) => {
+    const closePA = (g, result, ticker, oc) => {
         ensurePA(g);
-        g.log[g.openPA].result = result;
-        g.lastPAB = g.log[g.openPA].batter; // sac flies score after the PA closes
+        const row = g.log[g.openPA];
+        row.result = result;
+        // Count the batter finished in — supports count-based splits. On a ball
+        // in play g.balls/g.strikes hold the count going INTO the deciding pitch
+        // (the pitch itself isn't a called ball/strike), which is the count the
+        // hitter was working in; on a walk/K it's the terminal 4/3.
+        if (row.sit) {
+            const balls = g.balls, strikes = g.strikes;
+            row.sit.balls = balls;
+            row.sit.strikes = strikes;
+            row.sit.firstPitch = (balls === 0 && strikes === 0);
+            row.sit.twoStrikes = strikes >= 2;
+            row.sit.fullCount = (balls === 3 && strikes === 2);
+            // ahead/behind from the hitter's view (more balls = ahead)
+            row.sit.countState = balls > strikes ? "ahead" : strikes > balls ? "behind" : "even";
+            if (oc)
+                row.sit.oc = oc; // outcome category for AVG/OBP within a split
+        }
+        g.lastPAB = row.batter; // sac flies score after the PA closes
         g.openPA = null;
         g.lastPlay = ticker;
         const p = curP(g, fieldingSide);
@@ -1696,7 +1822,7 @@ function DugoutScorecard() {
             const runs = forceAdvance(g, g.batter[battingSide]);
             addRuns(g, runs, "walk");
             st.rbi += runs; // bases-loaded walk
-            closePA(g, runs ? "walk, run forced in" : "walk", `${currentBatterName()} walks${runs ? ", run forced in" : ""}`);
+            closePA(g, runs ? "walk, run forced in" : "walk", `${currentBatterName()} walks${runs ? ", run forced in" : ""}`, "BB");
             nextBatter(g);
         }
         else {
@@ -1721,7 +1847,7 @@ function DugoutScorecard() {
             const d3kLegal = !g.bases.first || g.outs === 2;
             const kBatter = g.batter[battingSide];
             const verb = looking ? "strikes out looking" : kind === "swinging" ? "strikes out swinging" : "strikes out";
-            closePA(g, looking ? "strikeout looking" : kind === "swinging" ? "strikeout swinging" : "strikeout", `${currentBatterName()} ${verb}`);
+            closePA(g, looking ? "strikeout looking" : kind === "swinging" ? "strikeout swinging" : "strikeout", `${currentBatterName()} ${verb}`, "K");
             const flipped = recordOut(g);
             if (!flipped)
                 nextBatter(g);
@@ -1750,7 +1876,7 @@ function DugoutScorecard() {
         const runs = forceAdvance(g, bIdx);
         addRuns(g, runs, "hbp");
         st.rbi += runs;
-        closePA(g, runs ? "hit by pitch, run forced in" : "hit by pitch", `${currentBatterName()} hit by pitch${runs ? ", run forced in" : ""}`);
+        closePA(g, runs ? "hit by pitch, run forced in" : "hit by pitch", `${currentBatterName()} hit by pitch${runs ? ", run forced in" : ""}`, "HBP");
         nextBatter(g);
     });
     const tapFoul = () => mutate((g) => {
@@ -1776,7 +1902,7 @@ function DugoutScorecard() {
             chargeP(g, "k");
             chargeP(g, "outs");
             cardMark(g, g.batter[battingSide], "K", 0);
-            closePA(g, "strikeout", `${currentBatterName()} strikes out on a foul tip`);
+            closePA(g, "strikeout", `${currentBatterName()} strikes out on a foul tip`, "K");
             const flipped = recordOut(g);
             if (!flipped)
                 nextBatter(g);
@@ -1824,7 +1950,7 @@ function DugoutScorecard() {
         addRuns(g, runs, hitTag + (loc ? ":" + loc : ""));
         st.rbi += runs;
         const desc = `${label}${where ? ` to ${where}` : ""}${runs ? ` — ${runs} score${runs > 1 ? "" : "s"}` : ""}`;
-        closePA(g, desc, `${name}: ${desc}`);
+        closePA(g, desc, `${name}: ${desc}`, hitTag);
         g.openHit = { b: bIdxForHit, log: g.log.length - 1 };
         if (g.bases.first || g.bases.second || g.bases.third)
             g.openPlay = g.log.length - 1;
@@ -1848,7 +1974,7 @@ function DugoutScorecard() {
         addRuns(g, runs, "error"); // unearned, no RBI
         if (g.bases.first)
             g.bases.first.ue = true; // reached on error -> unearned if he scores
-        closePA(g, `reached on ${enote}${runs ? ", run scores" : ""}`, `${name} reaches on error (${enote})${runs ? ", run scores" : ""}`);
+        closePA(g, `reached on ${enote}${runs ? ", run scores" : ""}`, `${name} reaches on error (${enote})${runs ? ", run scores" : ""}`, "ROE");
         nextBatter(g);
     });
     const playOut = (label, isK, fnote) => mutate((g) => {
@@ -1889,7 +2015,7 @@ function DugoutScorecard() {
         const groundThirdForced = label === "groundout" && !!(g.bases.first && g.bases.second && g.bases.third);
         const groundThirdUnforced = label === "groundout" && !!g.bases.third && !groundThirdForced;
         const labelText = label === "infieldfly" ? "infield fly" : label;
-        closePA(g, `${labelText}${fnote ? " " + fnote : ""}`, `${name}: ${labelText}${fnote ? " " + fnote : ""}`);
+        closePA(g, `${labelText}${fnote ? " " + fnote : ""}`, `${name}: ${labelText}${fnote ? " " + fnote : ""}`, "OUT");
         const flipped = recordOut(g);
         if (label === "groundout" && !flipped) {
             const adv = groundoutAdvance(g); // forced runners move; forced run from 3rd scores
@@ -1967,7 +2093,7 @@ function DugoutScorecard() {
             chargeP(g, "outs");
             cardOut(g, g.bases[outBase], g.outs + 1); // the forced runner's own cell
             cardMark(g, bIdx, fnote || "FC", 1);
-            closePA(g, `fielder's choice${fnote ? " " + fnote : ""} — runner from ${baseLabel(outBase)} forced out`, `${name}: fielder's choice${fnote ? " " + fnote : ""} — runner from ${baseLabel(outBase)} forced out`);
+            closePA(g, `fielder's choice${fnote ? " " + fnote : ""} — runner from ${baseLabel(outBase)} forced out`, `${name}: fielder's choice${fnote ? " " + fnote : ""} — runner from ${baseLabel(outBase)} forced out`, "FC");
             const flipped = recordOut(g);
             if (!flipped) {
                 const runs = fcAdvance(g, outBase, bIdx);
@@ -2003,7 +2129,7 @@ function DugoutScorecard() {
             addRuns(g, runs, "fc");
             st.rbi += runs;
             const tail = `${fnote ? " " + fnote : ""} — all safe${runs ? ` — ${runs} score${runs > 1 ? "" : "s"}` : ""}`;
-            closePA(g, `fielder's choice${tail}`, `${name}: fielder's choice${tail}`);
+            closePA(g, `fielder's choice${tail}`, `${name}: fielder's choice${tail}`, "FC");
             nextBatter(g);
         });
         setFcMenu(false);
@@ -2021,7 +2147,7 @@ function DugoutScorecard() {
             chargeP(g, "outs");
             cardMark(g, bIdx, fnote || "GO", 0);
             const willPlay = g.outs < 2; // runners only advance if this isn't the 3rd out
-            closePA(g, `out at 1st${fnote ? " " + fnote : ""}${willPlay ? " — runners advance" : ""}`, `${name}: out at 1st${fnote ? " " + fnote : ""}${willPlay ? ", runners advance" : ""}`);
+            closePA(g, `out at 1st${fnote ? " " + fnote : ""}${willPlay ? " — runners advance" : ""}`, `${name}: out at 1st${fnote ? " " + fnote : ""}${willPlay ? ", runners advance" : ""}`, "OUT");
             const flipped = recordOut(g);
             if (!flipped) {
                 const runs = advanceAll(g, 1, null); // station-to-station, no batter
@@ -2081,7 +2207,7 @@ function DugoutScorecard() {
                 addRuns(g, errRuns, "error"); // unearned, no RBI
             const totalRuns = sacRuns + errRuns;
             const tail = `${kind === "fly" ? "sacrifice fly" : "sacrifice bunt"}${sacRuns ? ", run scores" : ""} — ${enote}${errRuns ? `, ${errRuns} more score${errRuns > 1 ? "" : "s"}` : ""}, batter safe`;
-            closePA(g, `sac ${kind === "fly" ? "fly" : "bunt"} — ${enote}${totalRuns ? `, ${totalRuns} score${totalRuns > 1 ? "" : "s"}` : ""}, batter safe`, `${name}: ${tail}`);
+            closePA(g, `sac ${kind === "fly" ? "fly" : "bunt"} — ${enote}${totalRuns ? `, ${totalRuns} score${totalRuns > 1 ? "" : "s"}` : ""}, batter safe`, `${name}: ${tail}`, "SACERR");
             nextBatter(g);
         });
         setSacMenu(false);
@@ -2104,7 +2230,7 @@ function DugoutScorecard() {
                 ? `sac fly${flyScores ? " — run scores" : ""}`
                 : `sac bunt${willPlay ? " — runners advance" : ""}`, kind === "fly"
                 ? `${name}: sacrifice fly${flyScores ? " — run scores" : ""}`
-                : `${name}: sacrifice bunt`);
+                : `${name}: sacrifice bunt`, "SAC");
             const flipped = recordOut(g);
             if (!flipped) {
                 if (kind === "fly") {
@@ -2203,7 +2329,7 @@ function DugoutScorecard() {
         const runs = forceAdvance(g, bIdx);
         addRuns(g, runs, "ibb");
         st.rbi += runs;
-        closePA(g, runs ? "intentional walk, run forced in" : "intentional walk", `${currentBatterName()} — intentional walk${runs ? ", run forced in" : ""}`);
+        closePA(g, runs ? "intentional walk, run forced in" : "intentional walk", `${currentBatterName()} — intentional walk${runs ? ", run forced in" : ""}`, "BB");
         nextBatter(g);
     });
     // Double play — batter is out plus one selected runner (two outs on the play).
@@ -2322,7 +2448,7 @@ function DugoutScorecard() {
                 g.bases.first.ue = true;
             addRuns(g, runs, "ci");
             st.rbi += runs;
-            closePA(g, `catcher's interference${runs ? " — run forced in" : ""}`, `${name}: catcher's interference (E2) — awarded first${runs ? ", run forced in" : ""}`);
+            closePA(g, `catcher's interference${runs ? " — run forced in" : ""}`, `${name}: catcher's interference (E2) — awarded first${runs ? ", run forced in" : ""}`, "CI");
             nextBatter(g);
         });
         setMoreMenu(false);
@@ -2340,7 +2466,7 @@ function DugoutScorecard() {
             st.ab += 1;
             chargeP(g, "outs");
             cardMark(g, bIdx, "BI", 0);
-            closePA(g, "batter's interference — batter is out", `${name}: batter's interference — batter is out, runners return`);
+            closePA(g, "batter's interference — batter is out", `${name}: batter's interference — batter is out, runners return`, "OUT");
             const flipped = recordOut(g);
             if (!flipped)
                 nextBatter(g);
@@ -2376,7 +2502,7 @@ function DugoutScorecard() {
             }
             chargeP(g, "outs", 3);
             const verb = caught ? "lines into a triple play" : "grounds into a triple play";
-            closePA(g, `triple play${fnote ? " " + fnote : ""}`, `${name}: ${verb}${fnote ? " " + fnote : ""}`);
+            closePA(g, `triple play${fnote ? " " + fnote : ""}`, `${name}: ${verb}${fnote ? " " + fnote : ""}`, "OUT");
             let flipped = false;
             for (let i = 0; i < 3 && !flipped; i++)
                 flipped = recordOut(g);
@@ -2422,7 +2548,7 @@ function DugoutScorecard() {
             // two outs on the play: the batter, plus the selected runner
             chargeP(g, "outs"); // batter
             const verb = caught ? "lines into a double play" : "grounds into a double play";
-            closePA(g, `double play${fnote ? " " + fnote : ""}`, `${name}: ${verb}${fnote ? " " + fnote : ""}`);
+            closePA(g, `double play${fnote ? " " + fnote : ""}`, `${name}: ${verb}${fnote ? " " + fnote : ""}`, "DP");
             recordOut(g); // batter out (DP offered only with < 2 outs)
             chargeP(g, "outs"); // runner
             const flipped = recordOut(g);
@@ -2783,6 +2909,9 @@ function DugoutScorecard() {
     const [demoPlaying, setDemoPlaying] = useState(false);
     const [demoSpeed, setDemoSpeed] = useState(1.6); // multiplier on every delay
     const [lineupCardSide, setLineupCardSide] = useState(null); // which team's lineup card to render
+    const [sitOpen, setSitOpen] = useState(false); // situational stats modal
+    const [sitSide, setSitSide] = useState("away"); // which team
+    const [sitBi, setSitBi] = useState(null); // null = team total, else lineup slot
     const demoTimer = useRef(null);
     const demoMode = (() => { try { return /[?&]demo\b/.test(window.location.search); } catch (_a) { return false; } })();
     const openBaseMenu = (b) => {
@@ -3084,7 +3213,7 @@ function DugoutScorecard() {
             const runs = forceAdvance(g, bIdx);
             addRuns(g, runs, "1B");
             st.rbi += runs;
-            closePA(g, `${who} hit by batted ball — out; ${name} single`, `${who} hit by the batted ball — out. ${name} credited a single`);
+            closePA(g, `${who} hit by batted ball — out; ${name} single`, `${who} hit by the batted ball — out. ${name} credited a single`, "1B");
             if (!flipped)
                 nextBatter(g);
             else
@@ -4466,14 +4595,16 @@ function DugoutScorecard() {
         const homeTop = 210;
         drawBlock("home", homeTop);
         drawBlock("away", homeTop + blockH("home") + blockGap);
-        // reference table (selected division highlighted)
+        // reference table — only the rule set the current division belongs to,
+        // so the sheet shows relevant thresholds rather than all 17 divisions.
         const rTop = refTop;
-        const rCols = [110, 150, 150, 150, 150, 150, 110];
+        const rCols = [150, 145, 145, 145, 145, 145, 100];
         const rW = rCols.reduce((a, b) => a + b, 0);
         const rRowH = 36;
         const heads = ["Division", "No Rest", "1 Day Rest", "2 Days Rest", "3 Days Rest", "4 Days Rest", "Max"];
         ctx.strokeStyle = grid;
-        const divs = Object.keys(PITCH_DIVISIONS);
+        const grp = DIVISION_GROUPS.find((g) => g.keys.includes(dv));
+        const divs = grp ? grp.keys : DIVISION_GROUPS[0].keys;
         ctx.strokeRect(m, rTop, rW, rRowH * (divs.length + 1));
         let rx = m;
         rCols.slice(0, -1).forEach((w) => {
@@ -4909,6 +5040,14 @@ function DugoutScorecard() {
         .team-ident .team-logo-btn img { height:26px; width:26px; object-fit:contain; border-radius:4px; }
         .team-ident .team-logo-rm { width:26px; height:26px; border-radius:50%; border:none; background:rgba(51,65,85,.6); color:#fff; cursor:pointer; flex:none; }
         .theme-bar { display:flex; align-items:center; gap:12px; flex-wrap:wrap; background:rgba(255,255,255,.05); border:1px solid var(--line); border-radius:12px; padding:10px 14px; margin-bottom:14px; }
+        .sit-sec { font-weight:700; color:var(--amberw); font-size:13px; letter-spacing:.08em; text-transform:uppercase; margin-bottom:5px; }
+        .sit-table { display:flex; flex-direction:column; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+        .sit-row { display:grid; grid-template-columns:1.7fr .6fr .6fr .5fr .5fr .5fr .8fr .8fr; align-items:center; padding:6px 8px; font-size:13px; border-bottom:1px solid rgba(255,255,255,.06); }
+        .sit-row:last-child { border-bottom:none; }
+        .sit-row span { text-align:right; }
+        .sit-row .sit-lbl, .sit-head span:first-child { text-align:left; }
+        .sit-head { background:rgba(255,255,255,.05); color:var(--powder); font-weight:700; font-size:11px; }
+        .sit-lbl { color:#fff; }
         /* demo-replay (only with ?demo in the URL) */
         .demo-launch { position:fixed; left:10px; bottom:10px; z-index:60; padding:6px 10px;
           font-family:'Saira Condensed',sans-serif; font-weight:700; font-size:12px; letter-spacing:.1em;
@@ -5463,10 +5602,10 @@ function DugoutScorecard() {
                                     setPitchLimit(PITCH_DIVISIONS[dv][4]); // daily max
                             }, "aria-label": "Age division for pitch count rules" },
                             React.createElement("option", { value: "" }, "Off"),
-                            Object.keys(PITCH_DIVISIONS).map((d) => (React.createElement("option", { key: d, value: d }, d)))),
+                            DIVISION_GROUPS.map((grp) => (React.createElement("optgroup", { key: grp.label, label: grp.label }, grp.keys.map((d) => (React.createElement("option", { key: d, value: d }, d))))))),
                         React.createElement("span", { className: "limithint" }, division
-                            ? `BNS ${division} thresholds ${PITCH_DIVISIONS[division].join(" / ")}`
-                            : "age division \u00B7 BNS thresholds + pitch count sheet")),
+                            ? `${division.startsWith("LL ") ? "Little League" : division.startsWith("USSSA ") ? "Pitch Smart" : "BNS"} thresholds ${PITCH_DIVISIONS[division].join(" / ")}`
+                            : "age division \u00B7 pitch count rules + sheet")),
                     React.createElement("div", { className: "limitrow" },
                         React.createElement("input", { className: "dg-in", type: "number", min: "0", max: "200", value: pitchLimit, onChange: (e) => setPitchLimit(Math.max(0, parseInt(e.target.value || "0", 10))), "aria-label": "Pitch limit per pitcher" }),
                         React.createElement("span", { className: "limithint" },
@@ -5845,6 +5984,7 @@ function DugoutScorecard() {
                                     mutate((g) => (g.lastPlay = "Couldn't build the game story"));
                                 }
                             } }, "\uD83D\uDCF0 Game story"),
+                        React.createElement("button", { className: "dg", onClick: () => { setShareOpen(false); setSitSide(battingSide); setSitBi(null); setSitOpen(true); } }, "\uD83D\uDCC8 Situational stats"),
                         React.createElement("button", { className: "dg", onClick: startLive }, "\uD83D\uDCE1 Live game link (spectators)"),
                         React.createElement("button", { className: "dg ghost", onClick: () => setShareOpen(false) }, "Cancel"))))),
             demoMode && game && !demoPlaying && (React.createElement("button", { className: "demo-launch", onClick: () => { if (!demoText) setDemoText(JSON.stringify(DEMO_SAMPLE, null, 1)); setDemoOpen(true); }, "aria-label": "Open demo replay" }, "\u25B6 DEMO")),
@@ -5915,7 +6055,7 @@ function DugoutScorecard() {
                         React.createElement("h3", null, "Pitch count sheet"),
                         React.createElement("p", { style: { textTransform: "none", letterSpacing: 0 } },
                             "Running totals by inning",
-                            dv ? ` \u00B7 BNS ${dv} rules` : " \u00B7 no division set (Rest column off)",
+                            dv ? ` \u00B7 ${dv.startsWith("LL ") ? "Little League" : dv.startsWith("USSSA ") ? "Pitch Smart" : "BNS"} ${dv} rules` : " \u00B7 no division set (Rest column off)",
                             " \u00B7 \u201C35 (37)\u201D = last batter called, credited 35"),
                         sideTable("home"),
                         sideTable("away"),
@@ -6141,6 +6281,44 @@ function DugoutScorecard() {
                         React.createElement("button", { className: "dg hit", onClick: () => shareLineupCard("away") }, teams.away.name || "Visitors"),
                         React.createElement("button", { className: "dg hit", onClick: () => shareLineupCard("home") }, teams.home.name || "Home"),
                         React.createElement("button", { className: "dg ghost", onClick: () => setLineupCardSide(null) }, "Cancel"))))),
+            sitOpen && game && (() => {
+                const sp = buildSituational(game, sitSide, sitBi);
+                const lu = teams[sitSide].lineup || [];
+                const heading = sitBi == null ? `${teams[sitSide].name} — team` : `${lu[sitBi] ? lu[sitBi].name : "Batter"}`;
+                const section = (title, rows) => React.createElement("div", { style: { marginBottom: 14 } },
+                    React.createElement("div", { className: "sit-sec" }, title),
+                    React.createElement("div", { className: "sit-table" },
+                        React.createElement("div", { className: "sit-row sit-head" },
+                            React.createElement("span", null, "Split"),
+                            React.createElement("span", null, "PA"),
+                            React.createElement("span", null, "AB"),
+                            React.createElement("span", null, "H"),
+                            React.createElement("span", null, "BB"),
+                            React.createElement("span", null, "K"),
+                            React.createElement("span", null, "AVG"),
+                            React.createElement("span", null, "OBP")),
+                        rows.map((r) => React.createElement("div", { className: "sit-row", key: r.key },
+                            React.createElement("span", { className: "sit-lbl" }, r.label),
+                            React.createElement("span", null, r.line.pa),
+                            React.createElement("span", null, r.line.ab),
+                            React.createElement("span", null, r.line.h),
+                            React.createElement("span", null, r.line.bb),
+                            React.createElement("span", null, r.line.k),
+                            React.createElement("span", null, fmt3(lineAvg(r.line))),
+                            React.createElement("span", null, fmt3(lineObp(r.line)))))));
+                return (React.createElement("div", { className: "modal-back", onClick: () => setSitOpen(false) },
+                    React.createElement("div", { className: "modal set-modal", onClick: (e) => e.stopPropagation() },
+                        React.createElement("h3", null, "Situational stats"),
+                        React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr", marginBottom: 8 } },
+                            React.createElement("button", { className: `dg ${sitSide === "away" ? "" : "ghost"}`, onClick: () => { setSitSide("away"); setSitBi(null); } }, teams.away.name.slice(0, 14)),
+                            React.createElement("button", { className: `dg ${sitSide === "home" ? "" : "ghost"}`, onClick: () => { setSitSide("home"); setSitBi(null); } }, teams.home.name.slice(0, 14))),
+                        React.createElement("select", { className: "dg-sel", style: { marginBottom: 10 }, value: sitBi == null ? "" : String(sitBi), onChange: (e) => setSitBi(e.target.value === "" ? null : Number(e.target.value)), "aria-label": "Player or team" },
+                            React.createElement("option", { value: "" }, "Whole team"),
+                            lu.map((p, i) => React.createElement("option", { key: i, value: String(i) }, `${i + 1}. ${p.num ? "#" + p.num + " " : ""}${p.name}`))),
+                        React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, marginTop: 0, color: "var(--powder)", fontSize: 13 } }, sitBi != null ? heading + " \u00B7 small youth samples get noisy fast" : "Team totals across the game"),
+                        section("Game state", sp.gameState),
+                        section("Count", sp.count),
+                        React.createElement("button", { className: "dg ghost", style: { width: "100%" }, onClick: () => setSitOpen(false) }, "Done")))); })(),
             recapPreview && (React.createElement("div", { className: "modal-back", onClick: () => setRecapPreview(null) },
                 React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
                     React.createElement("h3", null, recapPreview.title || "Score graphic"),
