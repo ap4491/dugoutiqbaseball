@@ -686,7 +686,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "147"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "148"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -5322,10 +5322,12 @@ function DugoutScorecard() {
         .rp-chip.bat rect { fill:#0E2244; stroke:var(--amberw); }
         .rp-chip.bat.res rect { fill:var(--amberw); stroke:var(--amberw); }
         .rp-chip.bat.res text { fill:#0A1A33; }
-        .rp-chip.arrive { animation:rpRun .6s ease-out both; }
-        .rp-chip.score { animation:rpRunScore .6s ease-in both; }
-        @keyframes rpRun { from { transform:translate(var(--fx),var(--fy)); } to { transform:translate(0,0); } }
-        @keyframes rpRunScore { 0% { transform:translate(var(--fx),var(--fy)); opacity:1; } 75% { transform:translate(0,0); opacity:1; } 100% { transform:translate(0,0); opacity:0; } }
+        .rp-chip.leg { animation:rpLeg .3s linear both; }
+        .rp-chip.leg.stay { animation-name:rpLegStay; }
+        .rp-chip.leg.score { animation-name:rpLegScore; animation-timing-function:ease-in; }
+        @keyframes rpLeg { 0% { transform:translate(var(--fx),var(--fy)); opacity:0; } 6% { transform:translate(var(--fx),var(--fy)); opacity:1; } 94% { transform:translate(0,0); opacity:1; } 100% { transform:translate(0,0); opacity:0; } }
+        @keyframes rpLegStay { 0% { transform:translate(var(--fx),var(--fy)); opacity:0; } 6% { transform:translate(var(--fx),var(--fy)); opacity:1; } 100% { transform:translate(0,0); opacity:1; } }
+        @keyframes rpLegScore { 0% { transform:translate(var(--fx),var(--fy)); opacity:0; } 6% { transform:translate(var(--fx),var(--fy)); opacity:1; } 80% { transform:translate(0,0); opacity:1; } 100% { transform:translate(0,0); opacity:0; } }
         .rp-callout rect { fill:#FFFFFF; filter:drop-shadow(0 1.5px 2.5px rgba(0,0,0,.4)); }
         .rp-callout text { fill:#0A1A33; font-family:'Saira Condensed',sans-serif; font-size:8.5px; font-weight:700; letter-spacing:.03em; }
         .rp-spot { fill:none; stroke:var(--amberw); stroke-width:1.5; opacity:.85; }
@@ -5339,7 +5341,7 @@ function DugoutScorecard() {
         @keyframes rpPulse { 0%{ transform:scale(1); } 35%{ transform:scale(1.35); } 100%{ transform:scale(1); } }
         .rp-runs { text-align:center; color:var(--amberw); font-weight:700; font-size:12px;
           letter-spacing:.1em; text-transform:uppercase; height:14px; }
-        @media (prefers-reduced-motion:reduce){ .rp-ball.pitch,.rp-ball.hit,.rp-sh,.rp-score b.scored,.rp-chip.arrive{ animation:none; } .rp-chip.score{ animation:none; opacity:0; } }
+        @media (prefers-reduced-motion:reduce){ .rp-ball.pitch,.rp-ball.hit,.rp-sh,.rp-score b.scored{ animation:none; } .rp-chip.leg{ animation:none; opacity:0; } .rp-chip.leg.stay{ animation:none; opacity:1; } }
         /* demo-replay (only with ?demo in the URL) */
         .demo-launch { position:fixed; left:10px; bottom:10px; z-index:60; padding:6px 10px;
           font-family:'Saira Condensed',sans-serif; font-weight:700; font-size:12px; letter-spacing:.1em;
@@ -6263,41 +6265,65 @@ function DugoutScorecard() {
                             const chip = (x, y, name, cls, anim) => {
                                 const label = String(name).slice(0, 12);
                                 const w = label.length * 4.6 + 12;
-                                return React.createElement("g", Object.assign({ className: `rp-chip ${cls || ""}` }, anim || {}),
+                                const props = Object.assign({ className: `rp-chip ${cls || ""}` }, anim || {});
+                                if (anim && anim.className)
+                                    props.className = `rp-chip ${cls || ""}`; // cls carries the leg classes
+                                return React.createElement("g", props,
                                     React.createElement("rect", { x: x - w / 2, y: y - 6, width: w, height: 12, rx: 6 }),
                                     React.createElement("text", { x, y: y + 3, textAnchor: "middle" }, label));
                             };
-                            // Runner movement: diff the previous step's bases against this
-                            // one BY NAME. A runner on a new base travels there; one who
-                            // vanishes while the score ticks up runs home. Outs just leave —
-                            // the record doesn't say where the tag was, so nothing is invented.
+                            // Runner movement: diff the previous step's bases BY NAME, then
+                            // run each mover base-to-base along the ring — a double is
+                            // home->1st->2nd, a homer is the full lap. Outs just leave; the
+                            // record doesn't say where the tag was, so nothing is invented.
                             const prev = replayIdx > 0 ? replay.steps[replayIdx - 1] : null;
                             const BP = { first: RP_BASE_XY.first, second: RP_BASE_XY.second, third: RP_BASE_XY.third, home: [100, 214] };
-                            const arrivals = {}; // base -> [fromX, fromY]
-                            const homeRuns = [];  // runners animating home to score
+                            const RING = ["home", "first", "second", "third", "home"]; // idx 0..4, 4 = scoring
+                            const ringIdx = { home: 0, first: 1, second: 2, third: 3 };
+                            const moves = []; // {nm, keys:[...ring names], fade}
                             if (prev && st.kind !== "pitch") {
                                 const was = { first: prev.r1, second: prev.r2, third: prev.r3 };
                                 const now = { first: st.r1, second: st.r2, third: st.r3 };
+                                const pathBetween = (a, b) => RING.slice(a, b + 1);
                                 Object.entries(was).forEach(([b, nm]) => {
                                     if (!nm || now[b] === nm)
                                         return;
                                     const to = Object.keys(now).find((k) => now[k] === nm);
-                                    if (to)
-                                        arrivals[to] = BP[b];
+                                    if (to && ringIdx[to] > ringIdx[b])
+                                        moves.push({ nm, keys: pathBetween(ringIdx[b], ringIdx[to]), fade: false, dest: to });
+                                    else if (to)
+                                        moves.push({ nm, keys: [b, to], fade: false, dest: to }); // manual correction: direct
                                     else if (st.scored)
-                                        homeRuns.push({ nm, from: BP[b] });
+                                        moves.push({ nm, keys: pathBetween(ringIdx[b], 4), fade: true });
                                 });
                                 if (st.batter) {
                                     const to = Object.keys(now).find((k) => now[k] === st.batter && was[k] !== st.batter);
                                     if (to)
-                                        arrivals[to] = BP.home;
+                                        moves.push({ nm: st.batter, keys: pathBetween(0, ringIdx[to]), fade: false, dest: to });
+                                    else if (st.scored && /HOME RUN/i.test(st.text || ""))
+                                        moves.push({ nm: st.batter, keys: RING.slice(0), fade: true }); // the full lap
                                 }
                             }
-                            const runAnim = (fromXY, toXY, fade) => ({
-                                key: `mv${replayIdx}${toXY[0]}`,
-                                className: `rp-chip run ${fade ? "score" : "arrive"}`,
-                                style: { "--fx": `${fromXY[0] - toXY[0]}px`, "--fy": `${fromXY[1] - toXY[1]}px`, animationDuration: `${0.6 * replaySpeed}s`, animationDelay: `${(st.kind === "result" ? 0.5 : 0.15) * replaySpeed}s` },
-                            });
+                            const movedTo = {}; // bases whose chip is the final leg of a move
+                            moves.forEach((m) => { if (!m.fade && m.dest) movedTo[m.dest] = true; });
+                            // one chip per leg: appears at its start moment, travels, hands off
+                            const legDur = 0.3 * replaySpeed;
+                            const legStart = (st.kind === "result" ? 0.45 : 0.15) * replaySpeed;
+                            const runnerLegs = (m, mi) => {
+                                const pts = m.keys.map((k) => BP[k]);
+                                const out = [];
+                                for (let k = 1; k < pts.length; k++) {
+                                    const a = pts[k - 1], z = pts[k];
+                                    const last = k === pts.length - 1;
+                                    const cls = last ? (m.fade ? "leg score" : "leg stay") : "leg";
+                                    const yOff = m.keys[k] === "home" ? -8 : -10;
+                                    out.push(chip(z[0], z[1] + yOff, m.nm, `run ${cls}`, {
+                                        key: `mv${replayIdx}-${mi}-${k}`,
+                                        style: { "--fx": `${a[0] - z[0]}px`, "--fy": `${a[1] - z[1]}px`, animationDuration: `${legDur}s`, animationDelay: `${legStart + (k - 1) * legDur}s` },
+                                    }));
+                                }
+                                return out;
+                            };
                             const throwLegs = (pts, startDelay) => {
                                 const legs = [];
                                 let t0 = startDelay;
@@ -6356,13 +6382,13 @@ function DugoutScorecard() {
                                 React.createElement("path", { d: "M96 212 L104 212 L104 215 L100 218 L96 215 Z", fill: "#FFFFFF", opacity: "0.9" }),
                                 // fielders by name at their positions
                                 Object.entries(FIELD_XY).map(([n, [fx, fy]]) => atPos[n] && React.createElement("text", { key: n, x: fx, y: n === "2" ? fy + 9 : fy - 5, textAnchor: "middle", className: "rp-name" }, String(atPos[n]).slice(0, 11))),
-                                // runner chips at bases — arriving runners slide in from
-                                // wherever they were; the offset applies to the whole chip
-                                st.on1 && st.r1 && chip(RP_BASE_XY.first[0] + 4, RP_BASE_XY.first[1] - 10, st.r1, "run", arrivals.first && runAnim(arrivals.first, RP_BASE_XY.first)),
-                                st.on2 && st.r2 && chip(RP_BASE_XY.second[0], RP_BASE_XY.second[1] - 10, st.r2, "run", arrivals.second && runAnim(arrivals.second, RP_BASE_XY.second)),
-                                st.on3 && st.r3 && chip(RP_BASE_XY.third[0] - 4, RP_BASE_XY.third[1] - 10, st.r3, "run", arrivals.third && runAnim(arrivals.third, RP_BASE_XY.third)),
-                                // scoring runners: run the line home, then fade
-                                homeRuns.map((h, i) => chip(BP.home[0], BP.home[1] - 8, h.nm, "run", Object.assign(runAnim(h.from, BP.home, true), { key: `hr${replayIdx}-${i}` }))),
+                                // runner chips at bases — a base being arrived-at gets its
+                                // chip from the move's final leg instead (it travels in)
+                                st.on1 && st.r1 && !movedTo.first && chip(RP_BASE_XY.first[0] + 4, RP_BASE_XY.first[1] - 10, st.r1, "run"),
+                                st.on2 && st.r2 && !movedTo.second && chip(RP_BASE_XY.second[0], RP_BASE_XY.second[1] - 10, st.r2, "run"),
+                                st.on3 && st.r3 && !movedTo.third && chip(RP_BASE_XY.third[0] - 4, RP_BASE_XY.third[1] - 10, st.r3, "run"),
+                                // movers: base-to-base legs (doubles turn at first, homers lap)
+                                moves.map((m, mi) => runnerLegs(m, mi)),
                                 // batter chip + callout bubble
                                 st.batter && chip(64, 222, st.batter, st.kind === "result" ? "bat res" : "bat"),
                                 callout && React.createElement("g", { className: "rp-callout" },
