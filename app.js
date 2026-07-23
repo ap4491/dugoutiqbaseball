@@ -290,12 +290,17 @@ const buildSituational = (g, side, bi) => {
 // Fielder coordinates in the SAME coordinate space as the app's diamond
 // (viewBox "0 -12 200 186", home plate at 100/158, second base at 100/14) so the
 // replay field reads as the same object the scorer already knows.
+// Perspective field ("under the lights"): viewBox 0 0 200 240, home plate at
+// the bottom centre, second base up-field, outfield receding to the wall. The
+// vertical squash toward the top is the perspective.
 const FIELD_XY = {
-    1: [100, 96], 2: [100, 170], 3: [148, 108], 4: [138, 60], 5: [52, 108],
-    6: [62, 60], 7: [30, 10], 8: [100, -4], 9: [170, 10],
+    1: [100, 176], 2: [100, 226], 3: [147, 160], 4: [128, 144], 5: [53, 160],
+    6: [72, 144], 7: [42, 102], 8: [100, 90], 9: [158, 102],
 };
-const HOME_XY = [100, 158];
-const MOUND_XY = [100, 96];
+const HOME_XY = [100, 214];
+const MOUND_XY = [100, 176];
+// base pads in the same perspective
+const BASE_XY = { first: [149, 168], second: [100, 132], third: [51, 168] };
 // Pull the ball's destination back out of a result string so a replay can show
 // which way it was hit. Covers the notations DugoutIQ writes:
 //   "single to LF"   -> 7   (hits carry a position label)
@@ -673,7 +678,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "141"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "142"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -5281,22 +5286,37 @@ function DugoutScorecard() {
         .rp-prog { height:4px; background:rgba(255,255,255,.08); border-radius:2px; overflow:hidden; }
         .rp-bar { height:100%; background:var(--amberw); transition:width .15s linear; }
         .rp-count { text-align:center; font-size:11px; color:var(--powder); margin-top:4px; }
-        .rp-dia { width:100%; max-width:230px; display:block; margin:2px auto 6px; }
-        .rp-pad { fill:#1A2C60; stroke:#3D6FB4; stroke-width:2; transition:fill .18s, filter .18s; }
-        .rp-pad.occ { fill:var(--white); stroke:var(--white); filter:drop-shadow(0 0 8px rgba(255,255,255,.7)); }
-        .rp-name { fill:var(--white); font-family:'Saira Condensed',sans-serif; font-size:12px;
-          font-weight:700; letter-spacing:.04em; paint-order:stroke;
-          stroke:rgba(20,32,74,.85); stroke-width:3px; }
+        .rp-dia { width:100%; max-width:300px; display:block; margin:2px auto 6px; border-radius:12px; }
+        .rp-star { fill:rgba(255,255,255,.5); }
+        .rp-pole { stroke:#25406B; stroke-width:2; }
+        .rp-lamp { fill:#F5E6B0; }
+        .rp-lampglow { fill:rgba(245,197,24,.16); }
+        .rp-walltop { fill:none; stroke:var(--amberw); stroke-width:.9; opacity:.7; }
+        .rp-stripe { fill:rgba(255,255,255,.035); }
+        .rp-bse { fill:#E9EDF5; stroke:#B9C4D8; stroke-width:.7; }
+        .rp-bse.occ { fill:#FFFFFF; stroke:#FFFFFF; filter:drop-shadow(0 0 5px rgba(255,255,255,.85)); }
+        .rp-name { fill:var(--white); font-family:'Saira Condensed',sans-serif; font-size:8.5px;
+          font-weight:700; letter-spacing:.05em; paint-order:stroke;
+          stroke:rgba(10,26,51,.9); stroke-width:2.4px; }
+        .rp-chip rect { fill:#3B8BDD; stroke:rgba(255,255,255,.35); stroke-width:.6; }
+        .rp-chip text { fill:#fff; font-family:'Saira Condensed',sans-serif; font-size:7.5px; font-weight:700; letter-spacing:.04em; }
+        .rp-chip.bat rect { fill:#0E2244; stroke:var(--amberw); }
+        .rp-chip.bat.res rect { fill:var(--amberw); stroke:var(--amberw); }
+        .rp-chip.bat.res text { fill:#0A1A33; }
+        .rp-callout rect { fill:#FFFFFF; filter:drop-shadow(0 1.5px 2.5px rgba(0,0,0,.4)); }
+        .rp-callout text { fill:#0A1A33; font-family:'Saira Condensed',sans-serif; font-size:8.5px; font-weight:700; letter-spacing:.03em; }
         .rp-spot { fill:none; stroke:var(--amberw); stroke-width:1.5; opacity:.85; }
-        .rp-ball { fill:#fff; filter:drop-shadow(0 0 5px rgba(255,255,255,.75)); }
-        .rp-ball.pitch { animation:rpFly .42s cubic-bezier(.35,0,.7,1) forwards; }
+        .rp-ball { fill:#fff; filter:drop-shadow(0 0 4px rgba(255,255,255,.7)); }
+        .rp-ball.pitch { animation:rpFly .42s cubic-bezier(.35,0,.7,1) both; }
         .rp-ball.hit { animation:rpFly .8s cubic-bezier(.15,.7,.35,1) both; }
+        .rp-sh { fill:#000; opacity:.3; animation:rpFlySh .8s cubic-bezier(.15,.7,.35,1) both; }
         @keyframes rpFly { from { transform:translate(var(--fx),var(--fy)); opacity:.25; } to { transform:translate(0,0); opacity:1; } }
+        @keyframes rpFlySh { from { transform:translate(var(--fx),var(--fy)); } to { transform:translate(0,0); } }
         .rp-score b.scored { color:var(--amberw); animation:rpPulse .7s ease-out; }
         @keyframes rpPulse { 0%{ transform:scale(1); } 35%{ transform:scale(1.35); } 100%{ transform:scale(1); } }
         .rp-runs { text-align:center; color:var(--amberw); font-weight:700; font-size:12px;
           letter-spacing:.1em; text-transform:uppercase; height:14px; }
-        @media (prefers-reduced-motion:reduce){ .rp-ball.pitch,.rp-ball.hit,.rp-score b.scored{ animation:none; } }
+        @media (prefers-reduced-motion:reduce){ .rp-ball.pitch,.rp-ball.hit,.rp-sh,.rp-score b.scored{ animation:none; } }
         /* demo-replay (only with ?demo in the URL) */
         .demo-launch { position:fixed; left:10px; bottom:10px; z-index:60; padding:6px 10px;
           font-family:'Saira Condensed',sans-serif; font-weight:700; font-size:12px; letter-spacing:.1em;
@@ -6200,42 +6220,96 @@ function DugoutScorecard() {
                             const to = isPitch ? HOME_XY : (dest || HOME_XY);
                             const isEventThrow = st.kind === "event" && chain;
                             const show = isPitch || !!dest || isEventThrow;
-                            const bases = [
-                                { k: "on1", n: "r1", x: 172, y: 86, lx: 152, ly: 91, anchor: "end" },
-                                { k: "on2", n: "r2", x: 100, y: 14, lx: 100, ly: 46, anchor: "middle" },
-                                { k: "on3", n: "r3", x: 28, y: 86, lx: 48, ly: 91, anchor: "start" },
-                            ];
-                            // throw legs shared by batted-ball chains and event throws
+                            // fielding team's players by position, from the saved lineup
+                            const fieldSide = st.h === "top" ? "home" : "away";
+                            const flu = (replay.teams && replay.teams[fieldSide] && replay.teams[fieldSide].lineup) || [];
+                            const POS_TO_N = { P: 1, C: 2, "1B": 3, "2B": 4, "3B": 5, SS: 6, LF: 7, CF: 8, RF: 9 };
+                            const atPos = {};
+                            flu.forEach((p) => { const n = POS_TO_N[(p.pos || "").toUpperCase()]; if (n && !atPos[n]) atPos[n] = p.name; });
+                            // short label for the callout bubble
+                            const CALL = [[/^HOME RUN/i, "Home Run"], [/^single/i, "Single"], [/^double play/i, "Double Play"], [/^double/i, "Double"], [/^triple play/i, "Triple Play"], [/^triple/i, "Triple"], [/walk/i, "Walk"], [/^strikeout/i, "Strikeout"], [/^flyout/i, "Fly Out"], [/^groundout/i, "Groundout"], [/^lineout/i, "Lineout"], [/^popout/i, "Pop Out"], [/^sac fly/i, "Sac Fly"], [/^sac bunt/i, "Sac Bunt"], [/fielder's choice/i, "Fielder's Choice"], [/reached on E/i, "Error"], [/hit by pitch/i, "HBP"], [/interference/i, "Interference"], [/caught stealing/i, "Caught Stealing"], [/picked off/i, "Picked Off"], [/steals/i, "Stolen Base"], [/out at 1st/i, "Out at 1st"]];
+                            const callout = st.kind === "pitch" ? (st.text || "").replace(/ \u2014.*$/, "")
+                                : (CALL.find(([re]) => re.test(st.text || "")) || [null, (st.text || "").slice(0, 16)])[1];
+                            const chip = (x, y, name, cls) => {
+                                const label = String(name).slice(0, 12);
+                                const w = label.length * 4.6 + 12;
+                                return React.createElement("g", { className: `rp-chip ${cls || ""}` },
+                                    React.createElement("rect", { x: x - w / 2, y: y - 6, width: w, height: 12, rx: 6 }),
+                                    React.createElement("text", { x, y: y + 3, textAnchor: "middle" }, label));
+                            };
                             const throwLegs = (pts, startDelay) => {
                                 const legs = [];
                                 let t0 = startDelay;
                                 for (let k = 1; k < pts.length; k++) {
                                     const a = pts[k - 1], z = pts[k];
-                                    legs.push(React.createElement("circle", { key: `c${k}`, className: "rp-ball hit", r: 3.4, cx: z[0], cy: z[1], style: { "--fx": `${a[0] - z[0]}px`, "--fy": `${a[1] - z[1]}px`, animationDuration: `${0.3 * replaySpeed}s`, animationDelay: `${t0}s` } }));
+                                    legs.push(React.createElement("ellipse", { key: `s${k}`, className: "rp-sh", rx: 2.6, ry: 1.1, cx: z[0], cy: z[1] + 3, style: { "--fx": `${a[0] - z[0]}px`, "--fy": `${a[1] - z[1]}px`, animationDuration: `${0.3 * replaySpeed}s`, animationDelay: `${t0}s` } }));
+                                    legs.push(React.createElement("circle", { key: `c${k}`, className: "rp-ball hit", r: 3, cx: z[0], cy: z[1], style: { "--fx": `${a[0] - z[0]}px`, "--fy": `${a[1] - z[1]}px`, animationDuration: `${0.3 * replaySpeed}s`, animationDelay: `${t0}s` } }));
                                     t0 += 0.32 * replaySpeed;
                                 }
                                 return legs;
                             };
-                            return React.createElement("svg", { className: "rp-dia", viewBox: "0 -12 200 186", "aria-hidden": "true" },
-                                React.createElement("path", { d: "M100 158 L172 86 L100 14 L28 86 Z", fill: "rgba(255,255,255,0.04)", stroke: "#3D6FB4", strokeWidth: "2" }),
-                                bases.map((b) => React.createElement("g", { key: b.k },
-                                    React.createElement("g", { transform: `translate(${b.x} ${b.y}) rotate(45)` },
-                                        React.createElement("rect", { x: "-13", y: "-13", width: "26", height: "26", rx: "3", className: `rp-pad ${st[b.k] ? "occ" : ""}` })),
-                                    st[b.k] && st[b.n] && React.createElement("text", { x: b.lx, y: b.ly, textAnchor: b.anchor, className: "rp-name" }, String(st[b.n]).slice(0, 10)))),
-                                React.createElement("g", { transform: "translate(100 158)" },
-                                    React.createElement("path", { d: "M-11 -6 L11 -6 L11 2 L0 11 L-11 2 Z", fill: "#FFFFFF", opacity: "0.85" })),
-                                dest && React.createElement("circle", { cx: dest[0], cy: dest[1], r: "4", className: "rp-spot" }),
+                            const ballWithShadow = (cls, r, cx, cy, fx, fy, dur, delay) => React.createElement(React.Fragment, null,
+                                React.createElement("ellipse", { className: "rp-sh", rx: r * 0.85, ry: r * 0.4, cx, cy: cy + 3, style: { "--fx": `${fx}px`, "--fy": `${fy}px`, animationDuration: `${dur}s`, animationDelay: `${delay}s` } }),
+                                React.createElement("circle", { className: `rp-ball ${cls}`, r, cx, cy, style: { "--fx": `${fx}px`, "--fy": `${fy}px`, animationDuration: `${dur}s`, animationDelay: `${delay}s` } }));
+                            const lamps = (cx) => React.createElement("g", { className: "rp-tower" },
+                                React.createElement("line", { x1: cx, y1: 34, x2: cx, y2: 58, className: "rp-pole" }),
+                                React.createElement("ellipse", { cx, cy: 27, rx: 13, ry: 7, className: "rp-lampglow" }),
+                                [-8, 0, 8].map((dx) => React.createElement("circle", { key: dx, cx: cx + dx, cy: 24, r: 2.2, className: "rp-lamp" })),
+                                [-8, 0, 8].map((dx) => React.createElement("circle", { key: "b" + dx, cx: cx + dx, cy: 30, r: 2.2, className: "rp-lamp" })));
+                            return React.createElement("svg", { className: "rp-dia", viewBox: "0 0 200 240", "aria-hidden": "true" },
+                                React.createElement("defs", null,
+                                    React.createElement("linearGradient", { id: "rpSky", x1: "0", y1: "0", x2: "0", y2: "1" },
+                                        React.createElement("stop", { offset: "0", stopColor: "#0A1A33" }),
+                                        React.createElement("stop", { offset: "0.75", stopColor: "#12294D" }),
+                                        React.createElement("stop", { offset: "1", stopColor: "#1B3A63" })),
+                                    React.createElement("linearGradient", { id: "rpGrass", x1: "0", y1: "0", x2: "0", y2: "1" },
+                                        React.createElement("stop", { offset: "0", stopColor: "#1C5236" }),
+                                        React.createElement("stop", { offset: "1", stopColor: "#123D27" })),
+                                    React.createElement("clipPath", { id: "rpFieldClip" },
+                                        React.createElement("path", { d: "M0 86 Q100 62 200 86 L200 240 L0 240 Z" }))),
+                                // night sky + a few stars
+                                React.createElement("rect", { x: 0, y: 0, width: 200, height: 82, fill: "url(#rpSky)" }),
+                                [[18, 12], [52, 7], [88, 16], [128, 6], [163, 13], [187, 9]].map(([sx, sy], i) => React.createElement("circle", { key: i, cx: sx, cy: sy, r: 0.7, className: "rp-star" })),
+                                lamps(30), lamps(170),
+                                // grandstand band + outfield wall
+                                React.createElement("path", { d: "M0 82 Q100 58 200 82 L200 70 Q100 46 0 70 Z", fill: "#0E2244" }),
+                                React.createElement("path", { d: "M0 84 Q100 60 200 84 L200 78 Q100 54 0 78 Z", fill: "#122B52" }),
+                                React.createElement("path", { d: "M0 86 Q100 62 200 86", className: "rp-walltop" }),
+                                // field
+                                React.createElement("path", { d: "M0 86 Q100 62 200 86 L200 240 L0 240 Z", fill: "url(#rpGrass)" }),
+                                // mowing stripes fanning from the plate
+                                React.createElement("g", { clipPath: "url(#rpFieldClip)" }, [[-46, -24], [-24, -8], [-8, 8], [8, 24], [24, 46]].map(([a1, a2], i) => (i % 2 === 0 ? React.createElement("path", { key: i, d: `M100 218 L${100 + a1 * 2.4} 70 L${100 + a2 * 2.4} 70 Z`, className: "rp-stripe" }) : null))),
+                                // dirt infield + inner grass + basepaths
+                                React.createElement("path", { d: "M100 224 L163 168 L100 122 L37 168 Z", fill: "#5E3A22", stroke: "rgba(255,255,255,.14)", strokeWidth: "1.2", strokeLinejoin: "round" }),
+                                React.createElement("path", { d: "M100 210 L145 168 L100 134 L55 168 Z", fill: "#17492F" }),
+                                React.createElement("ellipse", { cx: MOUND_XY[0], cy: MOUND_XY[1], rx: 9, ry: 4.5, fill: "#6E4327" }),
+                                React.createElement("ellipse", { cx: 100, cy: 216, rx: 12, ry: 6, fill: "#6E4327" }),
+                                // bases + home plate
+                                Object.entries(BASE_XY).map(([b, [bx, by]]) => React.createElement("g", { key: b, transform: `translate(${bx} ${by}) rotate(45)` },
+                                    React.createElement("rect", { x: -3, y: -3, width: 6, height: 6, rx: 0.8, className: `rp-bse ${st[b === "first" ? "on1" : b === "second" ? "on2" : "on3"] ? "occ" : ""}` }))),
+                                React.createElement("path", { d: "M96 212 L104 212 L104 215 L100 218 L96 215 Z", fill: "#FFFFFF", opacity: "0.9" }),
+                                // fielders by name at their positions
+                                Object.entries(FIELD_XY).map(([n, [fx, fy]]) => atPos[n] && React.createElement("text", { key: n, x: fx, y: n === "2" ? fy + 9 : fy - 5, textAnchor: "middle", className: "rp-name" }, String(atPos[n]).slice(0, 11))),
+                                // runner chips at bases
+                                st.on1 && st.r1 && chip(BASE_XY.first[0] + 4, BASE_XY.first[1] - 10, st.r1, "run"),
+                                st.on2 && st.r2 && chip(BASE_XY.second[0], BASE_XY.second[1] - 10, st.r2, "run"),
+                                st.on3 && st.r3 && chip(BASE_XY.third[0] - 4, BASE_XY.third[1] - 10, st.r3, "run"),
+                                // batter chip + callout bubble
+                                st.batter && chip(64, 222, st.batter, st.kind === "result" ? "bat res" : "bat"),
+                                callout && React.createElement("g", { className: "rp-callout" },
+                                    React.createElement("rect", { x: 100 - (callout.length * 5.2 + 14) / 2, y: 190, width: callout.length * 5.2 + 14, height: 14, rx: 4 }),
+                                    React.createElement("text", { x: 100, y: 200, textAnchor: "middle" }, callout)),
+                                dest && React.createElement("circle", { cx: dest[0], cy: dest[1], r: 4, className: "rp-spot" }),
                                 show && (isPitch
-                                    ? React.createElement("circle", { key: `p${replayIdx}`, className: "rp-ball pitch", r: 3.2, cx: to[0], cy: to[1], style: { "--fx": `${from[0] - to[0]}px`, "--fy": `${from[1] - to[1]}px`, animationDuration: `${0.42 * replaySpeed}s` } })
+                                    ? React.createElement("g", { key: `p${replayIdx}` }, ballWithShadow("pitch", 2.8, to[0], to[1], from[0] - to[0], from[1] - to[1], 0.42 * replaySpeed, 0))
                                     : isEventThrow
-                                        // CS / pickoff: the fielder already holds the ball — just the throw(s)
-                                        ? React.createElement(React.Fragment, { key: `e${replayIdx}` }, throwLegs(chain, 0.12 * replaySpeed))
-                                        : React.createElement(React.Fragment, { key: `h${replayIdx}` },
-                                            React.createElement("circle", { className: "rp-ball pitch", r: 3, cx: HOME_XY[0], cy: HOME_XY[1], style: { "--fx": `${MOUND_XY[0] - HOME_XY[0]}px`, "--fy": `${MOUND_XY[1] - HOME_XY[1]}px`, animationDuration: `${0.3 * replaySpeed}s` } }),
+                                        ? React.createElement("g", { key: `e${replayIdx}` }, throwLegs(chain, 0.12 * replaySpeed))
+                                        : React.createElement("g", { key: `h${replayIdx}` },
+                                            ballWithShadow("pitch", 2.6, HOME_XY[0], HOME_XY[1], MOUND_XY[0] - HOME_XY[0], MOUND_XY[1] - HOME_XY[1], 0.3 * replaySpeed, 0),
                                             (() => {
                                                 const first = chain ? chain[0] : to;
-                                                const contact = React.createElement("circle", { key: "c0", className: "rp-ball hit", r: 4, cx: first[0], cy: first[1], style: { "--fx": `${HOME_XY[0] - first[0]}px`, "--fy": `${HOME_XY[1] - first[1]}px`, animationDuration: `${(chain ? 0.5 : 0.8) * replaySpeed}s`, animationDelay: `${0.34 * replaySpeed}s` } });
-                                                return chain ? [contact].concat(throwLegs(chain, (0.34 + 0.5) * replaySpeed)) : contact;
+                                                const contact = ballWithShadow("hit", 3.4, first[0], first[1], HOME_XY[0] - first[0], HOME_XY[1] - first[1], (chain ? 0.5 : 0.8) * replaySpeed, 0.34 * replaySpeed);
+                                                return chain ? React.createElement(React.Fragment, null, contact, throwLegs(chain, (0.34 + 0.5) * replaySpeed)) : contact;
                                             })())));
                         })(),
                         React.createElement("div", { className: `rp-text ${st.kind === "result" ? "res" : st.kind === "event" ? "ev" : ""}` }, st.text || ""),
