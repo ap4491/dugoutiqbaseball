@@ -328,31 +328,63 @@ const locFromResult = (txt) => {
 // is re-scored — we walk the record that was already written, rebuilding the
 // count from the stored pitch tokens. Games scored before situation stamping
 // still replay; they just can't show bases/outs/score (sit is absent).
+// Full fielder chain from a result ("6-3" -> [6,3], "5-4-3" -> [5,4,3]) so a
+// replay can animate the throws, not just the ball reaching the first fielder.
+// Single-point plays (hits, air outs, errors) return null — nothing was thrown.
+const seqFromResult = (txt) => {
+    if (typeof txt !== "string")
+        return null;
+    const m = txt.match(/\b(\d(?:-\d)+)\b/);
+    if (!m)
+        return null;
+    const chain = m[1].split("-").map(Number).filter((n) => n >= 1 && n <= 9);
+    return chain.length > 1 ? chain : null;
+};
+// How many runs did this play text describe? The app writes runs in a small,
+// controlled set of phrases, so the replay can rebuild a running score even for
+// games saved before the score was stamped per plate appearance.
+const parseRunsFromText = (t) => {
+    if (typeof t !== "string")
+        return 0;
+    let n = 0;
+    let rest = t;
+    const num = rest.match(/\u2014\s*(\d+)(?:\s*more)?\s*score/); // "— 2 score" / "— 1 scores"
+    if (num) {
+        n += Number(num[1]);
+        rest = rest.replace(num[0], "");
+    }
+    if (/run forced in/.test(rest))
+        n += 1;
+    const sc = (rest.match(/\bscores\b/g) || []).length; // "run scores", "A scores", "; B scores (E3)"
+    n += sc;
+    if (!sc && /steals home|awarded home/.test(rest))
+        n += 1;
+    return n;
+};
 const buildReplaySteps = (g) => {
     const steps = [];
     const log = g.log || [];
-    // Post-play state for a result step: the NEXT plate appearance's stamp is the
-    // state after this play resolved (runs scored, runners moved). Without this
-    // the score and bases lag a beat behind the play you're reading.
     const nextSitAfter = (idx) => {
         for (let j = idx + 1; j < log.length; j++)
             if (log[j].type === "pa" && log[j].sit)
                 return log[j].sit;
         return null;
     };
-    const finalA = (g.linescore || []).reduce((n, r) => n + (r.away || 0), 0);
-    const finalH = (g.linescore || []).reduce((n, r) => n + (r.home || 0), 0);
-    const stateOf = (s, fallbackScore) => ({
-        outs: s ? s.outs : null,
-        on1: s ? !!s.on1 : null, on2: s ? !!s.on2 : null, on3: s ? !!s.on3 : null,
-        r1: s ? s.r1 || null : null, r2: s ? s.r2 || null : null, r3: s ? s.r3 || null : null,
-        aR: s && s.aR != null ? s.aR : (fallbackScore ? finalA : null),
-        hR: s && s.hR != null ? s.hR : (fallbackScore ? finalH : null),
+    // Running score: starts 0-0 and climbs. Anchored to the per-PA stamps when a
+    // game has them (exact); otherwise rebuilt from the play text via
+    // parseRunsFromText, so older games replay correctly instead of flashing the
+    // final score on every play.
+    let accA = 0, accH = 0;
+    const baseState = (sit) => ({
+        outs: sit ? sit.outs : null,
+        on1: sit ? !!sit.on1 : null, on2: sit ? !!sit.on2 : null, on3: sit ? !!sit.on3 : null,
+        r1: sit ? sit.r1 || null : null, r2: sit ? sit.r2 || null : null, r3: sit ? sit.r3 || null : null,
     });
     log.forEach((e, idx) => {
         if (e.type === "pa") {
             const s0 = e.sit || null;
-            const pre = stateOf(s0, false);
+            if (s0 && s0.aR != null) { accA = s0.aR; accH = s0.hR; } // anchor to truth
+            const pre = Object.assign(baseState(s0), { aR: accA, hR: accH });
             const ident = { i: e.i, h: e.h, batter: e.batter, bi: e.bi, side: e.side };
             let b = 0, s = 0;
             (e.seq || []).forEach((lab) => {
@@ -369,21 +401,29 @@ const buildReplaySteps = (g) => {
                 steps.push(Object.assign({}, ident, pre, { kind: "pitch", balls: b, strikes: s, text }));
             });
             if (e.result) {
-                // show the state the play LEFT behind, and flag a run so the
-                // scoreboard can pulse when it changes
-                const post = stateOf(nextSitAfter(idx) || (s0 ? null : null), true);
-                const scored = pre.aR != null && post.aR != null &&
-                    ((post.aR - pre.aR) + (post.hR - pre.hR)) > 0;
+                const runs = parseRunsFromText(e.result);
+                if (e.h === "top") accA += runs; else accH += runs;
+                const ns = nextSitAfter(idx);
+                if (ns && ns.aR != null) { accA = ns.aR; accH = ns.hR; } // re-anchor
+                const post = Object.assign(baseState(ns), { aR: accA, hR: accH });
+                const scored = (post.aR + post.hR) > (pre.aR + pre.hR);
                 steps.push(Object.assign({}, ident, post, {
                     kind: "result", balls: b, strikes: s, text: e.result,
-                    loc: locFromResult(e.result), scored,
-                    runs: pre.aR != null && post.aR != null ? (post.aR - pre.aR) + (post.hR - pre.hR) : 0,
+                    loc: locFromResult(e.result), seqPos: seqFromResult(e.result), scored,
+                    runs: (post.aR - pre.aR) + (post.hR - pre.hR),
                 }));
             }
         }
         else if (e.type === "ev" && e.t) {
-            const post = stateOf(nextSitAfter(idx), false);
-            steps.push(Object.assign({ kind: "event", i: e.i, h: e.h, text: e.t, balls: null, strikes: null }, post));
+            const preTotal = accA + accH;
+            const runs = parseRunsFromText(e.t);
+            if (e.h === "top") accA += runs; else accH += runs;
+            const ns = nextSitAfter(idx);
+            if (ns && ns.aR != null) { accA = ns.aR; accH = ns.hR; }
+            const post = Object.assign(baseState(ns), { aR: accA, hR: accH });
+            steps.push(Object.assign({ kind: "event", i: e.i, h: e.h, text: e.t, balls: null, strikes: null,
+                seqPos: seqFromResult(e.t),
+                scored: (accA + accH) > preTotal, runs: (accA + accH) - preTotal }, post));
         }
     });
     return steps;
@@ -633,7 +673,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "138"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "141"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1244,7 +1284,7 @@ function DugoutScorecard() {
                     replayTimer.current = null;
                     return last;
                 }
-                replayTimer.current = setTimeout(tick, 900 * replaySpeed);
+                replayTimer.current = setTimeout(tick, 1500 * replaySpeed);
                 return i + 1;
             });
         };
@@ -3412,25 +3452,25 @@ function DugoutScorecard() {
         });
         setBaseMenu(null);
     };
-    const caughtStealing = (base) => {
+    const caughtStealing = (base, note) => {
         const who = runnerLabel(base);
         const targetTxt = base === "third" ? "home" : baseLabel(base === "first" ? "second" : "third");
         mutate((g) => {
             cardOut(g, g.bases[base], g.outs + 1);
             g.bases[base] = false;
             chargeP(g, "outs");
-            logPlay(g, `${who} caught stealing ${targetTxt} (CS)`);
+            logPlay(g, `${who} caught stealing ${targetTxt} (CS${note ? " " + note : ""})`);
             recordOut(g);
         });
         setBaseMenu(null);
     };
-    const pickedOff = (base) => {
+    const pickedOff = (base, note) => {
         const who = runnerLabel(base);
         mutate((g) => {
             cardOut(g, g.bases[base], g.outs + 1);
             g.bases[base] = false;
             chargeP(g, "outs");
-            logPlay(g, `${who} picked off ${baseLabel(base)} (PO)`);
+            logPlay(g, `${who} picked off ${baseLabel(base)} (PO${note ? " " + note : ""})`);
             recordOut(g);
         });
         setBaseMenu(null);
@@ -3497,7 +3537,7 @@ function DugoutScorecard() {
             pb: () => playWildPitch("pb"),
             balk: () => playBalk(),
             steal: () => stealBase(s.base || "first"),
-            cs: () => caughtStealing(s.base || "first"),
+            cs: () => caughtStealing(s.base || "first", s.note), po: () => pickedOff(s.base || "first", s.note),
             move: () => moveRunner(s.from, s.to),
             scores: () => runnerScores(s.base || "third", s.cause),
             advError: () => advanceOnError(s.base || "first", s.pos || 3),
@@ -5250,7 +5290,7 @@ function DugoutScorecard() {
         .rp-spot { fill:none; stroke:var(--amberw); stroke-width:1.5; opacity:.85; }
         .rp-ball { fill:#fff; filter:drop-shadow(0 0 5px rgba(255,255,255,.75)); }
         .rp-ball.pitch { animation:rpFly .42s cubic-bezier(.35,0,.7,1) forwards; }
-        .rp-ball.hit { animation:rpFly .7s cubic-bezier(.15,.7,.35,1) forwards; }
+        .rp-ball.hit { animation:rpFly .8s cubic-bezier(.15,.7,.35,1) both; }
         @keyframes rpFly { from { transform:translate(var(--fx),var(--fy)); opacity:.25; } to { transform:translate(0,0); opacity:1; } }
         .rp-score b.scored { color:var(--amberw); animation:rpPulse .7s ease-out; }
         @keyframes rpPulse { 0%{ transform:scale(1); } 35%{ transform:scale(1.35); } 100%{ transform:scale(1); } }
@@ -6154,15 +6194,28 @@ function DugoutScorecard() {
                         st.batter && React.createElement("div", { className: "rp-batter" }, "AB: ", st.batter),
                         (() => {
                             const isPitch = st.kind === "pitch";
+                            const chain = (st.seqPos && st.seqPos.length > 1) ? st.seqPos.map((n) => FIELD_XY[n]).filter(Boolean) : null;
                             const dest = st.kind === "result" && st.loc ? FIELD_XY[st.loc] : null;
                             const from = isPitch ? MOUND_XY : HOME_XY;
                             const to = isPitch ? HOME_XY : (dest || HOME_XY);
-                            const show = isPitch || !!dest;
+                            const isEventThrow = st.kind === "event" && chain;
+                            const show = isPitch || !!dest || isEventThrow;
                             const bases = [
                                 { k: "on1", n: "r1", x: 172, y: 86, lx: 152, ly: 91, anchor: "end" },
                                 { k: "on2", n: "r2", x: 100, y: 14, lx: 100, ly: 46, anchor: "middle" },
                                 { k: "on3", n: "r3", x: 28, y: 86, lx: 48, ly: 91, anchor: "start" },
                             ];
+                            // throw legs shared by batted-ball chains and event throws
+                            const throwLegs = (pts, startDelay) => {
+                                const legs = [];
+                                let t0 = startDelay;
+                                for (let k = 1; k < pts.length; k++) {
+                                    const a = pts[k - 1], z = pts[k];
+                                    legs.push(React.createElement("circle", { key: `c${k}`, className: "rp-ball hit", r: 3.4, cx: z[0], cy: z[1], style: { "--fx": `${a[0] - z[0]}px`, "--fy": `${a[1] - z[1]}px`, animationDuration: `${0.3 * replaySpeed}s`, animationDelay: `${t0}s` } }));
+                                    t0 += 0.32 * replaySpeed;
+                                }
+                                return legs;
+                            };
                             return React.createElement("svg", { className: "rp-dia", viewBox: "0 -12 200 186", "aria-hidden": "true" },
                                 React.createElement("path", { d: "M100 158 L172 86 L100 14 L28 86 Z", fill: "rgba(255,255,255,0.04)", stroke: "#3D6FB4", strokeWidth: "2" }),
                                 bases.map((b) => React.createElement("g", { key: b.k },
@@ -6172,7 +6225,18 @@ function DugoutScorecard() {
                                 React.createElement("g", { transform: "translate(100 158)" },
                                     React.createElement("path", { d: "M-11 -6 L11 -6 L11 2 L0 11 L-11 2 Z", fill: "#FFFFFF", opacity: "0.85" })),
                                 dest && React.createElement("circle", { cx: dest[0], cy: dest[1], r: "4", className: "rp-spot" }),
-                                show && React.createElement("circle", { key: replayIdx, className: `rp-ball ${isPitch ? "pitch" : "hit"}`, r: isPitch ? 3.2 : 4, cx: to[0], cy: to[1], style: { "--fx": `${from[0] - to[0]}px`, "--fy": `${from[1] - to[1]}px`, animationDuration: `${(isPitch ? 0.42 : 0.7) * replaySpeed}s` } }));
+                                show && (isPitch
+                                    ? React.createElement("circle", { key: `p${replayIdx}`, className: "rp-ball pitch", r: 3.2, cx: to[0], cy: to[1], style: { "--fx": `${from[0] - to[0]}px`, "--fy": `${from[1] - to[1]}px`, animationDuration: `${0.42 * replaySpeed}s` } })
+                                    : isEventThrow
+                                        // CS / pickoff: the fielder already holds the ball — just the throw(s)
+                                        ? React.createElement(React.Fragment, { key: `e${replayIdx}` }, throwLegs(chain, 0.12 * replaySpeed))
+                                        : React.createElement(React.Fragment, { key: `h${replayIdx}` },
+                                            React.createElement("circle", { className: "rp-ball pitch", r: 3, cx: HOME_XY[0], cy: HOME_XY[1], style: { "--fx": `${MOUND_XY[0] - HOME_XY[0]}px`, "--fy": `${MOUND_XY[1] - HOME_XY[1]}px`, animationDuration: `${0.3 * replaySpeed}s` } }),
+                                            (() => {
+                                                const first = chain ? chain[0] : to;
+                                                const contact = React.createElement("circle", { key: "c0", className: "rp-ball hit", r: 4, cx: first[0], cy: first[1], style: { "--fx": `${HOME_XY[0] - first[0]}px`, "--fy": `${HOME_XY[1] - first[1]}px`, animationDuration: `${(chain ? 0.5 : 0.8) * replaySpeed}s`, animationDelay: `${0.34 * replaySpeed}s` } });
+                                                return chain ? [contact].concat(throwLegs(chain, (0.34 + 0.5) * replaySpeed)) : contact;
+                                            })())));
                         })(),
                         React.createElement("div", { className: `rp-text ${st.kind === "result" ? "res" : st.kind === "event" ? "ev" : ""}` }, st.text || ""),
                         React.createElement("div", { className: "rp-prog" },
@@ -6635,8 +6699,8 @@ function DugoutScorecard() {
                         React.createElement("button", { className: "dg", onClick: () => stealBase(baseMenu) }, baseMenu === "third" ? "Steals home" : `Steals ${baseMenu === "first" ? "2nd" : "3rd"}`),
                         React.createElement("button", { className: "dg", onClick: () => runnerAdvanceOn(baseMenu, "wp") }, baseMenu === "third" ? "Scores on wild pitch" : `Takes ${baseMenu === "first" ? "2nd" : "3rd"} on wild pitch`),
                         React.createElement("button", { className: "dg", onClick: () => runnerAdvanceOn(baseMenu, "pb") }, baseMenu === "third" ? "Scores on passed ball" : `Takes ${baseMenu === "first" ? "2nd" : "3rd"} on passed ball`),
-                        React.createElement("button", { className: "dg outb", onClick: () => caughtStealing(baseMenu) }, baseMenu === "third" ? "Caught stealing home" : `Caught stealing ${baseMenu === "first" ? "2nd" : "3rd"}`),
-                        React.createElement("button", { className: "dg outb", onClick: () => pickedOff(baseMenu) }, `Picked off ${baseLabel(baseMenu)}`),
+                        React.createElement("button", { className: "dg outb", onClick: () => { const b = baseMenu; setBaseMenu(null); openFieldSeq("Caught stealing", "Tap the throw in order (e.g. 2-6) — or Skip.", (note) => caughtStealing(b, note)); } }, baseMenu === "third" ? "Caught stealing home" : `Caught stealing ${baseMenu === "first" ? "2nd" : "3rd"}`),
+                        React.createElement("button", { className: "dg outb", onClick: () => { const b = baseMenu; setBaseMenu(null); openFieldSeq("Picked off", "Tap the throw in order (e.g. 1-3) — or Skip.", (note) => pickedOff(b, note)); } }, `Picked off ${baseLabel(baseMenu)}`),
                         React.createElement("button", { className: "dg", onClick: () => { const b = baseMenu; setBaseMenu(null); openFieldOne("Error", "Tap the fielder who made the error.", (pos) => advanceOnError(b, pos)); } }, baseMenu === "third" ? "Scores on error (E)" : `Takes ${baseMenu === "first" ? "2nd" : "3rd"} on error (E)`),
                         React.createElement("button", { className: "dg", onClick: () => obstruction(baseMenu) }, baseMenu === "third" ? "Obstruction \u2014 awarded home" : `Obstruction \u2014 awarded ${baseMenu === "first" ? "2nd" : "3rd"}`),
                         React.createElement("button", { className: `dg ${game.openHit != null ? "" : "hit"}`, onClick: () => runnerScores(baseMenu) }, "Scores \u2014 no RBI"),
