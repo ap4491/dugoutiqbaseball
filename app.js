@@ -686,7 +686,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "146"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "147"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -5322,6 +5322,10 @@ function DugoutScorecard() {
         .rp-chip.bat rect { fill:#0E2244; stroke:var(--amberw); }
         .rp-chip.bat.res rect { fill:var(--amberw); stroke:var(--amberw); }
         .rp-chip.bat.res text { fill:#0A1A33; }
+        .rp-chip.arrive { animation:rpRun .6s ease-out both; }
+        .rp-chip.score { animation:rpRunScore .6s ease-in both; }
+        @keyframes rpRun { from { transform:translate(var(--fx),var(--fy)); } to { transform:translate(0,0); } }
+        @keyframes rpRunScore { 0% { transform:translate(var(--fx),var(--fy)); opacity:1; } 75% { transform:translate(0,0); opacity:1; } 100% { transform:translate(0,0); opacity:0; } }
         .rp-callout rect { fill:#FFFFFF; filter:drop-shadow(0 1.5px 2.5px rgba(0,0,0,.4)); }
         .rp-callout text { fill:#0A1A33; font-family:'Saira Condensed',sans-serif; font-size:8.5px; font-weight:700; letter-spacing:.03em; }
         .rp-spot { fill:none; stroke:var(--amberw); stroke-width:1.5; opacity:.85; }
@@ -5335,7 +5339,7 @@ function DugoutScorecard() {
         @keyframes rpPulse { 0%{ transform:scale(1); } 35%{ transform:scale(1.35); } 100%{ transform:scale(1); } }
         .rp-runs { text-align:center; color:var(--amberw); font-weight:700; font-size:12px;
           letter-spacing:.1em; text-transform:uppercase; height:14px; }
-        @media (prefers-reduced-motion:reduce){ .rp-ball.pitch,.rp-ball.hit,.rp-sh,.rp-score b.scored{ animation:none; } }
+        @media (prefers-reduced-motion:reduce){ .rp-ball.pitch,.rp-ball.hit,.rp-sh,.rp-score b.scored,.rp-chip.arrive{ animation:none; } .rp-chip.score{ animation:none; opacity:0; } }
         /* demo-replay (only with ?demo in the URL) */
         .demo-launch { position:fixed; left:10px; bottom:10px; z-index:60; padding:6px 10px;
           font-family:'Saira Condensed',sans-serif; font-weight:700; font-size:12px; letter-spacing:.1em;
@@ -6256,13 +6260,44 @@ function DugoutScorecard() {
                             const CALL = [[/^HOME RUN/i, "Home Run"], [/^single/i, "Single"], [/^double play/i, "Double Play"], [/^double/i, "Double"], [/^triple play/i, "Triple Play"], [/^triple/i, "Triple"], [/walk/i, "Walk"], [/^strikeout/i, "Strikeout"], [/^flyout/i, "Fly Out"], [/^groundout/i, "Groundout"], [/^lineout/i, "Lineout"], [/^popout/i, "Pop Out"], [/^sac fly/i, "Sac Fly"], [/^sac bunt/i, "Sac Bunt"], [/fielder's choice/i, "Fielder's Choice"], [/reached on E/i, "Error"], [/hit by pitch/i, "HBP"], [/interference/i, "Interference"], [/caught stealing/i, "Caught Stealing"], [/picked off/i, "Picked Off"], [/steals/i, "Stolen Base"], [/out at 1st/i, "Out at 1st"]];
                             const callout = st.kind === "pitch" ? (st.text || "").replace(/ \u2014.*$/, "")
                                 : (CALL.find(([re]) => re.test(st.text || "")) || [null, (st.text || "").slice(0, 16)])[1];
-                            const chip = (x, y, name, cls) => {
+                            const chip = (x, y, name, cls, anim) => {
                                 const label = String(name).slice(0, 12);
                                 const w = label.length * 4.6 + 12;
-                                return React.createElement("g", { className: `rp-chip ${cls || ""}` },
+                                return React.createElement("g", Object.assign({ className: `rp-chip ${cls || ""}` }, anim || {}),
                                     React.createElement("rect", { x: x - w / 2, y: y - 6, width: w, height: 12, rx: 6 }),
                                     React.createElement("text", { x, y: y + 3, textAnchor: "middle" }, label));
                             };
+                            // Runner movement: diff the previous step's bases against this
+                            // one BY NAME. A runner on a new base travels there; one who
+                            // vanishes while the score ticks up runs home. Outs just leave —
+                            // the record doesn't say where the tag was, so nothing is invented.
+                            const prev = replayIdx > 0 ? replay.steps[replayIdx - 1] : null;
+                            const BP = { first: RP_BASE_XY.first, second: RP_BASE_XY.second, third: RP_BASE_XY.third, home: [100, 214] };
+                            const arrivals = {}; // base -> [fromX, fromY]
+                            const homeRuns = [];  // runners animating home to score
+                            if (prev && st.kind !== "pitch") {
+                                const was = { first: prev.r1, second: prev.r2, third: prev.r3 };
+                                const now = { first: st.r1, second: st.r2, third: st.r3 };
+                                Object.entries(was).forEach(([b, nm]) => {
+                                    if (!nm || now[b] === nm)
+                                        return;
+                                    const to = Object.keys(now).find((k) => now[k] === nm);
+                                    if (to)
+                                        arrivals[to] = BP[b];
+                                    else if (st.scored)
+                                        homeRuns.push({ nm, from: BP[b] });
+                                });
+                                if (st.batter) {
+                                    const to = Object.keys(now).find((k) => now[k] === st.batter && was[k] !== st.batter);
+                                    if (to)
+                                        arrivals[to] = BP.home;
+                                }
+                            }
+                            const runAnim = (fromXY, toXY, fade) => ({
+                                key: `mv${replayIdx}${toXY[0]}`,
+                                className: `rp-chip run ${fade ? "score" : "arrive"}`,
+                                style: { "--fx": `${fromXY[0] - toXY[0]}px`, "--fy": `${fromXY[1] - toXY[1]}px`, animationDuration: `${0.6 * replaySpeed}s`, animationDelay: `${(st.kind === "result" ? 0.5 : 0.15) * replaySpeed}s` },
+                            });
                             const throwLegs = (pts, startDelay) => {
                                 const legs = [];
                                 let t0 = startDelay;
@@ -6321,10 +6356,13 @@ function DugoutScorecard() {
                                 React.createElement("path", { d: "M96 212 L104 212 L104 215 L100 218 L96 215 Z", fill: "#FFFFFF", opacity: "0.9" }),
                                 // fielders by name at their positions
                                 Object.entries(FIELD_XY).map(([n, [fx, fy]]) => atPos[n] && React.createElement("text", { key: n, x: fx, y: n === "2" ? fy + 9 : fy - 5, textAnchor: "middle", className: "rp-name" }, String(atPos[n]).slice(0, 11))),
-                                // runner chips at bases
-                                st.on1 && st.r1 && chip(RP_BASE_XY.first[0] + 4, RP_BASE_XY.first[1] - 10, st.r1, "run"),
-                                st.on2 && st.r2 && chip(RP_BASE_XY.second[0], RP_BASE_XY.second[1] - 10, st.r2, "run"),
-                                st.on3 && st.r3 && chip(RP_BASE_XY.third[0] - 4, RP_BASE_XY.third[1] - 10, st.r3, "run"),
+                                // runner chips at bases — arriving runners slide in from
+                                // wherever they were; the offset applies to the whole chip
+                                st.on1 && st.r1 && chip(RP_BASE_XY.first[0] + 4, RP_BASE_XY.first[1] - 10, st.r1, "run", arrivals.first && runAnim(arrivals.first, RP_BASE_XY.first)),
+                                st.on2 && st.r2 && chip(RP_BASE_XY.second[0], RP_BASE_XY.second[1] - 10, st.r2, "run", arrivals.second && runAnim(arrivals.second, RP_BASE_XY.second)),
+                                st.on3 && st.r3 && chip(RP_BASE_XY.third[0] - 4, RP_BASE_XY.third[1] - 10, st.r3, "run", arrivals.third && runAnim(arrivals.third, RP_BASE_XY.third)),
+                                // scoring runners: run the line home, then fade
+                                homeRuns.map((h, i) => chip(BP.home[0], BP.home[1] - 8, h.nm, "run", Object.assign(runAnim(h.from, BP.home, true), { key: `hr${replayIdx}-${i}` }))),
                                 // batter chip + callout bubble
                                 st.batter && chip(64, 222, st.batter, st.kind === "result" ? "bat res" : "bat"),
                                 callout && React.createElement("g", { className: "rp-callout" },
