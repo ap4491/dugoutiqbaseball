@@ -318,7 +318,7 @@ const RECV_XY = {
 const locFromResult = (txt) => {
     if (typeof txt !== "string")
         return null;
-    const byLabel = txt.match(/\bto ([A-Z0-9]{1,2})\b/);
+    const byLabel = txt.match(/\b(?:to|over the) ([A-Z0-9]{1,2})(?: fence)?\b/);
     if (byLabel) {
         const f = FPOS.find((p) => p.l === byLabel[1]);
         if (f)
@@ -421,7 +421,8 @@ const buildReplaySteps = (g) => {
                 const scored = (post.aR + post.hR) > (pre.aR + pre.hR);
                 steps.push(Object.assign({}, ident, post, {
                     kind: "result", balls: b, strikes: s, text: e.result,
-                    loc: locFromResult(e.result), seqPos: seqFromResult(e.result), scored,
+                    loc: locFromResult(e.result), seqPos: seqFromResult(e.result),
+                    over: /over the [A-Z0-9]{1,2} fence/.test(e.result), scored,
                     runs: (post.aR - pre.aR) + (post.hR - pre.hR),
                 }));
             }
@@ -685,7 +686,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "145"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "146"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -2155,7 +2156,7 @@ function DugoutScorecard() {
     /* --- play outcomes (one tap, auto baserunning) --- */
     // loc: fielder position number (1-9) where the ball was hit, or "" if skipped.
     // The scorebook cell reads "1B8" — a single to center.
-    const playHit = (basesTaken, label, loc) => mutate((g) => {
+    const playHit = (basesTaken, label, loc, over) => mutate((g) => {
         addPitch(g);
         g.openK = null;
         const bIdxForHit = g.batter[battingSide];
@@ -2179,7 +2180,10 @@ function DugoutScorecard() {
         const runs = advanceAll(g, basesTaken, g.batter[battingSide]);
         addRuns(g, runs, hitTag + (loc ? ":" + loc : ""));
         st.rbi += runs;
-        const desc = `${label}${where ? ` to ${where}` : ""}${runs ? ` — ${runs} score${runs > 1 ? "" : "s"}` : ""}`;
+        // "over the CF fence" vs the (default) inside-the-park "to CF" — most
+        // youth home runs never leave the yard, so plain HR keeps the old wording
+        // and old games replay unchanged.
+        const desc = `${label}${where ? (over ? ` over the ${where} fence` : ` to ${where}`) : ""}${runs ? ` — ${runs} score${runs > 1 ? "" : "s"}` : ""}`;
         closePA(g, desc, `${name}: ${desc}`, hitTag);
         g.openHit = { b: bIdxForHit, log: g.log.length - 1 };
         if (g.bases.first || g.bases.second || g.bases.third)
@@ -3148,6 +3152,7 @@ function DugoutScorecard() {
     const [replayPlaying, setReplayPlaying] = useState(false);
     const [replaySpeed, setReplaySpeed] = useState(1);
     const [rpBgOk, setRpBgOk] = useState(false); // painted background exists?
+    const [hrMenu, setHrMenu] = useState(false); // HR: over the fence or inside the park
     const replayTimer = useRef(null);
     const demoTimer = useRef(null);
     const demoMode = (() => { try { return /[?&]demo\b/.test(window.location.search); } catch (_a) { return false; } })();
@@ -3542,7 +3547,7 @@ function DugoutScorecard() {
             tip: () => tapFoulTip(),
             hbp: () => tapHBP(),
             ibb: () => tapIBB(),
-            hit: () => playHit(s.bases || 1, s.bases === 4 ? "HOME RUN" : s.bases === 3 ? "triple" : s.bases === 2 ? "double" : "single", s.loc),
+            hit: () => playHit(s.bases || 1, s.bases === 4 ? "HOME RUN" : s.bases === 3 ? "triple" : s.bases === 2 ? "double" : "single", s.loc, s.over),
             out: () => playOut(s.label || "groundout", false, s.note || ""),
             fc: () => playFC(s.outBase || "first", s.note || ""),
             fcAllSafe: () => playFCAllSafe(s.note || ""),
@@ -6043,7 +6048,7 @@ function DugoutScorecard() {
                         React.createElement("button", { className: "dg hit", onClick: () => openFieldOne("Single", "Tap where the ball was hit.", (loc) => playHit(1, "single", loc)) }, "1B"),
                         React.createElement("button", { className: "dg hit", onClick: () => openFieldOne("Double", "Tap where the ball was hit.", (loc) => playHit(2, "double", loc)) }, "2B"),
                         React.createElement("button", { className: "dg hit", onClick: () => openFieldOne("Triple", "Tap where the ball was hit.", (loc) => playHit(3, "triple", loc)) }, "3B"),
-                        React.createElement("button", { className: "dg hit", onClick: () => openFieldOne("Home run", "Tap where the ball was hit.", (loc) => playHit(4, "HOME RUN", loc)) }, "HR")),
+                        React.createElement("button", { className: "dg hit", onClick: () => setHrMenu(true) }, "HR")),
                     React.createElement("div", { className: "btnrow r5" },
                         React.createElement("button", { className: "dg outb", onClick: () => openFieldPick("groundout", false) }, "Gnd"),
                         React.createElement("button", { className: "dg outb", onClick: () => openFieldPick("flyout", false) }, "Fly"),
@@ -6233,7 +6238,10 @@ function DugoutScorecard() {
                         (() => {
                             const isPitch = st.kind === "pitch";
                             const chain = (st.seqPos && st.seqPos.length > 1) ? st.seqPos.map((n, i) => (i === 0 ? FIELD_XY[n] : RECV_XY[n])).filter(Boolean) : null;
-                            const dest = st.kind === "result" && st.loc ? FIELD_XY[st.loc] : null;
+                            // over the fence: extend the line from home through the field
+                            // spot until it clears the wall — the ball leaves the yard
+                            const overDest = (n) => { const f = FIELD_XY[n]; const k = 1.45; return [HOME_XY[0] + (f[0] - HOME_XY[0]) * k, Math.max(50, HOME_XY[1] + (f[1] - HOME_XY[1]) * k)]; };
+                            const dest = st.kind === "result" && st.loc ? (st.over ? overDest(st.loc) : FIELD_XY[st.loc]) : null;
                             const from = isPitch ? MOUND_XY : HOME_XY;
                             const to = isPitch ? HOME_XY : (dest || HOME_XY);
                             const isEventThrow = st.kind === "event" && chain;
@@ -6322,7 +6330,7 @@ function DugoutScorecard() {
                                 callout && React.createElement("g", { className: "rp-callout" },
                                     React.createElement("rect", { x: 100 - (callout.length * 5.2 + 14) / 2, y: 190, width: callout.length * 5.2 + 14, height: 14, rx: 4 }),
                                     React.createElement("text", { x: 100, y: 200, textAnchor: "middle" }, callout)),
-                                dest && React.createElement("circle", { cx: dest[0], cy: dest[1], r: 4, className: "rp-spot" }),
+                                dest && !st.over && React.createElement("circle", { cx: dest[0], cy: dest[1], r: 4, className: "rp-spot" }),
                                 show && (isPitch
                                     ? React.createElement("g", { key: `p${replayIdx}` }, ballWithShadow("pitch", 2.8, to[0], to[1], from[0] - to[0], from[1] - to[1], 0.42 * replaySpeed, 0))
                                     : isEventThrow
@@ -6774,6 +6782,14 @@ function DugoutScorecard() {
                                 setConfirmNew(false);
                             } }, "New game \u2014 fresh lineups"),
                         React.createElement("button", { className: "dg ghost", onClick: () => setConfirmNew(false) }, "Keep current game"))))),
+            hrMenu && game && (React.createElement("div", { className: "modal-back", onClick: () => setHrMenu(false) },
+                React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
+                    React.createElement("h3", null, "Home run"),
+                    React.createElement("p", null, "Did it leave the yard?"),
+                    React.createElement("div", { className: "btnrow" },
+                        React.createElement("button", { className: "dg hit", onClick: () => { setHrMenu(false); openFieldOne("Home run — over the fence", "Tap the field it went over.", (loc) => playHit(4, "HOME RUN", loc, true)); } }, "Over the fence"),
+                        React.createElement("button", { className: "dg hit", onClick: () => { setHrMenu(false); openFieldOne("Home run — inside the park", "Tap where the ball was hit.", (loc) => playHit(4, "HOME RUN", loc)); } }, "Inside the park"),
+                        React.createElement("button", { className: "dg ghost", onClick: () => setHrMenu(false) }, "Cancel"))))),
             baseMenu && game && (React.createElement("div", { className: "modal-back", onClick: closeBaseMenuBackdrop },
                 React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation(), style: { position: "relative" } },
                     !menuArmed && (React.createElement("div", { style: { position: "absolute", inset: 0, zIndex: 5, background: "transparent" }, onClick: (e) => { e.stopPropagation(); e.preventDefault(); }, onPointerDown: (e) => { e.stopPropagation(); e.preventDefault(); }, "aria-hidden": "true" })),
