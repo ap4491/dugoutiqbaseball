@@ -301,6 +301,13 @@ const HOME_XY = [100, 214];
 const MOUND_XY = [100, 176];
 // base pads in the same perspective
 const RP_BASE_XY = { first: [149, 168], second: [100, 132], third: [51, 168] };
+// Where a fielder RECEIVES a throw: at the bag they cover, not their standing
+// spot. "6-3" ends at first base, the 4 in "5-4-3" takes it ON second. First
+// fielder in a chain fields at their position; every receiver is at a bag.
+const RECV_XY = {
+    1: FIELD_XY[1], 2: [100, 210], 3: RP_BASE_XY.first, 4: RP_BASE_XY.second,
+    5: RP_BASE_XY.third, 6: RP_BASE_XY.second, 7: FIELD_XY[7], 8: FIELD_XY[8], 9: FIELD_XY[9],
+};
 // Pull the ball's destination back out of a result string so a replay can show
 // which way it was hit. Covers the notations DugoutIQ writes:
 //   "single to LF"   -> 7   (hits carry a position label)
@@ -678,7 +685,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "143"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "144"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -6214,7 +6221,7 @@ function DugoutScorecard() {
                         st.batter && React.createElement("div", { className: "rp-batter" }, "AB: ", st.batter),
                         (() => {
                             const isPitch = st.kind === "pitch";
-                            const chain = (st.seqPos && st.seqPos.length > 1) ? st.seqPos.map((n) => FIELD_XY[n]).filter(Boolean) : null;
+                            const chain = (st.seqPos && st.seqPos.length > 1) ? st.seqPos.map((n, i) => (i === 0 ? FIELD_XY[n] : RECV_XY[n])).filter(Boolean) : null;
                             const dest = st.kind === "result" && st.loc ? FIELD_XY[st.loc] : null;
                             const from = isPitch ? MOUND_XY : HOME_XY;
                             const to = isPitch ? HOME_XY : (dest || HOME_XY);
@@ -6284,6 +6291,11 @@ function DugoutScorecard() {
                                 React.createElement("path", { d: "M100 210 L145 168 L100 134 L55 168 Z", fill: "#17492F" }),
                                 React.createElement("ellipse", { cx: MOUND_XY[0], cy: MOUND_XY[1], rx: 9, ry: 4.5, fill: "#6E4327" }),
                                 React.createElement("ellipse", { cx: 100, cy: 216, rx: 12, ry: 6, fill: "#6E4327" }),
+                                // Painted background (step 2): drop replay-bg.png in the site
+                                // root and it covers the vector scene; absent, this renders
+                                // nothing and the vector art above stays visible. Geometry
+                                // anchors for the artist are in the commission brief.
+                                React.createElement("image", { href: "replay-bg.png", x: 0, y: 0, width: 200, height: 240, preserveAspectRatio: "xMidYMid slice" }),
                                 // bases + home plate
                                 Object.entries(RP_BASE_XY).map(([b, [bx, by]]) => React.createElement("g", { key: b, transform: `translate(${bx} ${by}) rotate(45)` },
                                     React.createElement("rect", { x: -3, y: -3, width: 6, height: 6, rx: 0.8, className: `rp-bse ${st[b === "first" ? "on1" : b === "second" ? "on2" : "on3"] ? "occ" : ""}` }))),
