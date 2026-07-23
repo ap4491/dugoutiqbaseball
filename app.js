@@ -287,6 +287,83 @@ const buildSituational = (g, side, bi) => {
     });
     return { gameState: run(GAME_STATE_SPLITS), count: run(COUNT_SPLITS) };
 };
+// Rough field coordinates for each fielder position, on a 200x180 viewBox with
+// home plate at the bottom. Used to animate a batted ball toward the zone it
+// was hit to. Note: DugoutIQ records a fielder POSITION (1-9), not an x/y
+// landing spot, so this shows direction, not a true trajectory.
+const FIELD_XY = {
+    1: [100, 108], 2: [100, 168], 3: [148, 116], 4: [126, 92], 5: [52, 116],
+    6: [74, 92], 7: [38, 48], 8: [100, 28], 9: [162, 48],
+};
+const HOME_XY = [100, 158];
+const MOUND_XY = [100, 108];
+// Pull the ball's destination back out of a result string so a replay can show
+// which way it was hit. Covers the notations DugoutIQ writes:
+//   "single to LF"   -> 7   (hits carry a position label)
+//   "flyout F8"      -> 8   (air outs: F/P/L + position)
+//   "groundout 6-3"  -> 6   (fielder sequence: first one touched it)
+//   "reached on E5"  -> 5   (error position)
+// Returns null for walks, strikeouts and anything never put in play.
+const locFromResult = (txt) => {
+    if (typeof txt !== "string")
+        return null;
+    const byLabel = txt.match(/\bto ([A-Z0-9]{1,2})\b/);
+    if (byLabel) {
+        const f = FPOS.find((p) => p.l === byLabel[1]);
+        if (f)
+            return f.n;
+    }
+    const air = txt.match(/\b[FPL](\d)\b/); // F8 / P4 / L7
+    if (air)
+        return Number(air[1]);
+    const err = txt.match(/\bE(\d)\b/); // E5
+    if (err)
+        return Number(err[1]);
+    const seq = txt.match(/\b(\d)(?:-\d)+\b/); // 6-3, 5-4-3
+    if (seq)
+        return Number(seq[1]);
+    return null;
+};
+// ---- Replay ---------------------------------------------------------------
+// Turn a finished game's log into an ordered pitch-by-pitch step list. Nothing
+// is re-scored — we walk the record that was already written, rebuilding the
+// count from the stored pitch tokens. Games scored before situation stamping
+// still replay; they just can't show bases/outs/score (sit is absent).
+const buildReplaySteps = (g) => {
+    const steps = [];
+    (g.log || []).forEach((e) => {
+        if (e.type === "pa") {
+            const s0 = e.sit || null;
+            const head = {
+                i: e.i, h: e.h, batter: e.batter, bi: e.bi, side: e.side,
+                outs: s0 ? s0.outs : null,
+                on1: s0 ? !!s0.on1 : null, on2: s0 ? !!s0.on2 : null, on3: s0 ? !!s0.on3 : null,
+                aR: s0 && s0.aR != null ? s0.aR : null,
+                hR: s0 && s0.hR != null ? s0.hR : null,
+            };
+            let b = 0, s = 0;
+            (e.seq || []).forEach((lab) => {
+                if (lab === "ball")
+                    b = Math.min(4, b + 1);
+                else if (lab === "strike" || lab === "foul tip")
+                    s = Math.min(3, s + 1);
+                else if (lab === "foul" && s < 2)
+                    s += 1; // a foul can't be strike three
+                const text = lab === "ball" ? `Ball ${b}`
+                    : lab === "strike" ? `Strike ${s}`
+                        : lab === "foul tip" ? `Foul tip — strike ${s}`
+                            : "Foul ball";
+                steps.push(Object.assign({}, head, { kind: "pitch", balls: b, strikes: s, text }));
+            });
+            if (e.result)
+                steps.push(Object.assign({}, head, { kind: "result", balls: b, strikes: s, text: e.result, loc: locFromResult(e.result) }));
+        }
+        else if (e.type === "ev" && e.t) {
+            steps.push({ kind: "event", i: e.i, h: e.h, text: e.t, outs: null, on1: null, on2: null, on3: null, aR: null, hR: null });
+        }
+    });
+    return steps;
+};
 const buildGameStory = (g, teams) => {
     const A = teams.away.name, H = teams.home.name;
     const ar = runsIn(g, "away"), hr = runsIn(g, "home");
@@ -532,7 +609,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "135"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "137"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1095,6 +1172,60 @@ function DugoutScorecard() {
         setPhase("game");
         setGamesOpen(false);
     };
+    /* --- replay controls: walk a finished game's log pitch by pitch --- */
+    const replayStop = () => {
+        if (replayTimer.current)
+            clearTimeout(replayTimer.current);
+        replayTimer.current = null;
+        setReplayPlaying(false);
+    };
+    const replayClose = () => { replayStop(); setReplay(null); setReplayIdx(0); };
+    const openReplay = (record) => {
+        const snap = record && record.snapshot;
+        const gm = snap && snap.game;
+        if (!gm || !gm.log || !gm.log.length) {
+            mutate((g) => (g.lastPlay = "That game has no play log to replay"));
+            return;
+        }
+        const steps = buildReplaySteps(gm);
+        if (!steps.length) {
+            mutate((g) => (g.lastPlay = "Nothing to replay in that game"));
+            return;
+        }
+        replayStop();
+        setReplayIdx(0);
+        setReplay({
+            steps,
+            teams: snap.teams || { away: record.away, home: record.home },
+            title: `${record.away.name} ${record.awayRuns} — ${record.homeRuns} ${record.home.name}`,
+        });
+        setGamesOpen(false);
+    };
+    const replayStep = (delta) => {
+        replayStop();
+        setReplayIdx((i) => {
+            const max = replay ? replay.steps.length - 1 : 0;
+            return Math.max(0, Math.min(max, i + delta));
+        });
+    };
+    const replayPlay = () => {
+        if (!replay)
+            return;
+        setReplayPlaying(true);
+        const tick = () => {
+            setReplayIdx((i) => {
+                const last = replay.steps.length - 1;
+                if (i >= last) {
+                    setReplayPlaying(false);
+                    replayTimer.current = null;
+                    return last;
+                }
+                replayTimer.current = setTimeout(tick, 900 * replaySpeed);
+                return i + 1;
+            });
+        };
+        replayTimer.current = setTimeout(tick, 500);
+    };
     const deleteGame = (id) => {
         setGames((list) => {
             const next = list.filter((x) => x.id !== id);
@@ -1551,6 +1682,10 @@ function DugoutScorecard() {
                 loaded: on1 && on2 && on3,
                 empty: !anyOn,
                 leadoff,
+                // running score as this batter steps in — lets a replay show the
+                // scoreboard at any point without re-deriving it from the log
+                aR: (g.linescore || []).reduce((n, r) => n + (r.away || 0), 0),
+                hR: (g.linescore || []).reduce((n, r) => n + (r.home || 0), 0),
             },
             seq: [],
             result: null,
@@ -2912,6 +3047,12 @@ function DugoutScorecard() {
     const [sitOpen, setSitOpen] = useState(false); // situational stats modal
     const [sitSide, setSitSide] = useState("away"); // which team
     const [sitBi, setSitBi] = useState(null); // null = team total, else lineup slot
+    /* --- replay: step a finished game back pitch by pitch --- */
+    const [replay, setReplay] = useState(null); // {steps, teams, title} or null
+    const [replayIdx, setReplayIdx] = useState(0);
+    const [replayPlaying, setReplayPlaying] = useState(false);
+    const [replaySpeed, setReplaySpeed] = useState(1);
+    const replayTimer = useRef(null);
     const demoTimer = useRef(null);
     const demoMode = (() => { try { return /[?&]demo\b/.test(window.location.search); } catch (_a) { return false; } })();
     const openBaseMenu = (b) => {
@@ -5048,6 +5189,35 @@ function DugoutScorecard() {
         .sit-row .sit-lbl, .sit-head span:first-child { text-align:left; }
         .sit-head { background:rgba(255,255,255,.05); color:var(--powder); font-weight:700; font-size:11px; }
         .sit-lbl { color:#fff; }
+        /* replay player */
+        .replay-btn { width:26px; height:26px; border-radius:50%; border:1px solid var(--line); background:rgba(255,255,255,.06); color:var(--amberw); font-size:11px; cursor:pointer; padding:0; }
+        .rp-score { display:grid; grid-template-columns:1fr auto auto auto 1fr; align-items:center; gap:8px; margin-bottom:8px; }
+        .rp-score b { font-size:26px; font-family:'Saira Condensed',sans-serif; }
+        .rp-tm { font-size:12px; color:var(--powder); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .rp-tm:last-of-type { text-align:right; }
+        .rp-inn { font-size:12px; color:var(--amberw); font-weight:700; }
+        .rp-state { display:flex; justify-content:center; gap:14px; align-items:center; font-size:13px; color:var(--powder); margin-bottom:6px; }
+        .rp-bases { display:inline-flex; gap:4px; }
+        .rp-base { width:9px; height:9px; transform:rotate(45deg); border:1px solid var(--line); display:inline-block; }
+        .rp-base.on { background:var(--amberw); border-color:var(--amberw); }
+        .rp-batter { text-align:center; font-size:13px; color:#fff; margin-bottom:4px; }
+        .rp-text { text-align:center; min-height:44px; display:flex; align-items:center; justify-content:center; font-size:15px; color:var(--powder); padding:4px 6px; }
+        .rp-text.res { color:#fff; font-weight:700; }
+        .rp-text.ev { color:var(--amberw); font-style:italic; }
+        .rp-prog { height:4px; background:rgba(255,255,255,.08); border-radius:2px; overflow:hidden; }
+        .rp-bar { height:100%; background:var(--amberw); transition:width .15s linear; }
+        .rp-count { text-align:center; font-size:11px; color:var(--powder); margin-top:4px; }
+        .rp-field { width:100%; max-width:260px; display:block; margin:2px auto 4px; }
+        .rp-arc { fill:rgba(122,180,120,.10); stroke:rgba(169,197,232,.25); stroke-width:1.5; }
+        .rp-inf { fill:rgba(193,120,60,.16); stroke:rgba(169,197,232,.25); stroke-width:1.5; }
+        .rp-f { fill:rgba(169,197,232,.45); }
+        .rp-f.hot { fill:var(--amberw); }
+        .rp-plate { fill:#fff; }
+        .rp-ball { fill:#fff; stroke:rgba(0,0,0,.35); stroke-width:.6; }
+        .rp-ball.pitch { animation:rpFly .45s ease-in forwards; }
+        .rp-ball.hit { animation:rpFly .7s cubic-bezier(.2,.6,.3,1) forwards; }
+        @keyframes rpFly { from { transform:translate(var(--fx),var(--fy)); opacity:.35; } to { transform:translate(0,0); opacity:1; } }
+        @media (prefers-reduced-motion:reduce){ .rp-ball.pitch,.rp-ball.hit{ animation:none; } }
         /* demo-replay (only with ?demo in the URL) */
         .demo-launch { position:fixed; left:10px; bottom:10px; z-index:60; padding:6px 10px;
           font-family:'Saira Condensed',sans-serif; font-weight:700; font-size:12px; letter-spacing:.1em;
@@ -5916,10 +6086,60 @@ function DugoutScorecard() {
                                         dstr)),
                                 confirmGameDel === gm.id ? (React.createElement("span", { style: { display: "inline-flex", gap: 6, alignItems: "center" } },
                                     React.createElement("button", { onClick: () => { deleteGame(gm.id); setConfirmGameDel(null); }, style: { background: "#B91C1C", color: "#fff", border: "none", borderRadius: 6, padding: "5px 10px", fontSize: 13, fontWeight: 700, cursor: "pointer" } }, "Delete"),
-                                    React.createElement("button", { onClick: () => setConfirmGameDel(null), style: { background: "transparent", color: "var(--powder)", border: "1px solid var(--line)", borderRadius: 6, padding: "5px 10px", fontSize: 13, cursor: "pointer" } }, "Keep"))) : (React.createElement("button", { className: "rm", onClick: () => setConfirmGameDel(gm.id), "aria-label": "Delete saved game" }, "\u00D7"))));
+                                    React.createElement("button", { onClick: () => setConfirmGameDel(null), style: { background: "transparent", color: "var(--powder)", border: "1px solid var(--line)", borderRadius: 6, padding: "5px 10px", fontSize: 13, cursor: "pointer" } }, "Keep"))) : (React.createElement("span", { style: { display: "inline-flex", gap: 6, alignItems: "center" } },
+                                    React.createElement("button", { className: "replay-btn", onClick: () => openReplay(gm), "aria-label": "Replay this game", title: "Replay pitch by pitch" }, "\u25B6"),
+                                    React.createElement("button", { className: "rm", onClick: () => setConfirmGameDel(gm.id), "aria-label": "Delete saved game" }, "\u00D7")))));
                         })),
                     React.createElement("div", { className: "btnrow" },
                         React.createElement("button", { className: "dg ghost", onClick: () => setGamesOpen(false) }, "Close"))))),
+            replay && (() => {
+                const st = replay.steps[Math.min(replayIdx, replay.steps.length - 1)] || {};
+                const tm = replay.teams || {};
+                const last = replay.steps.length - 1;
+                const dot = (on) => React.createElement("span", { className: `rp-base ${on ? "on" : ""}` });
+                return (React.createElement("div", { className: "modal-back", onClick: replayClose },
+                    React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
+                        React.createElement("h3", null, "Replay"),
+                        React.createElement("div", { className: "rp-score" },
+                            React.createElement("span", { className: "rp-tm" }, (tm.away && tm.away.name) || "Away"),
+                            React.createElement("b", null, st.aR != null ? st.aR : "\u2013"),
+                            React.createElement("span", { className: "rp-inn" }, st.i ? `${st.h === "top" ? "\u25B2" : "\u25BC"} ${st.i}` : ""),
+                            React.createElement("b", null, st.hR != null ? st.hR : "\u2013"),
+                            React.createElement("span", { className: "rp-tm" }, (tm.home && tm.home.name) || "Home")),
+                        React.createElement("div", { className: "rp-state" },
+                            React.createElement("span", null, "B ", st.balls != null ? st.balls : "\u2013"),
+                            React.createElement("span", null, "S ", st.strikes != null ? st.strikes : "\u2013"),
+                            React.createElement("span", null, "O ", st.outs != null ? st.outs : "\u2013"),
+                            React.createElement("span", { className: "rp-bases" }, dot(st.on1), dot(st.on2), dot(st.on3))),
+                        st.batter && React.createElement("div", { className: "rp-batter" }, "AB: ", st.batter),
+                        (() => {
+                            // Ball animation. The element is keyed on the step index so
+                            // React remounts it each step, which restarts the CSS
+                            // animation — otherwise consecutive pitches wouldn't replay.
+                            const isPitch = st.kind === "pitch";
+                            const dest = st.kind === "result" && st.loc ? FIELD_XY[st.loc] : null;
+                            const from = isPitch ? MOUND_XY : HOME_XY;
+                            const to = isPitch ? HOME_XY : (dest || HOME_XY);
+                            const show = isPitch || !!dest;
+                            return React.createElement("svg", { className: "rp-field", viewBox: "0 0 200 180", "aria-hidden": "true" },
+                                // outfield arc + infield diamond
+                                React.createElement("path", { d: "M8 150 A 108 108 0 0 1 192 150", className: "rp-arc" }),
+                                React.createElement("path", { d: `M${HOME_XY[0]} ${HOME_XY[1]} L148 116 L100 74 L52 116 Z`, className: "rp-inf" }),
+                                FPOS.filter((p) => p.n >= 3).map((p) => React.createElement("circle", { key: p.n, cx: FIELD_XY[p.n][0], cy: FIELD_XY[p.n][1], r: 3.2, className: `rp-f ${st.kind === "result" && st.loc === p.n ? "hot" : ""}` })),
+                                React.createElement("circle", { cx: MOUND_XY[0], cy: MOUND_XY[1], r: 3.2, className: "rp-f" }),
+                                React.createElement("rect", { x: HOME_XY[0] - 3, y: HOME_XY[1] - 3, width: 6, height: 6, className: "rp-plate" }),
+                                show && React.createElement("circle", { key: replayIdx, className: `rp-ball ${isPitch ? "pitch" : "hit"}`, r: isPitch ? 3 : 3.6, cx: to[0], cy: to[1], style: { "--fx": `${from[0] - to[0]}px`, "--fy": `${from[1] - to[1]}px`, animationDuration: `${(isPitch ? 0.45 : 0.7) * replaySpeed}s` } }));
+                        })(),
+                        React.createElement("div", { className: `rp-text ${st.kind === "result" ? "res" : st.kind === "event" ? "ev" : ""}` }, st.text || ""),
+                        React.createElement("div", { className: "rp-prog" },
+                            React.createElement("div", { className: "rp-bar", style: { width: `${last ? (replayIdx / last) * 100 : 0}%` } })),
+                        React.createElement("div", { className: "rp-count" }, `${replayIdx + 1} / ${replay.steps.length}`),
+                        React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr 1fr", marginTop: 8 } },
+                            React.createElement("button", { className: "dg ghost", onClick: () => replayStep(-1), disabled: replayIdx <= 0 }, "\u25C0 Back"),
+                            React.createElement("button", { className: "dg hit", onClick: () => (replayPlaying ? replayStop() : replayPlay()) }, replayPlaying ? "\u25A0 Pause" : "\u25B6 Play"),
+                            React.createElement("button", { className: "dg ghost", onClick: () => replayStep(1), disabled: replayIdx >= last }, "Next \u25B6")),
+                        React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr 1fr 1fr", marginTop: 6 } }, [["0.5\u00D7", 2], ["1\u00D7", 1], ["2\u00D7", 0.5], ["4\u00D7", 0.25]].map(([lbl, m]) => React.createElement("button", { key: lbl, className: `dg ${replaySpeed === m ? "" : "ghost"}`, onClick: () => setReplaySpeed(m) }, lbl))),
+                        React.createElement("button", { className: "dg ghost", style: { width: "100%", marginTop: 8 }, onClick: replayClose }, "Close")))); })(),
             teamPickSide && (React.createElement("div", { className: "modal-back", onClick: () => setTeamPickSide(null) },
                 React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
                     React.createElement("h3", null, "My Teams"),
