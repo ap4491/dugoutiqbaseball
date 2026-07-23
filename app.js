@@ -685,7 +685,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "144"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "145"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1270,6 +1270,15 @@ function DugoutScorecard() {
         }
         replayStop();
         setReplayIdx(0);
+        try {
+            const probe = new Image();
+            probe.onload = () => setRpBgOk(true);
+            probe.onerror = () => setRpBgOk(false);
+            probe.src = "replay-bg.png";
+        }
+        catch (_b) {
+            setRpBgOk(false);
+        }
         setReplay({
             steps,
             teams: snap.teams || { away: record.away, home: record.home },
@@ -3138,6 +3147,7 @@ function DugoutScorecard() {
     const [replayIdx, setReplayIdx] = useState(0);
     const [replayPlaying, setReplayPlaying] = useState(false);
     const [replaySpeed, setReplaySpeed] = useState(1);
+    const [rpBgOk, setRpBgOk] = useState(false); // painted background exists?
     const replayTimer = useRef(null);
     const demoTimer = useRef(null);
     const demoMode = (() => { try { return /[?&]demo\b/.test(window.location.search); } catch (_a) { return false; } })();
@@ -5283,9 +5293,6 @@ function DugoutScorecard() {
         .rp-tm:last-of-type { text-align:right; }
         .rp-inn { font-size:12px; color:var(--amberw); font-weight:700; }
         .rp-state { display:flex; justify-content:center; gap:14px; align-items:center; font-size:13px; color:var(--powder); margin-bottom:6px; }
-        .rp-bases { display:inline-flex; gap:4px; }
-        .rp-base { width:9px; height:9px; transform:rotate(45deg); border:1px solid var(--line); display:inline-block; }
-        .rp-base.on { background:var(--amberw); border-color:var(--amberw); }
         .rp-batter { text-align:center; font-size:13px; color:#fff; margin-bottom:4px; }
         .rp-text { text-align:center; min-height:44px; display:flex; align-items:center; justify-content:center; font-size:15px; color:var(--powder); padding:4px 6px; }
         .rp-text.res { color:#fff; font-weight:700; }
@@ -6202,7 +6209,6 @@ function DugoutScorecard() {
                 const st = replay.steps[Math.min(replayIdx, replay.steps.length - 1)] || {};
                 const tm = replay.teams || {};
                 const last = replay.steps.length - 1;
-                const dot = (on) => React.createElement("span", { className: `rp-base ${on ? "on" : ""}` });
                 return (React.createElement("div", { className: "modal-back", onClick: replayClose },
                     React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
                         React.createElement("h3", null, "Replay"),
@@ -6214,10 +6220,15 @@ function DugoutScorecard() {
                             React.createElement("span", { className: "rp-tm" }, (tm.home && tm.home.name) || "Home")),
                         React.createElement("div", { className: "rp-runs" }, st.scored ? (st.runs > 1 ? `${st.runs} runs score` : "Run scores") : ""),
                         React.createElement("div", { className: "rp-state" },
-                            React.createElement("span", null, "B ", st.balls != null ? st.balls : "\u2013"),
-                            React.createElement("span", null, "S ", st.strikes != null ? st.strikes : "\u2013"),
-                            React.createElement("span", null, "O ", st.outs != null ? st.outs : "\u2013"),
-                            React.createElement("span", { className: "rp-bases" }, dot(st.on1), dot(st.on2), dot(st.on3))),
+                            React.createElement("span", { className: "crow" },
+                                React.createElement("span", null, "B"),
+                                [0, 1, 2].map((i) => React.createElement(Lamp, { key: i, on: st.balls != null && st.balls > i, color: "white", mini: true }))),
+                            React.createElement("span", { className: "crow" },
+                                React.createElement("span", null, "S"),
+                                [0, 1].map((i) => React.createElement(Lamp, { key: i, on: st.strikes != null && st.strikes > i, color: "white", mini: true }))),
+                            React.createElement("span", { className: "crow" },
+                                React.createElement("span", null, "O"),
+                                [0, 1].map((i) => React.createElement(Lamp, { key: i, on: st.outs != null && st.outs > i, color: "red", mini: true })))),
                         st.batter && React.createElement("div", { className: "rp-batter" }, "AB: ", st.batter),
                         (() => {
                             const isPitch = st.kind === "pitch";
@@ -6295,7 +6306,7 @@ function DugoutScorecard() {
                                 // root and it covers the vector scene; absent, this renders
                                 // nothing and the vector art above stays visible. Geometry
                                 // anchors for the artist are in the commission brief.
-                                React.createElement("image", { href: "replay-bg.png", x: 0, y: 0, width: 200, height: 240, preserveAspectRatio: "xMidYMid slice" }),
+                                rpBgOk && React.createElement("image", { href: "replay-bg.png", x: 0, y: 0, width: 200, height: 240, preserveAspectRatio: "xMidYMid slice" }),
                                 // bases + home plate
                                 Object.entries(RP_BASE_XY).map(([b, [bx, by]]) => React.createElement("g", { key: b, transform: `translate(${bx} ${by}) rotate(45)` },
                                     React.createElement("rect", { x: -3, y: -3, width: 6, height: 6, rx: 0.8, className: `rp-bse ${st[b === "first" ? "on1" : b === "second" ? "on2" : "on3"] ? "occ" : ""}` }))),
