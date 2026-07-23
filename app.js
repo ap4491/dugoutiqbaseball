@@ -300,7 +300,7 @@ const FIELD_XY = {
 const HOME_XY = [100, 214];
 const MOUND_XY = [100, 176];
 // base pads in the same perspective
-const BASE_XY = { first: [149, 168], second: [100, 132], third: [51, 168] };
+const RP_BASE_XY = { first: [149, 168], second: [100, 132], third: [51, 168] };
 // Pull the ball's destination back out of a result string so a replay can show
 // which way it was hit. Covers the notations DugoutIQ writes:
 //   "single to LF"   -> 7   (hits carry a position label)
@@ -678,7 +678,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "142"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "143"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -6285,15 +6285,15 @@ function DugoutScorecard() {
                                 React.createElement("ellipse", { cx: MOUND_XY[0], cy: MOUND_XY[1], rx: 9, ry: 4.5, fill: "#6E4327" }),
                                 React.createElement("ellipse", { cx: 100, cy: 216, rx: 12, ry: 6, fill: "#6E4327" }),
                                 // bases + home plate
-                                Object.entries(BASE_XY).map(([b, [bx, by]]) => React.createElement("g", { key: b, transform: `translate(${bx} ${by}) rotate(45)` },
+                                Object.entries(RP_BASE_XY).map(([b, [bx, by]]) => React.createElement("g", { key: b, transform: `translate(${bx} ${by}) rotate(45)` },
                                     React.createElement("rect", { x: -3, y: -3, width: 6, height: 6, rx: 0.8, className: `rp-bse ${st[b === "first" ? "on1" : b === "second" ? "on2" : "on3"] ? "occ" : ""}` }))),
                                 React.createElement("path", { d: "M96 212 L104 212 L104 215 L100 218 L96 215 Z", fill: "#FFFFFF", opacity: "0.9" }),
                                 // fielders by name at their positions
                                 Object.entries(FIELD_XY).map(([n, [fx, fy]]) => atPos[n] && React.createElement("text", { key: n, x: fx, y: n === "2" ? fy + 9 : fy - 5, textAnchor: "middle", className: "rp-name" }, String(atPos[n]).slice(0, 11))),
                                 // runner chips at bases
-                                st.on1 && st.r1 && chip(BASE_XY.first[0] + 4, BASE_XY.first[1] - 10, st.r1, "run"),
-                                st.on2 && st.r2 && chip(BASE_XY.second[0], BASE_XY.second[1] - 10, st.r2, "run"),
-                                st.on3 && st.r3 && chip(BASE_XY.third[0] - 4, BASE_XY.third[1] - 10, st.r3, "run"),
+                                st.on1 && st.r1 && chip(RP_BASE_XY.first[0] + 4, RP_BASE_XY.first[1] - 10, st.r1, "run"),
+                                st.on2 && st.r2 && chip(RP_BASE_XY.second[0], RP_BASE_XY.second[1] - 10, st.r2, "run"),
+                                st.on3 && st.r3 && chip(RP_BASE_XY.third[0] - 4, RP_BASE_XY.third[1] - 10, st.r3, "run"),
                                 // batter chip + callout bubble
                                 st.batter && chip(64, 222, st.batter, st.kind === "result" ? "bat res" : "bat"),
                                 callout && React.createElement("g", { className: "rp-callout" },
