@@ -287,16 +287,15 @@ const buildSituational = (g, side, bi) => {
     });
     return { gameState: run(GAME_STATE_SPLITS), count: run(COUNT_SPLITS) };
 };
-// Rough field coordinates for each fielder position, on a 200x180 viewBox with
-// home plate at the bottom. Used to animate a batted ball toward the zone it
-// was hit to. Note: DugoutIQ records a fielder POSITION (1-9), not an x/y
-// landing spot, so this shows direction, not a true trajectory.
+// Fielder coordinates in the SAME coordinate space as the app's diamond
+// (viewBox "0 -12 200 186", home plate at 100/158, second base at 100/14) so the
+// replay field reads as the same object the scorer already knows.
 const FIELD_XY = {
-    1: [100, 108], 2: [100, 168], 3: [148, 116], 4: [126, 92], 5: [52, 116],
-    6: [74, 92], 7: [38, 48], 8: [100, 28], 9: [162, 48],
+    1: [100, 96], 2: [100, 170], 3: [148, 108], 4: [138, 60], 5: [52, 108],
+    6: [62, 60], 7: [30, 10], 8: [100, -4], 9: [170, 10],
 };
 const HOME_XY = [100, 158];
-const MOUND_XY = [100, 108];
+const MOUND_XY = [100, 96];
 // Pull the ball's destination back out of a result string so a replay can show
 // which way it was hit. Covers the notations DugoutIQ writes:
 //   "single to LF"   -> 7   (hits carry a position label)
@@ -331,16 +330,30 @@ const locFromResult = (txt) => {
 // still replay; they just can't show bases/outs/score (sit is absent).
 const buildReplaySteps = (g) => {
     const steps = [];
-    (g.log || []).forEach((e) => {
+    const log = g.log || [];
+    // Post-play state for a result step: the NEXT plate appearance's stamp is the
+    // state after this play resolved (runs scored, runners moved). Without this
+    // the score and bases lag a beat behind the play you're reading.
+    const nextSitAfter = (idx) => {
+        for (let j = idx + 1; j < log.length; j++)
+            if (log[j].type === "pa" && log[j].sit)
+                return log[j].sit;
+        return null;
+    };
+    const finalA = (g.linescore || []).reduce((n, r) => n + (r.away || 0), 0);
+    const finalH = (g.linescore || []).reduce((n, r) => n + (r.home || 0), 0);
+    const stateOf = (s, fallbackScore) => ({
+        outs: s ? s.outs : null,
+        on1: s ? !!s.on1 : null, on2: s ? !!s.on2 : null, on3: s ? !!s.on3 : null,
+        r1: s ? s.r1 || null : null, r2: s ? s.r2 || null : null, r3: s ? s.r3 || null : null,
+        aR: s && s.aR != null ? s.aR : (fallbackScore ? finalA : null),
+        hR: s && s.hR != null ? s.hR : (fallbackScore ? finalH : null),
+    });
+    log.forEach((e, idx) => {
         if (e.type === "pa") {
             const s0 = e.sit || null;
-            const head = {
-                i: e.i, h: e.h, batter: e.batter, bi: e.bi, side: e.side,
-                outs: s0 ? s0.outs : null,
-                on1: s0 ? !!s0.on1 : null, on2: s0 ? !!s0.on2 : null, on3: s0 ? !!s0.on3 : null,
-                aR: s0 && s0.aR != null ? s0.aR : null,
-                hR: s0 && s0.hR != null ? s0.hR : null,
-            };
+            const pre = stateOf(s0, false);
+            const ident = { i: e.i, h: e.h, batter: e.batter, bi: e.bi, side: e.side };
             let b = 0, s = 0;
             (e.seq || []).forEach((lab) => {
                 if (lab === "ball")
@@ -353,13 +366,24 @@ const buildReplaySteps = (g) => {
                     : lab === "strike" ? `Strike ${s}`
                         : lab === "foul tip" ? `Foul tip — strike ${s}`
                             : "Foul ball";
-                steps.push(Object.assign({}, head, { kind: "pitch", balls: b, strikes: s, text }));
+                steps.push(Object.assign({}, ident, pre, { kind: "pitch", balls: b, strikes: s, text }));
             });
-            if (e.result)
-                steps.push(Object.assign({}, head, { kind: "result", balls: b, strikes: s, text: e.result, loc: locFromResult(e.result) }));
+            if (e.result) {
+                // show the state the play LEFT behind, and flag a run so the
+                // scoreboard can pulse when it changes
+                const post = stateOf(nextSitAfter(idx) || (s0 ? null : null), true);
+                const scored = pre.aR != null && post.aR != null &&
+                    ((post.aR - pre.aR) + (post.hR - pre.hR)) > 0;
+                steps.push(Object.assign({}, ident, post, {
+                    kind: "result", balls: b, strikes: s, text: e.result,
+                    loc: locFromResult(e.result), scored,
+                    runs: pre.aR != null && post.aR != null ? (post.aR - pre.aR) + (post.hR - pre.hR) : 0,
+                }));
+            }
         }
         else if (e.type === "ev" && e.t) {
-            steps.push({ kind: "event", i: e.i, h: e.h, text: e.t, outs: null, on1: null, on2: null, on3: null, aR: null, hR: null });
+            const post = stateOf(nextSitAfter(idx), false);
+            steps.push(Object.assign({ kind: "event", i: e.i, h: e.h, text: e.t, balls: null, strikes: null }, post));
         }
     });
     return steps;
@@ -609,7 +633,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "137"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "138"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1665,6 +1689,15 @@ function DugoutScorecard() {
         const b = g.bases;
         const on1 = !!b.first, on2 = !!b.second, on3 = !!b.third;
         const anyOn = on1 || on2 || on3;
+        // who is on each base, for replay
+        const rname = (r) => {
+            if (!r)
+                return null;
+            if (r.cr)
+                return r.cr.name;
+            const p = r.b != null && g.lineup[battingSide] ? g.lineup[battingSide][r.b] : null;
+            return p ? p.name : null;
+        };
         // leadoff = first plate appearance of this half-inning
         const leadoff = !g.log.some((e) => e.type === "pa" && e.i === g.inning && e.h === g.half);
         g.log.push({
@@ -1686,6 +1719,7 @@ function DugoutScorecard() {
                 // scoreboard at any point without re-deriving it from the log
                 aR: (g.linescore || []).reduce((n, r) => n + (r.away || 0), 0),
                 hR: (g.linescore || []).reduce((n, r) => n + (r.home || 0), 0),
+                r1: rname(b.first), r2: rname(b.second), r3: rname(b.third),
             },
             seq: [],
             result: null,
@@ -5207,17 +5241,22 @@ function DugoutScorecard() {
         .rp-prog { height:4px; background:rgba(255,255,255,.08); border-radius:2px; overflow:hidden; }
         .rp-bar { height:100%; background:var(--amberw); transition:width .15s linear; }
         .rp-count { text-align:center; font-size:11px; color:var(--powder); margin-top:4px; }
-        .rp-field { width:100%; max-width:260px; display:block; margin:2px auto 4px; }
-        .rp-arc { fill:rgba(122,180,120,.10); stroke:rgba(169,197,232,.25); stroke-width:1.5; }
-        .rp-inf { fill:rgba(193,120,60,.16); stroke:rgba(169,197,232,.25); stroke-width:1.5; }
-        .rp-f { fill:rgba(169,197,232,.45); }
-        .rp-f.hot { fill:var(--amberw); }
-        .rp-plate { fill:#fff; }
-        .rp-ball { fill:#fff; stroke:rgba(0,0,0,.35); stroke-width:.6; }
-        .rp-ball.pitch { animation:rpFly .45s ease-in forwards; }
-        .rp-ball.hit { animation:rpFly .7s cubic-bezier(.2,.6,.3,1) forwards; }
-        @keyframes rpFly { from { transform:translate(var(--fx),var(--fy)); opacity:.35; } to { transform:translate(0,0); opacity:1; } }
-        @media (prefers-reduced-motion:reduce){ .rp-ball.pitch,.rp-ball.hit{ animation:none; } }
+        .rp-dia { width:100%; max-width:230px; display:block; margin:2px auto 6px; }
+        .rp-pad { fill:#1A2C60; stroke:#3D6FB4; stroke-width:2; transition:fill .18s, filter .18s; }
+        .rp-pad.occ { fill:var(--white); stroke:var(--white); filter:drop-shadow(0 0 8px rgba(255,255,255,.7)); }
+        .rp-name { fill:var(--white); font-family:'Saira Condensed',sans-serif; font-size:12px;
+          font-weight:700; letter-spacing:.04em; paint-order:stroke;
+          stroke:rgba(20,32,74,.85); stroke-width:3px; }
+        .rp-spot { fill:none; stroke:var(--amberw); stroke-width:1.5; opacity:.85; }
+        .rp-ball { fill:#fff; filter:drop-shadow(0 0 5px rgba(255,255,255,.75)); }
+        .rp-ball.pitch { animation:rpFly .42s cubic-bezier(.35,0,.7,1) forwards; }
+        .rp-ball.hit { animation:rpFly .7s cubic-bezier(.15,.7,.35,1) forwards; }
+        @keyframes rpFly { from { transform:translate(var(--fx),var(--fy)); opacity:.25; } to { transform:translate(0,0); opacity:1; } }
+        .rp-score b.scored { color:var(--amberw); animation:rpPulse .7s ease-out; }
+        @keyframes rpPulse { 0%{ transform:scale(1); } 35%{ transform:scale(1.35); } 100%{ transform:scale(1); } }
+        .rp-runs { text-align:center; color:var(--amberw); font-weight:700; font-size:12px;
+          letter-spacing:.1em; text-transform:uppercase; height:14px; }
+        @media (prefers-reduced-motion:reduce){ .rp-ball.pitch,.rp-ball.hit,.rp-score b.scored{ animation:none; } }
         /* demo-replay (only with ?demo in the URL) */
         .demo-launch { position:fixed; left:10px; bottom:10px; z-index:60; padding:6px 10px;
           font-family:'Saira Condensed',sans-serif; font-weight:700; font-size:12px; letter-spacing:.1em;
@@ -6102,10 +6141,11 @@ function DugoutScorecard() {
                         React.createElement("h3", null, "Replay"),
                         React.createElement("div", { className: "rp-score" },
                             React.createElement("span", { className: "rp-tm" }, (tm.away && tm.away.name) || "Away"),
-                            React.createElement("b", null, st.aR != null ? st.aR : "\u2013"),
+                            React.createElement("b", { key: `a${replayIdx}`, className: st.scored ? "scored" : "" }, st.aR != null ? st.aR : "\u2013"),
                             React.createElement("span", { className: "rp-inn" }, st.i ? `${st.h === "top" ? "\u25B2" : "\u25BC"} ${st.i}` : ""),
-                            React.createElement("b", null, st.hR != null ? st.hR : "\u2013"),
+                            React.createElement("b", { key: `h${replayIdx}`, className: st.scored ? "scored" : "" }, st.hR != null ? st.hR : "\u2013"),
                             React.createElement("span", { className: "rp-tm" }, (tm.home && tm.home.name) || "Home")),
+                        React.createElement("div", { className: "rp-runs" }, st.scored ? (st.runs > 1 ? `${st.runs} runs score` : "Run scores") : ""),
                         React.createElement("div", { className: "rp-state" },
                             React.createElement("span", null, "B ", st.balls != null ? st.balls : "\u2013"),
                             React.createElement("span", null, "S ", st.strikes != null ? st.strikes : "\u2013"),
@@ -6113,22 +6153,26 @@ function DugoutScorecard() {
                             React.createElement("span", { className: "rp-bases" }, dot(st.on1), dot(st.on2), dot(st.on3))),
                         st.batter && React.createElement("div", { className: "rp-batter" }, "AB: ", st.batter),
                         (() => {
-                            // Ball animation. The element is keyed on the step index so
-                            // React remounts it each step, which restarts the CSS
-                            // animation — otherwise consecutive pitches wouldn't replay.
                             const isPitch = st.kind === "pitch";
                             const dest = st.kind === "result" && st.loc ? FIELD_XY[st.loc] : null;
                             const from = isPitch ? MOUND_XY : HOME_XY;
                             const to = isPitch ? HOME_XY : (dest || HOME_XY);
                             const show = isPitch || !!dest;
-                            return React.createElement("svg", { className: "rp-field", viewBox: "0 0 200 180", "aria-hidden": "true" },
-                                // outfield arc + infield diamond
-                                React.createElement("path", { d: "M8 150 A 108 108 0 0 1 192 150", className: "rp-arc" }),
-                                React.createElement("path", { d: `M${HOME_XY[0]} ${HOME_XY[1]} L148 116 L100 74 L52 116 Z`, className: "rp-inf" }),
-                                FPOS.filter((p) => p.n >= 3).map((p) => React.createElement("circle", { key: p.n, cx: FIELD_XY[p.n][0], cy: FIELD_XY[p.n][1], r: 3.2, className: `rp-f ${st.kind === "result" && st.loc === p.n ? "hot" : ""}` })),
-                                React.createElement("circle", { cx: MOUND_XY[0], cy: MOUND_XY[1], r: 3.2, className: "rp-f" }),
-                                React.createElement("rect", { x: HOME_XY[0] - 3, y: HOME_XY[1] - 3, width: 6, height: 6, className: "rp-plate" }),
-                                show && React.createElement("circle", { key: replayIdx, className: `rp-ball ${isPitch ? "pitch" : "hit"}`, r: isPitch ? 3 : 3.6, cx: to[0], cy: to[1], style: { "--fx": `${from[0] - to[0]}px`, "--fy": `${from[1] - to[1]}px`, animationDuration: `${(isPitch ? 0.45 : 0.7) * replaySpeed}s` } }));
+                            const bases = [
+                                { k: "on1", n: "r1", x: 172, y: 86, lx: 152, ly: 91, anchor: "end" },
+                                { k: "on2", n: "r2", x: 100, y: 14, lx: 100, ly: 46, anchor: "middle" },
+                                { k: "on3", n: "r3", x: 28, y: 86, lx: 48, ly: 91, anchor: "start" },
+                            ];
+                            return React.createElement("svg", { className: "rp-dia", viewBox: "0 -12 200 186", "aria-hidden": "true" },
+                                React.createElement("path", { d: "M100 158 L172 86 L100 14 L28 86 Z", fill: "rgba(255,255,255,0.04)", stroke: "#3D6FB4", strokeWidth: "2" }),
+                                bases.map((b) => React.createElement("g", { key: b.k },
+                                    React.createElement("g", { transform: `translate(${b.x} ${b.y}) rotate(45)` },
+                                        React.createElement("rect", { x: "-13", y: "-13", width: "26", height: "26", rx: "3", className: `rp-pad ${st[b.k] ? "occ" : ""}` })),
+                                    st[b.k] && st[b.n] && React.createElement("text", { x: b.lx, y: b.ly, textAnchor: b.anchor, className: "rp-name" }, String(st[b.n]).slice(0, 10)))),
+                                React.createElement("g", { transform: "translate(100 158)" },
+                                    React.createElement("path", { d: "M-11 -6 L11 -6 L11 2 L0 11 L-11 2 Z", fill: "#FFFFFF", opacity: "0.85" })),
+                                dest && React.createElement("circle", { cx: dest[0], cy: dest[1], r: "4", className: "rp-spot" }),
+                                show && React.createElement("circle", { key: replayIdx, className: `rp-ball ${isPitch ? "pitch" : "hit"}`, r: isPitch ? 3.2 : 4, cx: to[0], cy: to[1], style: { "--fx": `${from[0] - to[0]}px`, "--fy": `${from[1] - to[1]}px`, animationDuration: `${(isPitch ? 0.42 : 0.7) * replaySpeed}s` } }));
                         })(),
                         React.createElement("div", { className: `rp-text ${st.kind === "result" ? "res" : st.kind === "event" ? "ev" : ""}` }, st.text || ""),
                         React.createElement("div", { className: "rp-prog" },
