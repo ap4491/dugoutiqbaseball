@@ -56,8 +56,10 @@ const PITCH_DIVISIONS = {
     // "15U/17U Girls"), so the thresholds are identical, not invented.
     "12U Girls": [25, 40, 55, 65, 75],
     "14U Girls": [30, 45, 60, 75, 85],
+    "18U Girls": [35, 50, 65, 80, 95],
+    // 17U Girls was the 2025 name for this division (same 15U row). Kept so any
+    // game saved under it still resolves; not offered in the picker any more.
     "17U Girls": [35, 50, 65, 80, 95],
-    "18U Girls": [40, 55, 70, 85, 105],
     // Little League (by league age)
     "LL 7-8": [20, 35, 50, 65, 50],
     "LL 9-10": [20, 35, 50, 65, 75],
@@ -79,8 +81,8 @@ const PITCH_DIVISIONS = {
 const THREE_DAY_MAX = {
     "11U": 105, "12U Girls": 105,
     "13U": 120, "14U Girls": 120,
-    "15U": 135, "17U Girls": 135,
-    "18U": 150, "18U Girls": 150,
+    "15U": 135, "17U Girls": 135, "18U Girls": 135,
+    "18U": 150,
 };
 // Handbook 5.2.8 — a pitcher cannot pitch 3 consecutive days unless their first
 // two days combined stay within the no-rest threshold (column 0 of the table).
@@ -106,6 +108,8 @@ const multiDayStatus = (dv, history, onDate, todayPitches) => {
         byDay[k] = (byDay[k] || 0) + (h.pitches || 0);
     });
     const today = dayKey(onDate);
+    // pitches thrown in EARLIER games today (doubleheaders) vs this game
+    const earlierToday = (history || []).reduce((n, h) => n + (dayKey(h.date) === today ? (h.pitches || 0) : 0), 0);
     byDay[today] = (byDay[today] || 0) + (todayPitches || 0);
     const on = (offset) => {
         const t = Date.parse(today + "T00:00:00");
@@ -128,20 +132,36 @@ const multiDayStatus = (dv, history, onDate, todayPitches) => {
     // so it's checked whether or not they've thrown yet today.
     const allow = consecutiveDayAllowance(dv);
     const blockedByStreak = d1 > 0 && d2 > 0 && (d1 + d2) > allow;
+    // --- same-day doubleheader gates ---
+    const noRest = PITCH_DIVISIONS[dv] ? PITCH_DIVISIONS[dv][0] : 0;   // col 0
+    const oneDay = PITCH_DIVISIONS[dv] ? PITCH_DIVISIONS[dv][1] : 0;   // col 1
+    // 5.2.7.10 — passing the no-rest threshold in an earlier game today means
+    // they've earned a day of rest, so they can't come back in game two.
+    const blockedSameDay = earlierToday > 0 && noRest > 0 && earlierToday > noRest;
+    // 5.2.7.13 — hitting the two-day limit in game one ends their day.
+    const blockedTwoDay = earlierToday > 0 && oneDay > 0 && (d1 + earlierToday) > oneDay;
+    if (blockedSameDay)
+        notes.push(`threw ${earlierToday} earlier today \u2014 past the ${noRest} no-rest threshold, done for the day`);
+    else if (blockedTwoDay)
+        notes.push(`2-day total ${d1 + earlierToday} after game 1 \u2014 past ${oneDay}, done for the day`);
     if (blockedByStreak)
         notes.push(d0 > 0
             ? `3rd straight day \u2014 prior 2 days ${d1 + d2} over ${allow}`
             : `not eligible today \u2014 3rd straight day, prior 2 days ${d1 + d2} over ${allow}`);
-    const room = blockedByStreak ? 0 : [daily ? daily - d0 : Infinity,
+    // 5.2.7.11 — to stay eligible tomorrow, the day's total must stay within the
+    // no-rest number; this is what "call last batter" is protecting.
+    const roomForTomorrow = noRest > 0 ? Math.max(0, noRest - d0) : null;
+    const room = (blockedByStreak || blockedSameDay || blockedTwoDay) ? 0 : [daily ? daily - d0 : Infinity,
         daily ? daily - twoDay + d0 : Infinity,
         cap3 ? cap3 - threeDay + d0 : Infinity].reduce((a, b) => Math.min(a, b), Infinity);
     return { d0, d1, d2, twoDay, threeDay, cap3, daily, notes, blockedByStreak,
+        earlierToday, blockedSameDay, blockedTwoDay, roomForTomorrow,
         roomToday: Math.max(0, room === Infinity ? 0 : room) };
 };
 // Picker grouping — keeps the country/organization sets visually separate.
 const DIVISION_GROUPS = [
     { label: "Baseball Canada", keys: ["11U", "13U", "15U", "18U", "22U"] },
-    { label: "Baseball Canada \u2014 Girls", keys: ["12U Girls", "14U Girls", "17U Girls", "18U Girls"] },
+    { label: "Baseball Canada \u2014 Girls", keys: ["12U Girls", "14U Girls", "18U Girls"] },
     { label: "Little League (USA)", keys: ["LL 7-8", "LL 9-10", "LL 11-12", "LL 13-14", "LL 15-16", "LL 17-18"] },
     { label: "USSSA · Pitch Smart (USA)", keys: ["USSSA 7-8", "USSSA 9-10", "USSSA 11-12", "USSSA 13-14", "USSSA 15-16", "USSSA 17-18"] },
 ];
@@ -154,7 +174,7 @@ const DIVISION_INNINGS = {
     "15U": 7,
     "18U": 7,
     "22U": 9,
-    "12U Girls": 6, "14U Girls": 6, "17U Girls": 7, "18U Girls": 7,
+    "12U Girls": 6, "14U Girls": 6, "18U Girls": 7, "17U Girls": 7,
     // Little League: 6-inning games through Majors (12U); 7 for Junior/Senior (13+)
     "LL 7-8": 6, "LL 9-10": 6, "LL 11-12": 6, "LL 13-14": 7, "LL 15-16": 7, "LL 17-18": 7,
     // USSSA typically 6 innings through 12U, 7 for 13U+
@@ -803,7 +823,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "167"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "169"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -7040,20 +7060,22 @@ function DugoutScorecard() {
                             return React.createElement("div", { style: { marginTop: 12 } },
                                 React.createElement("div", { className: "sit-sec" }, `Multi-day workload \u00b7 ${dv}`),
                                 React.createElement("div", { className: "sit-table" },
-                                    React.createElement("div", { className: "sit-row sit-head", style: { gridTemplateColumns: "1.6fr .7fr .7fr .7fr .9fr" } },
+                                    React.createElement("div", { className: "sit-row sit-head", style: { gridTemplateColumns: "1.5fr .6fr .6fr .8fr .7fr .7fr" } },
                                         React.createElement("span", null, "Pitcher"),
                                         React.createElement("span", null, "Today"),
                                         React.createElement("span", null, "2-day"),
                                         React.createElement("span", null, "3-day"),
-                                        React.createElement("span", null, "Left")),
-                                    rows.map((r, i) => React.createElement("div", { className: "sit-row", key: i, style: { gridTemplateColumns: "1.6fr .7fr .7fr .7fr .9fr" } },
+                                        React.createElement("span", null, "Left"),
+                                        React.createElement("span", null, "Tmrw")),
+                                    rows.map((r, i) => React.createElement("div", { className: "sit-row", key: i, style: { gridTemplateColumns: "1.5fr .6fr .6fr .8fr .7fr .7fr" } },
                                         React.createElement("span", { className: "sit-lbl" }, r.name),
                                         React.createElement("span", null, r.st.d0),
                                         React.createElement("span", { style: r.st.daily && r.st.twoDay > r.st.daily ? { color: "var(--red)" } : null }, r.st.twoDay),
                                         React.createElement("span", { style: r.st.cap3 && r.st.threeDay > r.st.cap3 ? { color: "var(--red)" } : null }, `${r.st.threeDay}/${r.st.cap3}`),
-                                        React.createElement("span", { style: r.st.roomToday === 0 ? { color: "var(--red)", fontWeight: 700 } : null }, r.st.roomToday === 0 ? "\u2014" : r.st.roomToday)))),
+                                        React.createElement("span", { style: r.st.roomToday === 0 ? { color: "var(--red)", fontWeight: 700 } : null }, r.st.roomToday === 0 ? "\u2014" : r.st.roomToday),
+                                        React.createElement("span", { title: "throw this many more today and still be eligible tomorrow" }, r.st.roomForTomorrow == null ? "\u2014" : r.st.roomForTomorrow)))),
                                 rows.filter((r) => r.st.notes.length).map((r, i) => React.createElement("p", { key: i, style: { textTransform: "none", letterSpacing: 0, color: "var(--red)", fontSize: 12, margin: "6px 0 0" } }, `${r.name}: ${r.st.notes.join(" \u00b7 ")}`)),
-                                React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--powder)", fontSize: 11, margin: "6px 0 0" } }, "From saved games with dates \u00b7 handbook 5.2.8, 5.2.9.1\u20132"));
+                                React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--powder)", fontSize: 11, margin: "6px 0 0" } }, "From saved games with dates \u00b7 handbook 5.2.7.1\u201313 \u00b7 \u201cTmrw\u201d = pitches left today while staying eligible tomorrow"));
                         })(),
                         React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr" } },
                             React.createElement("button", { className: "dg hit", onClick: sharePitchSheet }, "\uD83D\uDDBC Export sheet (image)"),
