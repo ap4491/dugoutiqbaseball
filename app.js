@@ -803,7 +803,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "165"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "166"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1885,6 +1885,7 @@ function DugoutScorecard() {
         // An at-bat cut short by a third out on the bases never closed. Release it,
         // or the next half-inning's first pitch lands on the previous batter's row.
         g.openPA = null;
+        g.coachPitch = null;
         g.pendRuns = 0;
         g.openK = null;
         g.openTag = null;
@@ -2124,6 +2125,7 @@ function DugoutScorecard() {
             if (oc)
                 row.sit.oc = oc; // outcome category for AVG/OBP within a split
         }
+        g.coachPitch = null;
         g.lastPAB = row.batter; // sac flies score after the PA closes
         g.openPA = null;
         g.lastPlay = ticker;
@@ -2326,6 +2328,16 @@ function DugoutScorecard() {
         g.openK = null;
         g.openHit = null;
         g.openTag = null;
+        // BNS 12U Girls (5.4.2.8): no walks. On ball four the coach pitches and the
+        // batter gets (3 - strikes) attempts to put it in play, or she's out. The
+        // four balls still count on the pitcher's count; the coach's don't count
+        // for anyone. Gated to the division so nothing else in the app changes.
+        if (g.balls === 3 && division === "12U Girls") {
+            g.balls = 4;
+            g.coachPitch = { b: g.batter[battingSide], left: Math.max(1, 3 - g.strikes) };
+            logPitch(g, "ball", `Ball 4 \u2014 coach pitch, ${g.coachPitch.left} attempt${g.coachPitch.left === 1 ? "" : "s"}`);
+            return;
+        }
         if (g.balls === 3) {
             const st = g.stats[battingSide][g.batter[battingSide]];
             st.bb += 1;
@@ -2490,6 +2502,25 @@ function DugoutScorecard() {
         if (g.bases.first)
             g.bases.first.ue = true; // reached on error -> unearned if he scores
         closePA(g, `reached on ${enote}${runs ? ", run scores" : ""}`, `${name} reaches on error (${enote})${runs ? ", run scores" : ""}`, "ROE");
+        nextBatter(g);
+    });
+    // Coach pitch: one attempt used (swing and miss, or a foul that counts).
+    const coachPitchMiss = () => mutate((g) => {
+        if (g.coachPitch && g.coachPitch.left > 0)
+            g.coachPitch.left -= 1;
+        g.lastPlay = `Coach pitch \u2014 ${g.coachPitch ? g.coachPitch.left : 0} attempt${g.coachPitch && g.coachPitch.left === 1 ? "" : "s"} left`;
+    });
+    // Out of attempts. Charged as an at-bat and an out, but NO strikeout — she
+    // should have walked, and the coach threw the pitches, so neither the batter's
+    // K column nor the pitcher's is touched.
+    const coachPitchOut = () => mutate((g) => {
+        const bIdx = g.batter[battingSide];
+        const name = currentBatterName();
+        g.stats[battingSide][bIdx].ab += 1;
+        chargeP(g, "outs"); // counts toward innings pitched, not strikeouts
+        cardMark(g, bIdx, "CP", 0, g.outs + 1);
+        closePA(g, "out on coach pitch", `${name} \u2014 out on coach pitch`, "OUT");
+        recordOut(g);
         nextBatter(g);
     });
     const playOut = (label, isK, fnote) => mutate((g) => {
@@ -5888,6 +5919,12 @@ function DugoutScorecard() {
           font-size: 14px; letter-spacing: .04em; cursor: pointer;
         }
         button.d3k-banner strong { font-weight: 700; }
+        .cp-banner { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;
+          width:100%; margin:6px 0; padding:8px 12px; border:1px solid var(--amberw); border-radius:12px;
+          background:rgba(245,197,24,.10); color:var(--amberw); font-size:13px; }
+        .cp-banner strong { font-weight:700; color:#fff; }
+        .cp-acts { display:flex; gap:6px; }
+        .cp-acts .dg { padding:6px 10px; font-size:12px; }
         button.d3k-banner.tagup { border-color: var(--powder); color: var(--powder); }
         table.lineup tr.retired td { color: var(--powder); opacity: .7; font-style: italic; }
         table.lineup tr.retired em { font-style: normal; opacity: .8; }
@@ -6381,6 +6418,12 @@ function DugoutScorecard() {
                             return `${s.h}-${s.ab} · ${s.r} R · ${s.rbi} RBI · ${s.bb} BB`;
                         })()),
                         React.createElement("span", { className: "atbat-edit" }, "edit \u203A")),
+                    game.coachPitch && !game.over && (React.createElement("div", { className: "cp-banner" },
+                        React.createElement("span", null, "Coach pitch \u00b7 ",
+                            React.createElement("strong", null, `${game.coachPitch.left} attempt${game.coachPitch.left === 1 ? "" : "s"} left`)),
+                        React.createElement("span", { className: "cp-acts" },
+                            React.createElement("button", { className: "dg ghost", onClick: coachPitchMiss, disabled: game.coachPitch.left <= 0 }, "Miss / foul"),
+                            React.createElement("button", { className: "dg outb", onClick: coachPitchOut }, "Out on attempts")))),
                     game.openK && !game.over && (React.createElement("button", { className: "d3k-banner", onClick: d3kReach },
                         "Dropped 3rd strike? ",
                         React.createElement("strong", null, "Batter safe at 1st \u2014 tap here"))),
