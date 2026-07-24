@@ -375,6 +375,30 @@ const parseRunsFromText = (t) => {
         n += 1;
     return n;
 };
+// Older saves stored mid-at-bat events as plain text. Work out the base change
+// from the wording so those games still animate the steal on its own beat.
+const advanceFromText = (txt, cur) => {
+    const st = { on1: cur.on1, on2: cur.on2, on3: cur.on3, r1: cur.r1, r2: cur.r2, r3: cur.r3 };
+    const mv = (from, to) => {
+        const who = from === 1 ? st.r1 : from === 2 ? st.r2 : st.r3;
+        if (from === 1) { st.on1 = false; st.r1 = null; }
+        else if (from === 2) { st.on2 = false; st.r2 = null; }
+        else { st.on3 = false; st.r3 = null; }
+        if (to === 2) { st.on2 = true; st.r2 = who; }
+        else if (to === 3) { st.on3 = true; st.r3 = who; }
+        // to === 4 -> he scored; he simply leaves the bases
+    };
+    const t = txt || "";
+    if (/(steals|takes|awarded) 2nd/i.test(t) && st.on1) mv(1, 2);
+    else if (/(steals|takes|awarded) 3rd/i.test(t) && st.on2) mv(2, 3);
+    else if (/(steals|takes|awarded) home/i.test(t) && st.on3) mv(3, 4);
+    else if (/runners advance/i.test(t)) { // wild pitch / passed ball: everyone up one
+        if (st.on3) mv(3, 4);
+        if (st.on2) mv(2, 3);
+        if (st.on1) mv(1, 2);
+    }
+    return st;
+};
 const buildReplaySteps = (g) => {
     const steps = [];
     const log = g.log || [];
@@ -424,7 +448,7 @@ const buildReplaySteps = (g) => {
                 const mstate = (m && typeof m === "object")
                     ? { outs: m.outs, on1: !!m.on1, on2: !!m.on2, on3: !!m.on3,
                         r1: m.r1 || null, r2: m.r2 || null, r3: m.r3 || null }
-                    : {};
+                    : advanceFromText(mt, pre); // pre-v155 save: read it off the wording
                 steps.push(Object.assign({}, ident, pre, mstate, { aR: accA, hR: accH,
                     kind: "event", balls: b, strikes: s, text: mt, seqPos: seqFromResult(mt),
                     scored: (accA + accH) > before, runs: (accA + accH) - before }));
@@ -705,7 +729,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "155"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "156"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -6514,6 +6538,12 @@ function DugoutScorecard() {
                                         moves.push({ nm: st.batter, keys: pathBetween(0, ringIdx[to]), fade: false, dest: to });
                                     else if (st.scored && /HOME RUN/i.test(st.text || ""))
                                         moves.push({ nm: st.batter, keys: RING.slice(0), fade: true }); // the full lap
+                                    else if (/groundout|double play|triple play|out at 1st|forced out|fielder's choice/i.test(st.text || ""))
+                                        // He ran it out. Break for first and fade as the throw
+                                        // beats him — slower leg so he's still going when the
+                                        // ball arrives. Air outs are left alone; nobody sprints
+                                        // on a pop-up.
+                                        moves.push({ nm: st.batter, keys: ["home", "first"], fade: true, partial: 0.84, dur: 0.75 });
                                 }
                             }
                             const movedTo = {}; // bases whose chip is the final leg of a move
@@ -6532,9 +6562,10 @@ function DugoutScorecard() {
                                         z = [a[0] + (z[0] - a[0]) * m.partial, a[1] + (z[1] - a[1]) * m.partial];
                                     const cls = last ? (m.fade ? "leg score" : "leg stay") : "leg";
                                     const yOff = m.keys[k] === "home" ? -8 : -10;
+                                    const d = (m.dur ? m.dur * replaySpeed : legDur);
                                     out.push(chip(z[0], z[1] + yOff, m.nm, `run ${cls}`, {
                                         key: `mv${replayIdx}-${mi}-${k}`,
-                                        style: { "--fx": `${a[0] - z[0]}px`, "--fy": `${a[1] - z[1]}px`, animationDuration: `${legDur}s`, animationDelay: `${legStart + (k - 1) * legDur}s` },
+                                        style: { "--fx": `${a[0] - z[0]}px`, "--fy": `${a[1] - z[1]}px`, animationDuration: `${d}s`, animationDelay: `${legStart + (k - 1) * d}s` },
                                     }));
                                 }
                                 return out;
