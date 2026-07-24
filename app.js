@@ -729,7 +729,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "160"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "162"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1291,6 +1291,7 @@ function DugoutScorecard() {
         setCapLastOpen(snap.capLastOpen == null ? true : !!snap.capLastOpen);
         setExtraRunner(!!snap.extraRunner);
         setGameType(snap.gameType || "season");
+        setEventName(snap.eventName || "");
         archivedIdRef.current = record.id; // already saved — don't re-archive on the over-effect
         setHistory([]);
         setPhase("game");
@@ -1384,7 +1385,22 @@ function DugoutScorecard() {
     // Games carry a type (season / playoff / tournament / exhibition). Older saves
     // predate it and are treated as regular-season games.
     const recType = (rec) => (rec && rec.gameType) || (rec && rec.snapshot && rec.snapshot.gameType) || "season";
-    const computeSeason = (teamName, typeFilter) => {
+    const recEvent = (rec) => ((rec && rec.eventName) || (rec && rec.snapshot && rec.snapshot.eventName) || "").trim();
+    // A baseball season sits inside one calendar year, so the game date is the
+    // season. Undated saves fall outside every year filter but still count in "All".
+    const recYear = (rec) => { const d = (rec && rec.date) || ""; const m = String(d).match(/^(\d{4})/); return m ? m[1] : ""; };
+    const yearList = () => {
+        const seen = [];
+        games.forEach((rec) => { const y = recYear(rec); if (y && seen.indexOf(y) === -1) seen.push(y); });
+        return seen.sort((a, b) => b.localeCompare(a)); // newest first
+    };
+    // every distinct event name in the archive, for the season-stats picker
+    const eventList = () => {
+        const seen = [];
+        games.forEach((rec) => { const e = recEvent(rec); if (e && !seen.some((x) => lc(x) === lc(e))) seen.push(e); });
+        return seen.sort((a, b) => a.localeCompare(b));
+    };
+    const computeSeason = (teamName, typeFilter, eventFilter, yearFilter) => {
         const tn = lc(teamName);
         const bat = {}, pit = {};
         let gp = 0;
@@ -1393,6 +1409,10 @@ function DugoutScorecard() {
             if (!g)
                 return;
             if (typeFilter && typeFilter !== "all" && recType(rec) !== typeFilter)
+                return;
+            if (eventFilter && eventFilter !== "all" && lc(recEvent(rec)) !== lc(eventFilter))
+                return;
+            if (yearFilter && yearFilter !== "all" && recYear(rec) !== yearFilter)
                 return;
             ["away", "home"].forEach((side) => {
                 if (lc(rec[side] && rec[side].name) !== tn)
@@ -1601,11 +1621,13 @@ function DugoutScorecard() {
             id: Date.now(),
             date: gameDate,
             gameType: gameType || "season",
+            eventName: (eventName || "").trim(),
             division: division || "",
             runCap: runCap || 0,
             capLastOpen: !!capLastOpen,
             extraRunner: !!extraRunner,
             gameType: gameType || "season",
+            eventName: (eventName || "").trim(),
             inning: 1,
             half: "top",
             balls: 0,
@@ -3344,7 +3366,10 @@ function DugoutScorecard() {
     const [extraRunner, setExtraRunner] = useState(() => !!(saved0 && saved0.extraRunner)); // runner on 2nd in extras
     const [baseMode, setBaseMode] = useState(null); // base menu: null | "adv" | "out"
     const [gameType, setGameType] = useState(() => (saved0 && saved0.gameType) || "season"); // season | playoff | tournament | exhibition
+    const [eventName, setEventName] = useState(() => (saved0 && saved0.eventName) || ""); // e.g. "Bridgewater Invitational"
     const [seasonType, setSeasonType] = useState("all"); // season-stats filter
+    const [seasonEvent, setSeasonEvent] = useState("all"); // specific tournament/playoff
+    const [seasonYear, setSeasonYear] = useState("all"); // baseball seasons sit inside one calendar year
     const replayTimer = useRef(null);
     const demoTimer = useRef(null);
     const demoMode = (() => { try { return /[?&]demo\b/.test(window.location.search); } catch (_a) { return false; } })();
@@ -6129,6 +6154,10 @@ function DugoutScorecard() {
                             React.createElement("option", { value: "tournament" }, "Tourney"),
                             React.createElement("option", { value: "exhibition" }, "Exhib.")),
                         React.createElement("span", { className: "limithint" }, "game type \u00b7 season stats can filter by this")),
+                    (gameType === "tournament" || gameType === "playoff") && React.createElement("div", { className: "limitrow" },
+                        React.createElement("input", { className: "dg-in", list: "dg-events", value: eventName, placeholder: "Name", onChange: (e) => setEventName(e.target.value), "aria-label": "Tournament or playoff name" }),
+                        React.createElement("span", { className: "limithint" }, "name it to keep each event's stats separate"),
+                        React.createElement("datalist", { id: "dg-events" }, eventList().map((n) => React.createElement("option", { key: n, value: n })))),
                     React.createElement("div", { className: "limitrow" },
                         React.createElement("select", { className: "dg-sel", value: String(runCap), onChange: (e) => setRunCap(parseInt(e.target.value, 10) || 0), "aria-label": "Runs allowed per inning" },
                             React.createElement("option", { value: "0" }, "None"),
@@ -6831,7 +6860,7 @@ function DugoutScorecard() {
             })(),
             seasonOpen &&
                 (() => {
-                    const data = computeSeason(seasonTeam, seasonType);
+                    const data = computeSeason(seasonTeam, seasonType, seasonEvent, seasonYear);
                     const rows = seasonTab === "bat" ? data.bat : data.pit;
                     const sortVal = (row, col) => {
                         if (col === "name")
@@ -6890,7 +6919,14 @@ function DugoutScorecard() {
                                 React.createElement("button", { className: `dg ${seasonTab === "bat" ? "" : "ghost"}`, onClick: () => { setSeasonTab("bat"); setSeasonSort({ col: "ab", dir: -1 }); } }, "Batting"),
                                 React.createElement("button", { className: `dg ${seasonTab === "pit" ? "" : "ghost"}`, onClick: () => { setSeasonTab("pit"); setSeasonSort({ col: "outs", dir: -1 }); } }, "Pitching")),
                             // which games count toward these totals
-                            React.createElement("div", { className: "season-tabs", style: { marginTop: 6 } }, [["all", "All"], ["season", "Season"], ["playoff", "Playoff"], ["tournament", "Tourney"]].map(([v, lbl]) => React.createElement("button", { key: v, className: `dg ${seasonType === v ? "" : "ghost"}`, style: { fontSize: 12, padding: "6px 4px" }, onClick: () => setSeasonType(v) }, lbl))),
+                            React.createElement("div", { className: "season-tabs", style: { marginTop: 6 } }, [["all", "All"], ["season", "Season"], ["playoff", "Playoff"], ["tournament", "Tourney"]].map(([v, lbl]) => React.createElement("button", { key: v, className: `dg ${seasonType === v ? "" : "ghost"}`, style: { fontSize: 12, padding: "6px 4px" }, onClick: () => { setSeasonType(v); if (v === "season" || v === "all") setSeasonEvent("all"); } }, lbl))),
+                            React.createElement("div", { style: { display: "grid", gridTemplateColumns: eventList().length > 0 ? "1fr 1fr" : "1fr", gap: 6, marginTop: 6 } },
+                                React.createElement("select", { className: "dg-sel", value: seasonYear, onChange: (e) => setSeasonYear(e.target.value), "aria-label": "Filter by year" },
+                                    React.createElement("option", { value: "all" }, "All years"),
+                                    yearList().map((y) => React.createElement("option", { key: y, value: y }, y))),
+                                eventList().length > 0 && React.createElement("select", { className: "dg-sel", value: seasonEvent, onChange: (e) => setSeasonEvent(e.target.value), "aria-label": "Filter by event" },
+                                    React.createElement("option", { value: "all" }, "All events"),
+                                    eventList().map((n) => React.createElement("option", { key: n, value: n }, n)))),
                             sorted.length === 0 ? (React.createElement("p", { style: { color: "var(--powder)", textAlign: "center", padding: "24px 8px" } },
                                 "No ",
                                 seasonTab === "bat" ? "batting" : "pitching",
