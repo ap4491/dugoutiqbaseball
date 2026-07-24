@@ -324,7 +324,9 @@ const locFromResult = (txt) => {
         if (f)
             return f.n;
     }
-    const air = txt.match(/\b[FPL](\d)\b/); // F8 / P4 / L7
+    // F8 / P4 / L7 / IF4 — "IF" must be tried first or the F would match alone,
+    // and the leading word-boundary made infield flies fail entirely.
+    const air = txt.match(/\b(?:IF|F|P|L)(\d)\b/);
     if (air)
         return Number(air[1]);
     const err = txt.match(/\bE(\d)\b/); // E5
@@ -411,6 +413,10 @@ const buildReplaySteps = (g) => {
                         : lab === "foul tip" ? `Foul tip — strike ${s}`
                             : "Foul ball";
                 steps.push(Object.assign({}, ident, pre, { kind: "pitch", balls: b, strikes: s, text }));
+            });
+            (e.mid || []).forEach((m) => {
+                steps.push(Object.assign({}, ident, pre, { kind: "event", balls: b, strikes: s, text: m,
+                    seqPos: seqFromResult(m), scored: false, runs: 0 }));
             });
             if (e.result) {
                 const runs = parseRunsFromText(e.result);
@@ -686,7 +692,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "148"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "151"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1656,6 +1662,9 @@ function DugoutScorecard() {
         g.bases = emptyBases();
         g.openHit = null;
         g.openPlay = null;
+        // An at-bat cut short by a third out on the bases never closed. Release it,
+        // or the next half-inning's first pitch lands on the previous batter's row.
+        g.openPA = null;
         g.openK = null;
         g.openTag = null;
         if (g.half === "top") {
@@ -1734,6 +1743,18 @@ function DugoutScorecard() {
     };
     // sets the ticker AND appends to the play-by-play log
     // kind: "pitch" (count events, shown dim) | "play" | "info"
+    // Something that happened mid-at-bat (passed ball, wild pitch, steal, balk)
+    // belongs to that plate appearance, not to a separate line after it — the
+    // play-by-play otherwise reads as though it happened after the result.
+    const logDuringPA = (g, text, kind = "play") => {
+        const row = g.openPA != null ? g.log[g.openPA] : null;
+        if (row && row.type === "pa" && !row.result) {
+            (row.mid = row.mid || []).push(text);
+            g.lastPlay = text;
+        }
+        else
+            logPlay(g, text, kind);
+    };
     const logPlay = (g, text, kind = "play") => {
         g.lastPlay = text;
         g.log.push({ type: "ev", i: g.inning, h: g.half, t: text, k: kind });
@@ -2658,7 +2679,7 @@ function DugoutScorecard() {
             const runs = advanceAll(g, 1, null); // no batter — he stays at the plate
             addRuns(g, runs, isWP ? "wp" : "pb");
             const label = isWP ? "Wild pitch" : "Passed ball";
-            logPlay(g, `${label} — runners advance${runs ? `, ${runs} score${runs > 1 ? "" : "s"}` : ""}`);
+            logDuringPA(g, `${label} — runners advance${runs ? `, ${runs} score${runs > 1 ? "" : "s"}` : ""}`);
         });
         setMoreMenu(false);
     };
@@ -2829,6 +2850,16 @@ function DugoutScorecard() {
                 if (runs) {
                     addRuns(g, runs, "dp");
                 }
+                // A runner who wasn't forced (1st and 3rd, 6-4-3) can still score at
+                // his own risk. Leave the play open so scoring him folds onto the DP
+                // line instead of spawning a separate event. openHit stays null, so
+                // no RBI is credited — 9.04(b)(1) forbids it on a DP.
+                if (g.bases.first || g.bases.second || g.bases.third)
+                    g.openPlay = lastPAIdx(g);
+                // prompt for the unforced runner from third, same as a groundout —
+                // but NO RBI on a double play (9.04(b)(1))
+                if (g.bases.third && !caught)
+                    g.openTag = { b: bIdx, kind: "dp", note: fnote, log: lastPAIdx(g) };
                 nextBatter(g);
             }
             else {
@@ -2838,6 +2869,22 @@ function DugoutScorecard() {
         setDpMenu(false);
     };
     // Tag-up: runner from 3rd scores -> the fly out becomes a sacrifice fly.
+    // Runner from third scores on a double play. Folds onto the DP line and
+    // credits NO RBI — 9.04(b)(1) bars an RBI when the batter grounds into a
+    // double play, even though the run counts.
+    const dpScore = () => {
+        mutate((g) => {
+            if (!g.openTag || g.openTag.kind !== "dp" || !g.bases.third)
+                return;
+            const tlog = g.openTag.log;
+            const r3 = g.bases.third;
+            g.bases.third = false;
+            creditRun(g, r3);
+            addRuns(g, 1, "dp");
+            g.openTag = null;
+            amendPA(g, tlog, "run scores (no RBI)", "Run scores on the double play — no RBI");
+        });
+    };
     const groundScore = () => {
         mutate((g) => {
             if (!g.openTag || g.openTag.kind !== "ground" || !g.bases.third)
@@ -2907,7 +2954,7 @@ function DugoutScorecard() {
             g.openTag = null;
             const runs = advanceAll(g, 1, null);
             addRuns(g, runs, "balk");
-            logPlay(g, `Balk — runners advance${runs ? ", run scores" : ""}`, "info");
+            logDuringPA(g, `Balk — runners advance${runs ? ", run scores" : ""}`, "info");
         });
         setPitchMenuSide(null);
     };
@@ -3215,7 +3262,7 @@ function DugoutScorecard() {
                     amendPA(g, g.openPlay, `${who} scores`, `${who} scores on the play`);
                 }
                 else {
-                    logPlay(g, `${who} scores from ${baseLabel(from)} (steal/PB/WP — no RBI)`);
+                    logDuringPA(g, `${who} scores from ${baseLabel(from)} (steal/PB/WP — no RBI)`);
                 }
             });
             return;
@@ -3351,7 +3398,7 @@ function DugoutScorecard() {
             g.bases[base] = false;
             addRuns(g, 1, cause === "wp" ? "wp" : cause === "pb" ? "pb" : "advance");
             const tag = cause === "wp" ? "wild pitch" : cause === "pb" ? "passed ball" : "no RBI";
-            logPlay(g, `${who} scores from ${baseLabel(base)} (${tag}${cause ? " — no RBI" : ""})`);
+            logDuringPA(g, `${who} scores from ${baseLabel(base)} (${tag}${cause ? " — no RBI" : ""})`);
         });
         setBaseMenu(null);
     };
@@ -3378,7 +3425,7 @@ function DugoutScorecard() {
             g.bases[target] = g.bases[base];
             g.bases[base] = false;
             cardAdvance(g, g.bases[target], target === "second" ? 2 : 3);
-            logPlay(g, `${who} takes ${baseLabel(target)} on a ${cause === "wp" ? "wild pitch" : "passed ball"}`);
+            logDuringPA(g, `${who} takes ${baseLabel(target)} on a ${cause === "wp" ? "wild pitch" : "passed ball"}`);
         });
         setBaseMenu(null);
     };
@@ -3395,7 +3442,7 @@ function DugoutScorecard() {
                 amendOpenHit(g, `${who} scores`, `${who} scores on the play — RBI ${batterName}`);
             }
             else {
-                logPlay(g, `${who} scores from ${baseLabel(base)}`);
+                logDuringPA(g, `${who} scores from ${baseLabel(base)}`);
             }
         });
         setBaseMenu(null);
@@ -3408,14 +3455,14 @@ function DugoutScorecard() {
                 creditRun(g, g.bases.third);
                 g.bases.third = false;
                 addRuns(g, 1, "steal");
-                logPlay(g, `${who} steals home!`);
+                logDuringPA(g, `${who} steals home!`);
             });
             setBaseMenu(null);
             return;
         }
         const target = base === "first" ? "second" : "third";
         if (game.bases[target]) {
-            mutate((g) => logPlay(g, `${baseLabel(target)} is occupied — steal blocked`, "info"));
+            mutate((g) => logDuringPA(g, `${baseLabel(target)} is occupied — steal blocked`, "info"));
             setBaseMenu(null);
             return;
         }
@@ -3423,7 +3470,7 @@ function DugoutScorecard() {
             g.bases[target] = g.bases[base];
             g.bases[base] = false;
             cardAdvance(g, g.bases[target], target === "second" ? 2 : 3);
-            logPlay(g, `${who} steals ${baseLabel(target)}`);
+            logDuringPA(g, `${who} steals ${baseLabel(target)}`);
         });
         setBaseMenu(null);
     };
@@ -3486,7 +3533,7 @@ function DugoutScorecard() {
             cardOut(g, g.bases[base], g.outs + 1);
             g.bases[base] = false;
             chargeP(g, "outs");
-            logPlay(g, `${who} caught stealing ${targetTxt} (CS${note ? " " + note : ""})`);
+            logDuringPA(g, `${who} caught stealing ${targetTxt} (CS${note ? " " + note : ""})`);
             recordOut(g);
         });
         setBaseMenu(null);
@@ -3497,7 +3544,7 @@ function DugoutScorecard() {
             cardOut(g, g.bases[base], g.outs + 1);
             g.bases[base] = false;
             chargeP(g, "outs");
-            logPlay(g, `${who} picked off ${baseLabel(base)} (PO${note ? " " + note : ""})`);
+            logDuringPA(g, `${who} picked off ${baseLabel(base)} (PO${note ? " " + note : ""})`);
             recordOut(g);
         });
         setBaseMenu(null);
@@ -4529,15 +4576,34 @@ function DugoutScorecard() {
                 const h = Array.isArray(p.posHist) && p.posHist.length ? p.posHist : (p.pos ? [p.pos] : []);
                 return h.join("-");
             };
-            const battingRows = (lineup, side) => lineup.map((p, i) => {
-                const s = game.stats[side][i] || { ab: 0, r: 0, h: 0, rbi: 0, bb: 0, k: 0 };
-                const num = p.num ? `#${p.num} ` : "";
-                const pl = posLabel(p);
-                const label = `${num}${p.name}${pl ? `  ${pl}` : ""}`;
-                return { label, vals: [s.ab, s.r, s.h, s.rbi, s.bb, s.k] };
-            });
+            // A slot can hold several players over a game. Show the starter, then
+            // everyone who replaced him indented beneath (MLB box score style) —
+            // each keeps his own line, nobody's at-bats disappear.
+            const battingRows = (lineup, side) => {
+                const subs = (game.subs && game.subs[side]) || [];
+                const out = [];
+                lineup.forEach((p, i) => {
+                    const s = game.stats[side][i] || { ab: 0, r: 0, h: 0, rbi: 0, bb: 0, k: 0 };
+                    // everyone who held this spot, in the order they batted:
+                    // the starter first, then each replacement
+                    const held = subs.filter((x) => x.slot === i)
+                        .map((x) => ({ name: x.name, num: x.num, pos: x.pos, v: [x.ab || 0, x.r || 0, x.h || 0, x.rbi || 0, x.bb || 0, x.k || 0] }))
+                        .concat([{ name: p.name, num: p.num, pos: posLabel(p), v: [s.ab, s.r, s.h, s.rbi, s.bb, s.k] }]);
+                    held.forEach((h, k) => {
+                        const hn = h.num ? `#${h.num} ` : "";
+                        const lead = k === 0 ? "" : "  \u21B3 "; // starter flush, replacements indented
+                        out.push({ label: `${lead}${hn}${h.name}${h.pos ? `  ${h.pos}` : ""}`, vals: h.v });
+                    });
+                });
+                return out;
+            };
             const battingTot = (side, n) => {
                 const t = [0, 0, 0, 0, 0, 0];
+                // players who were replaced still batted — count them
+                ((game.subs && game.subs[side]) || []).forEach((x) => {
+                    t[0] += x.ab || 0; t[1] += x.r || 0; t[2] += x.h || 0;
+                    t[3] += x.rbi || 0; t[4] += x.bb || 0; t[5] += x.k || 0;
+                });
                 for (let i = 0; i < n; i++) {
                     const s = game.stats[side][i] || {};
                     t[0] += s.ab || 0;
@@ -5304,6 +5370,8 @@ function DugoutScorecard() {
         .rp-text.ev { color:var(--amberw); font-style:italic; }
         .rp-prog { height:4px; background:rgba(255,255,255,.08); border-radius:2px; overflow:hidden; }
         .rp-bar { height:100%; background:var(--amberw); transition:width .15s linear; }
+        .log-mid, .pbp-mid { display:block; color:var(--amberw); font-size:12px; font-style:italic;
+          margin-top:2px; opacity:.9; }
         .rp-count { text-align:center; font-size:11px; color:var(--powder); margin-top:4px; }
         .rp-dia { width:100%; max-width:300px; display:block; margin:2px auto 6px; border-radius:12px; }
         .rp-star { fill:rgba(255,255,255,.5); }
@@ -6000,6 +6068,12 @@ function DugoutScorecard() {
                         React.createElement("strong", null, "Batter safe at 1st \u2014 tap here"))),
                     game.openTag &&
                         !game.over &&
+                        game.openTag.kind === "dp" &&
+                        game.bases.third && (React.createElement("button", { className: "d3k-banner tagup", onClick: dpScore },
+                        "Run score from third? ",
+                        React.createElement("strong", null, "Tap to score \u2014 no RBI on a DP"))),
+                    game.openTag &&
+                        !game.over &&
                         game.openTag.kind === "ground" &&
                         game.bases.third && (React.createElement("button", { className: "d3k-banner tagup", onClick: groundScore },
                         "Run score from third? ",
@@ -6147,7 +6221,8 @@ function DugoutScorecard() {
                             React.createElement("span", { className: "log-seq" },
                                 e.seq.join("-"),
                                 e.seq.length > 0 && "-"),
-                            React.createElement("span", { className: e.result ? "log-res" : "log-open" }, e.result || "batting…")))) : (React.createElement("div", { className: `log-row ${e.k}`, key: game.log.length - idx },
+                            React.createElement("span", { className: e.result ? "log-res" : "log-open" }, e.result || "batting…"),
+                            (e.mid || []).map((m, mi) => React.createElement("span", { className: "log-mid", key: mi }, m))))) : (React.createElement("div", { className: `log-row ${e.k}`, key: game.log.length - idx },
                         React.createElement("span", { className: "log-inn" },
                             e.h === "top" ? "T" : "B",
                             e.i),
@@ -6177,6 +6252,7 @@ function DugoutScorecard() {
                                 React.createElement("button", { className: "dg ghost", onClick: () => { setPbpEdit(null); setPbpText(""); } }, "Cancel"))) : (React.createElement("button", { className: "pbp-tap", onClick: () => startLogEdit(idx) },
                                 e.type === "pa" && React.createElement("span", { className: "pbp-bat" }, logBatterLabel(e)),
                                 React.createElement("span", { className: "pbp-text" }, text),
+                                e.type === "pa" && (e.mid || []).map((m, mi) => React.createElement("span", { className: "pbp-mid", key: mi }, m)),
                                 e.type === "pa" && e.seq && e.seq.length > 0 && (React.createElement("span", { className: "pbp-seq" }, e.seq.join(" · ")))))));
                         });
                         return rows;
@@ -6869,6 +6945,8 @@ function DugoutScorecard() {
                         // "scores" cases keep their existing dedicated buttons below.
                         baseMenu === "first" && React.createElement("button", { className: "dg", onClick: () => { const b = baseMenu; setBaseMenu(null); moveRunner(b, "second"); } }, "Advance to 2nd"),
                         (baseMenu === "first" || baseMenu === "second") && React.createElement("button", { className: "dg", onClick: () => { const b = baseMenu; setBaseMenu(null); moveRunner(b, "third"); } }, "Advance to 3rd"),
+                        React.createElement("button", { className: "dg", onClick: () => { const b = baseMenu; setBaseMenu(null); moveRunner(b, "home"); } }, "Advance home \u2014 scores"),
+                        React.createElement("button", { className: "dg hit", onClick: () => { const b = baseMenu; setBaseMenu(null); moveRunner(b, "home"); } }, game.openHit != null ? "Advance home \u2014 scores (RBI)" : "Advance home \u2014 scores"),
                         game.openHit != null && (React.createElement("button", { className: "dg hit", onClick: () => runnerScoresOnPlay(baseMenu) },
                             "Scores on the play (RBI ",
                             game.lineup[battingSide][game.openHit.b].name,
