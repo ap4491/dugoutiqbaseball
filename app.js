@@ -729,7 +729,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "156"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "157"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -3334,19 +3334,21 @@ function DugoutScorecard() {
     const [runCap, setRunCap] = useState(() => { const v = saved0 && saved0.runCap; return v == null ? 0 : v; }); // 0 = no limit
     const [capLastOpen, setCapLastOpen] = useState(() => (saved0 && saved0.capLastOpen != null) ? !!saved0.capLastOpen : true);
     const [extraRunner, setExtraRunner] = useState(() => !!(saved0 && saved0.extraRunner)); // runner on 2nd in extras
+    const [baseMode, setBaseMode] = useState(null); // base menu: null | "adv" | "out"
     const replayTimer = useRef(null);
     const demoTimer = useRef(null);
     const demoMode = (() => { try { return /[?&]demo\b/.test(window.location.search); } catch (_a) { return false; } })();
     const openBaseMenu = (b) => {
         baseMenuAt.current = (typeof performance !== "undefined" ? performance.now() : Date.now());
         setMenuArmed(false);
+        setBaseMode(null);
         setBaseMenu(b);
         // Arm the buttons only after the browser's synthesized click (fired
         // ~300ms after a touch tap) has passed, so that phantom click can't
         // land on a button like "Caught stealing 2nd".
         setTimeout(() => setMenuArmed(true), 400);
     };
-    const closeBaseMenu = () => { setBaseMenu(null); setMenuArmed(false); };
+    const closeBaseMenu = () => { setBaseMenu(null); setBaseMode(null); setMenuArmed(false); };
     const closeBaseMenuBackdrop = () => {
         // A tap on the diamond fires pointerup (which opens the menu) and then a
         // synthesized click that lands on the freshly-rendered backdrop. Ignore
@@ -7107,16 +7109,19 @@ function DugoutScorecard() {
                         runnerLabel(baseMenu),
                         " on ",
                         baseLabel(baseMenu)),
-                    React.createElement("p", null, "What happened?"),
-                    React.createElement("div", { className: "btnrow" },
-                        // Plain advance one/two bases — for scorers who tap the
-                        // runner instead of dragging. Reuses moveRunner so the
-                        // fold-onto-play behaviour is identical to a drag. The
-                        // "scores" cases keep their existing dedicated buttons below.
-                        baseMenu === "first" && React.createElement("button", { className: "dg", onClick: () => { const b = baseMenu; setBaseMenu(null); moveRunner(b, "second"); } }, "Advance to 2nd"),
-                        (baseMenu === "first" || baseMenu === "second") && React.createElement("button", { className: "dg", onClick: () => { const b = baseMenu; setBaseMenu(null); moveRunner(b, "third"); } }, "Advance to 3rd"),
-                        React.createElement("button", { className: "dg", onClick: () => { const b = baseMenu; setBaseMenu(null); moveRunner(b, "home"); } }, "Advance home \u2014 scores"),
-                        React.createElement("button", { className: "dg hit", onClick: () => { const b = baseMenu; setBaseMenu(null); moveRunner(b, "home"); } }, game.openHit != null ? "Advance home \u2014 scores (RBI)" : "Advance home \u2014 scores"),
+                    React.createElement("p", null, baseMode === "adv" ? "How did he advance?" : baseMode === "out" ? "How was he out?" : "What happened?"),
+                    // Two steps: safe-or-out first, then the specific call. Keeps the
+                    // list short enough to hit reliably on a tablet at the field.
+                    baseMode == null && React.createElement("div", { className: "btnrow" },
+                        React.createElement("button", { className: "dg hit", onClick: () => setBaseMode("adv") }, "\u2713 Safe / advanced"),
+                        React.createElement("button", { className: "dg outb", onClick: () => setBaseMode("out") }, "\u2715 Out"),
+                        React.createElement("button", { className: "dg ghost", onClick: () => setCrMenu(baseMenu) }, game.bases[baseMenu] && game.bases[baseMenu].cr ? "Change / remove courtesy runner" : "Courtesy runner"),
+                        React.createElement("button", { className: "dg ghost", onClick: () => runnerClear(baseMenu) }, "Remove runner"),
+                        React.createElement("button", { className: "dg ghost", onClick: closeBaseMenu }, "Cancel")),
+                    baseMode === "adv" && React.createElement("div", { className: "btnrow" },
+                        baseMenu === "first" && React.createElement("button", { className: "dg", onClick: () => { const b = baseMenu; closeBaseMenu(); moveRunner(b, "second"); } }, "Advance to 2nd"),
+                        (baseMenu === "first" || baseMenu === "second") && React.createElement("button", { className: "dg", onClick: () => { const b = baseMenu; closeBaseMenu(); moveRunner(b, "third"); } }, "Advance to 3rd"),
+                        React.createElement("button", { className: "dg hit", onClick: () => { const b = baseMenu; closeBaseMenu(); moveRunner(b, "home"); } }, game.openHit != null ? "Advance home \u2014 scores (RBI)" : "Advance home \u2014 scores"),
                         game.openHit != null && (React.createElement("button", { className: "dg hit", onClick: () => runnerScoresOnPlay(baseMenu) },
                             "Scores on the play (RBI ",
                             game.lineup[battingSide][game.openHit.b].name,
@@ -7124,15 +7129,15 @@ function DugoutScorecard() {
                         React.createElement("button", { className: "dg", onClick: () => stealBase(baseMenu) }, baseMenu === "third" ? "Steals home" : `Steals ${baseMenu === "first" ? "2nd" : "3rd"}`),
                         React.createElement("button", { className: "dg", onClick: () => runnerAdvanceOn(baseMenu, "wp") }, baseMenu === "third" ? "Scores on wild pitch" : `Takes ${baseMenu === "first" ? "2nd" : "3rd"} on wild pitch`),
                         React.createElement("button", { className: "dg", onClick: () => runnerAdvanceOn(baseMenu, "pb") }, baseMenu === "third" ? "Scores on passed ball" : `Takes ${baseMenu === "first" ? "2nd" : "3rd"} on passed ball`),
-                        React.createElement("button", { className: "dg outb", onClick: () => { const b = baseMenu; setBaseMenu(null); openFieldSeq("Caught stealing", "Tap the throw in order (e.g. 2-6) — or Skip.", (note) => caughtStealing(b, note)); } }, baseMenu === "third" ? "Caught stealing home" : `Caught stealing ${baseMenu === "first" ? "2nd" : "3rd"}`),
-                        React.createElement("button", { className: "dg outb", onClick: () => { const b = baseMenu; setBaseMenu(null); openFieldSeq("Picked off", "Tap the throw in order (e.g. 1-3) — or Skip.", (note) => pickedOff(b, note)); } }, `Picked off ${baseLabel(baseMenu)}`),
-                        React.createElement("button", { className: "dg", onClick: () => { const b = baseMenu; setBaseMenu(null); openFieldOne("Error", "Tap the fielder who made the error.", (pos) => advanceOnError(b, pos)); } }, baseMenu === "third" ? "Scores on error (E)" : `Takes ${baseMenu === "first" ? "2nd" : "3rd"} on error (E)`),
+                        React.createElement("button", { className: "dg", onClick: () => { const b = baseMenu; closeBaseMenu(); openFieldOne("Error", "Tap the fielder who made the error.", (pos) => advanceOnError(b, pos)); } }, baseMenu === "third" ? "Scores on error (E)" : `Takes ${baseMenu === "first" ? "2nd" : "3rd"} on error (E)`),
                         React.createElement("button", { className: "dg", onClick: () => obstruction(baseMenu) }, baseMenu === "third" ? "Obstruction \u2014 awarded home" : `Obstruction \u2014 awarded ${baseMenu === "first" ? "2nd" : "3rd"}`),
-                        React.createElement("button", { className: `dg ${game.openHit != null ? "" : "hit"}`, onClick: () => runnerScores(baseMenu) }, "Scores \u2014 no RBI"),
+                        React.createElement("button", { className: "dg", onClick: () => runnerScores(baseMenu) }, "Scores \u2014 no RBI"),
+                        React.createElement("button", { className: "dg ghost", onClick: () => setBaseMode(null) }, "\u2190 Back")),
+                    baseMode === "out" && React.createElement("div", { className: "btnrow" },
+                        React.createElement("button", { className: "dg outb", onClick: () => { const b = baseMenu; closeBaseMenu(); openFieldSeq("Caught stealing", "Tap the throw in order (e.g. 2-6) \u2014 or Skip.", (note) => caughtStealing(b, note)); } }, baseMenu === "third" ? "Caught stealing home" : `Caught stealing ${baseMenu === "first" ? "2nd" : "3rd"}`),
+                        React.createElement("button", { className: "dg outb", onClick: () => { const b = baseMenu; closeBaseMenu(); openFieldSeq("Picked off", "Tap the throw in order (e.g. 1-3) \u2014 or Skip.", (note) => pickedOff(b, note)); } }, `Picked off ${baseLabel(baseMenu)}`),
                         React.createElement("button", { className: "dg outb", onClick: () => runnerOut(baseMenu) }, "Out on the bases"),
-                        React.createElement("button", { className: "dg ghost", onClick: () => setCrMenu(baseMenu) }, game.bases[baseMenu] && game.bases[baseMenu].cr ? "Change / remove courtesy runner" : "Courtesy runner"),
-                        React.createElement("button", { className: "dg ghost", onClick: () => runnerClear(baseMenu) }, "Remove runner"),
-                        React.createElement("button", { className: "dg ghost", onClick: closeBaseMenu }, "Cancel"))))),
+                        React.createElement("button", { className: "dg ghost", onClick: () => setBaseMode(null) }, "\u2190 Back"))))),
             crMenu && game && (React.createElement("div", { className: "modal-back", onClick: () => setCrMenu(null) },
                 React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
                     React.createElement("h3", null, "Courtesy runner"),
