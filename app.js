@@ -51,6 +51,13 @@ const PITCH_DIVISIONS = {
     "15U": [35, 50, 65, 80, 95],
     "18U": [40, 55, 70, 85, 105],
     "22U": [45, 60, 75, 90, 115],
+    // BNS girls divisions — handbook 5.2.7 lists them on the SAME rows as the
+    // boys division one year younger ("11U/12U Girls", "13U/14U Girls",
+    // "15U/17U Girls"), so the thresholds are identical, not invented.
+    "12U Girls": [25, 40, 55, 65, 75],
+    "14U Girls": [30, 45, 60, 75, 85],
+    "17U Girls": [35, 50, 65, 80, 95],
+    "18U Girls": [40, 55, 70, 85, 105],
     // Little League (by league age)
     "LL 7-8": [20, 35, 50, 65, 50],
     "LL 9-10": [20, 35, 50, 65, 75],
@@ -66,9 +73,75 @@ const PITCH_DIVISIONS = {
     "USSSA 15-16": [30, 45, 60, 75, 95],
     "USSSA 17-18": [30, 45, 60, 80, 105],
 };
+// BNS Handbook 5.2.9.2 — a pitcher's combined 3-day pitch count cannot exceed:
+// (the handbook lists no 3-day figure for 22U, and Pitch Smart has no equivalent
+// rule, so those divisions are simply not capped here rather than guessed at)
+const THREE_DAY_MAX = {
+    "11U": 105, "12U Girls": 105,
+    "13U": 120, "14U Girls": 120,
+    "15U": 135, "17U Girls": 135,
+    "18U": 150, "18U Girls": 150,
+};
+// Handbook 5.2.8 — a pitcher cannot pitch 3 consecutive days unless their first
+// two days combined stay within the no-rest threshold (column 0 of the table).
+const consecutiveDayAllowance = (dv) => (PITCH_DIVISIONS[dv] ? PITCH_DIVISIONS[dv][0] : 0);
+const dayKey = (d) => String(d || "").slice(0, 10);
+const daysApart = (a, b) => {
+    const t1 = Date.parse(dayKey(a) + "T00:00:00"), t2 = Date.parse(dayKey(b) + "T00:00:00");
+    if (isNaN(t1) || isNaN(t2))
+        return null;
+    return Math.round((t2 - t1) / 86400000);
+};
+// Multi-day workload for one pitcher, looking back from `onDate`.
+// `history` is [{date, pitches}] — one entry per game the pitcher threw in.
+// Returns the handbook checks plus what they'd have left today.
+const multiDayStatus = (dv, history, onDate, todayPitches) => {
+    const daily = PITCH_DIVISIONS[dv] ? PITCH_DIVISIONS[dv][4] : 0;
+    const cap3 = THREE_DAY_MAX[dv] || 0;
+    const byDay = {};
+    (history || []).forEach((h) => {
+        const k = dayKey(h.date);
+        if (!k)
+            return;
+        byDay[k] = (byDay[k] || 0) + (h.pitches || 0);
+    });
+    const today = dayKey(onDate);
+    byDay[today] = (byDay[today] || 0) + (todayPitches || 0);
+    const on = (offset) => {
+        const t = Date.parse(today + "T00:00:00");
+        if (isNaN(t))
+            return 0;
+        return byDay[new Date(t + offset * 86400000).toISOString().slice(0, 10)] || 0;
+    };
+    const d0 = on(0), d1 = on(-1), d2 = on(-2);
+    const twoDay = d0 + d1;
+    const threeDay = d0 + d1 + d2;
+    const notes = [];
+    // 5.2.9.1 — the daily max also caps any two-day period
+    if (daily && twoDay > daily)
+        notes.push(`2-day total ${twoDay} over the ${daily} limit`);
+    // 5.2.9.2 — combined three-day cap
+    if (cap3 && threeDay > cap3)
+        notes.push(`3-day total ${threeDay} over the ${cap3} limit`);
+    // 5.2.8 — a third consecutive day is only allowed if the first two days
+    // combined stayed within the no-rest number. This blocks the day outright,
+    // so it's checked whether or not they've thrown yet today.
+    const allow = consecutiveDayAllowance(dv);
+    const blockedByStreak = d1 > 0 && d2 > 0 && (d1 + d2) > allow;
+    if (blockedByStreak)
+        notes.push(d0 > 0
+            ? `3rd straight day \u2014 prior 2 days ${d1 + d2} over ${allow}`
+            : `not eligible today \u2014 3rd straight day, prior 2 days ${d1 + d2} over ${allow}`);
+    const room = blockedByStreak ? 0 : [daily ? daily - d0 : Infinity,
+        daily ? daily - twoDay + d0 : Infinity,
+        cap3 ? cap3 - threeDay + d0 : Infinity].reduce((a, b) => Math.min(a, b), Infinity);
+    return { d0, d1, d2, twoDay, threeDay, cap3, daily, notes, blockedByStreak,
+        roomToday: Math.max(0, room === Infinity ? 0 : room) };
+};
 // Picker grouping — keeps the country/organization sets visually separate.
 const DIVISION_GROUPS = [
     { label: "Baseball Canada", keys: ["11U", "13U", "15U", "18U", "22U"] },
+    { label: "Baseball Canada \u2014 Girls", keys: ["12U Girls", "14U Girls", "17U Girls", "18U Girls"] },
     { label: "Little League (USA)", keys: ["LL 7-8", "LL 9-10", "LL 11-12", "LL 13-14", "LL 15-16", "LL 17-18"] },
     { label: "USSSA · Pitch Smart (USA)", keys: ["USSSA 7-8", "USSSA 9-10", "USSSA 11-12", "USSSA 13-14", "USSSA 15-16", "USSSA 17-18"] },
 ];
@@ -81,6 +154,7 @@ const DIVISION_INNINGS = {
     "15U": 7,
     "18U": 7,
     "22U": 9,
+    "12U Girls": 6, "14U Girls": 6, "17U Girls": 7, "18U Girls": 7,
     // Little League: 6-inning games through Majors (12U); 7 for Junior/Senior (13+)
     "LL 7-8": 6, "LL 9-10": 6, "LL 11-12": 6, "LL 13-14": 7, "LL 15-16": 7, "LL 17-18": 7,
     // USSSA typically 6 innings through 12U, 7 for 13U+
@@ -729,7 +803,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "162"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "165"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -891,8 +965,8 @@ function DugoutScorecard() {
     useEffect(() => { pingActivation(loadActivation()); }, []);
     const [phase, setPhase] = useState((saved0 && saved0.phase) || "setup");
     const [teams, setTeams] = useState((saved0 && saved0.teams) || {
-        away: { name: "VISITORS", color: "#134A8E", logo: "", lineup: freshLineup("Batter") },
-        home: { name: "HOME", color: "#B91C1C", logo: "", lineup: freshLineup("Batter") },
+        away: { name: "VISITORS", color: "#134A8E", logo: "", coach: "", lineup: freshLineup("Batter") },
+        home: { name: "HOME", color: "#B91C1C", logo: "", coach: "", lineup: freshLineup("Batter") },
     });
     const [game, setGame] = useState((saved0 && saved0.game) || null);
     const [baseMenu, setBaseMenu] = useState(null); // which occupied base was tapped
@@ -1292,6 +1366,8 @@ function DugoutScorecard() {
         setExtraRunner(!!snap.extraRunner);
         setGameType(snap.gameType || "season");
         setEventName(snap.eventName || "");
+        setGameTime(snap.gameTime || "");
+        setFieldName(snap.fieldName || "");
         archivedIdRef.current = record.id; // already saved — don't re-archive on the over-effect
         setHistory([]);
         setPhase("game");
@@ -1384,6 +1460,29 @@ function DugoutScorecard() {
     };
     // Games carry a type (season / playoff / tournament / exhibition). Older saves
     // predate it and are treated as regular-season games.
+    // Every game this pitcher threw in, across ALL teams — a player can be rostered
+    // on both a co-ed club team and a girls team (handbook 2.7.3), and their arm
+    // doesn't care which jersey they wore.
+    const pitcherHistory = (name, excludeId) => {
+        const key = lc(name);
+        if (!key)
+            return [];
+        const out = [];
+        games.forEach((rec) => {
+            if (!rec || !rec.date || (excludeId && rec.id === excludeId))
+                return;
+            const g = rec.snapshot && rec.snapshot.game;
+            if (!g || !g.pitchers)
+                return;
+            ["away", "home"].forEach((sd) => {
+                (g.pitchers[sd] || []).forEach((p) => {
+                    if (lc(p.name) === key && (p.pitches || 0) > 0)
+                        out.push({ date: rec.date, pitches: p.pitches || 0 });
+                });
+            });
+        });
+        return out;
+    };
     const recType = (rec) => (rec && rec.gameType) || (rec && rec.snapshot && rec.snapshot.gameType) || "season";
     const recEvent = (rec) => ((rec && rec.eventName) || (rec && rec.snapshot && rec.snapshot.eventName) || "").trim();
     // A baseball season sits inside one calendar year, so the game date is the
@@ -1622,12 +1721,12 @@ function DugoutScorecard() {
             date: gameDate,
             gameType: gameType || "season",
             eventName: (eventName || "").trim(),
+            gameTime: gameTime || "",
+            fieldName: (fieldName || "").trim(),
             division: division || "",
             runCap: runCap || 0,
             capLastOpen: !!capLastOpen,
             extraRunner: !!extraRunner,
-            gameType: gameType || "season",
-            eventName: (eventName || "").trim(),
             inning: 1,
             half: "top",
             balls: 0,
@@ -3367,6 +3466,8 @@ function DugoutScorecard() {
     const [baseMode, setBaseMode] = useState(null); // base menu: null | "adv" | "out"
     const [gameType, setGameType] = useState(() => (saved0 && saved0.gameType) || "season"); // season | playoff | tournament | exhibition
     const [eventName, setEventName] = useState(() => (saved0 && saved0.eventName) || ""); // e.g. "Bridgewater Invitational"
+    const [gameTime, setGameTime] = useState(() => (saved0 && saved0.gameTime) || "");
+    const [fieldName, setFieldName] = useState(() => (saved0 && saved0.fieldName) || "");
     const [seasonType, setSeasonType] = useState("all"); // season-stats filter
     const [seasonEvent, setSeasonEvent] = useState("all"); // specific tournament/playoff
     const [seasonYear, setSeasonYear] = useState("all"); // baseball seasons sit inside one calendar year
@@ -4976,7 +5077,8 @@ function DugoutScorecard() {
         const blockGap = 46;
         const rowsFor = (side) => Math.max(game.pitchers[side].length, 6);
         const blockH = (side) => 34 + headH + rowsFor(side) * rowH;
-        const refTop = 210 + blockH("home") + blockGap + blockH("away") + blockGap;
+        const blocksTop = 254; // below the header rows (teams, date/division, time/field)
+        const refTop = blocksTop + blockH("home") + blockGap + blockH("away") + blockGap;
         const H = refTop + 300;
         const c = document.createElement("canvas");
         c.width = W;
@@ -5007,6 +5109,8 @@ function DugoutScorecard() {
         rowR("Visiting Team:", clip(teams.away.name, 28), 158);
         rowL("Game Date:", game.date || new Date().toISOString().slice(0, 10), 194);
         rowR("Division:", dv || "______", 194);
+        rowL("Game Time:", gameTime || "__________", 230);
+        rowR("Field:", clip(fieldName || "__________", 24), 230);
         ctx.textAlign = "left";
         const drawBlock = (side, top) => {
             ctx.textAlign = "left"; // drawBlock leaves textAlign centered — reset on entry
@@ -5072,7 +5176,7 @@ function DugoutScorecard() {
                     ctx.fillText(rest, m + tableW - restW / 2, yTxt);
             });
         };
-        const homeTop = 210;
+        const homeTop = blocksTop;
         drawBlock("home", homeTop);
         drawBlock("away", homeTop + blockH("home") + blockGap);
         // reference table — only the rule set the current division belongs to,
@@ -5184,13 +5288,16 @@ function DugoutScorecard() {
 
         // --- info band: team / opponent / date ---
         const bandY = 110;
-        const bandH = 128;
+        const bandH = 192; // three rows: teams, coaches, date/notes
         ctx.strokeStyle = grid;
         ctx.lineWidth = 2;
         ctx.strokeRect(m, bandY, W - m * 2, bandH);
+        const bandR = bandH / 3;
         ctx.beginPath();
-        ctx.moveTo(m, bandY + bandH / 2);
-        ctx.lineTo(W - m, bandY + bandH / 2);
+        ctx.moveTo(m, bandY + bandR);
+        ctx.lineTo(W - m, bandY + bandR);
+        ctx.moveTo(m, bandY + bandR * 2);
+        ctx.lineTo(W - m, bandY + bandR * 2);
         ctx.moveTo(W / 2, bandY);
         ctx.lineTo(W / 2, bandY + bandH);
         ctx.stroke();
@@ -5202,15 +5309,20 @@ function DugoutScorecard() {
             let s = t || "";
             while (s && ctx.measureText(s).width > maxW)
                 s = s.slice(0, -1);
-            ctx.fillText(s, x + 12, y + 50);
+            ctx.fillText(s, x + 12, y + Math.round(size * 1.25) + 8);
         };
+        const oppSide = side === "away" ? "home" : "away";
         label("OUR TEAM", m, bandY);
-        handwrite(teamName, m, bandY, 38, W / 2 - m - 24);
+        handwrite(teamName, m, bandY, 34, W / 2 - m - 24);
         label("OPPOSING TEAM", W / 2, bandY);
-        handwrite(oppName, W / 2, bandY, 38, W / 2 - m - 24);
-        label("DATE", m, bandY + bandH / 2);
-        handwrite(game.date || new Date().toISOString().slice(0, 10), m, bandY + bandH / 2, 34, W / 2 - m - 24);
-        label("GAME NOTES", W / 2, bandY + bandH / 2);
+        handwrite(oppName, W / 2, bandY, 34, W / 2 - m - 24);
+        label("COACH", m, bandY + bandR);
+        handwrite((teams[side] && teams[side].coach) || "", m, bandY + bandR, 32, W / 2 - m - 24);
+        label("COACH", W / 2, bandY + bandR);
+        handwrite((teams[oppSide] && teams[oppSide].coach) || "", W / 2, bandY + bandR, 32, W / 2 - m - 24);
+        label("DATE", m, bandY + bandR * 2);
+        handwrite(game.date || new Date().toISOString().slice(0, 10), m, bandY + bandR * 2, 30, W / 2 - m - 24);
+        label("GAME NOTES", W / 2, bandY + bandR * 2);
 
         // --- column headers ---
         const colTop = bandY + bandH + 26;
@@ -6088,10 +6200,13 @@ function DugoutScorecard() {
                         } }, "\uD83D\uDCCA Season stats")),
                     React.createElement("label", { style: { display: "inline-flex", alignItems: "center", gap: 8, color: "var(--powder)", fontSize: 14 } },
                         "Game date",
-                        React.createElement("input", { type: "date", className: "dg-in", style: { width: "auto" }, value: gameDate, onChange: (e) => setGameDate(e.target.value), "aria-label": "Game date" }))),
+                        React.createElement("input", { type: "date", className: "dg-in", style: { width: "auto" }, value: gameDate, onChange: (e) => setGameDate(e.target.value), "aria-label": "Game date" }),
+                        React.createElement("input", { type: "time", className: "dg-in", style: { width: "auto" }, value: gameTime, onChange: (e) => setGameTime(e.target.value), "aria-label": "Game time" }),
+                        React.createElement("input", { className: "dg-in", style: { width: "auto", minWidth: 110 }, placeholder: "Field", value: fieldName, onChange: (e) => setFieldName(e.target.value), "aria-label": "Field or diamond" }))),
                 React.createElement("div", { className: "setup-grid" }, ["away", "home"].map((side) => (React.createElement("div", { className: "setup-card", key: side },
                     React.createElement("h2", null, side === "away" ? "Visiting Club" : "Home Club"),
                     React.createElement("input", { className: "dg-in teamname-in", value: teams[side].name, onChange: (e) => setTeamName(side, e.target.value), "aria-label": `${side} team name` }),
+                    React.createElement("input", { className: "dg-in", placeholder: "Coach", value: teams[side].coach || "", onChange: (e) => setTeams((t) => Object.assign({}, t, { [side]: Object.assign({}, t[side], { coach: e.target.value }) })), "aria-label": `${side} coach name` }),
                     React.createElement("label", { className: `scan-bar ${scanBusy === side ? "busy" : ""}` },
                         React.createElement("span", { className: "scan-ico", "aria-hidden": "true" }, scanBusy === side
                             ? React.createElement("span", { className: "scan-spin" })
@@ -6854,6 +6969,44 @@ function DugoutScorecard() {
                             " \u00B7 \u201C35 (37)\u201D = last batter called, credited 35"),
                         sideTable("home"),
                         sideTable("away"),
+                        // Multi-day workload (BNS 5.2.8, 5.2.9.1, 5.2.9.2). Only shown
+                        // for divisions the handbook actually publishes a 3-day figure
+                        // for, and only when there's prior history to report.
+                        (() => {
+                            if (!dv || !THREE_DAY_MAX[dv])
+                                return null;
+                            const today = game.date || new Date().toISOString().slice(0, 10);
+                            const rows = [];
+                            ["home", "away"].forEach((sd) => {
+                                (game.pitchers[sd] || []).forEach((p) => {
+                                    if (!p.name || !p.name.trim())
+                                        return;
+                                    const hist = pitcherHistory(p.name, game.id);
+                                    const st = multiDayStatus(dv, hist, today, p.pitches || 0);
+                                    if (hist.length || st.notes.length)
+                                        rows.push({ side: sd, name: p.name, st });
+                                });
+                            });
+                            if (!rows.length)
+                                return null;
+                            return React.createElement("div", { style: { marginTop: 12 } },
+                                React.createElement("div", { className: "sit-sec" }, `Multi-day workload \u00b7 ${dv}`),
+                                React.createElement("div", { className: "sit-table" },
+                                    React.createElement("div", { className: "sit-row sit-head", style: { gridTemplateColumns: "1.6fr .7fr .7fr .7fr .9fr" } },
+                                        React.createElement("span", null, "Pitcher"),
+                                        React.createElement("span", null, "Today"),
+                                        React.createElement("span", null, "2-day"),
+                                        React.createElement("span", null, "3-day"),
+                                        React.createElement("span", null, "Left")),
+                                    rows.map((r, i) => React.createElement("div", { className: "sit-row", key: i, style: { gridTemplateColumns: "1.6fr .7fr .7fr .7fr .9fr" } },
+                                        React.createElement("span", { className: "sit-lbl" }, r.name),
+                                        React.createElement("span", null, r.st.d0),
+                                        React.createElement("span", { style: r.st.daily && r.st.twoDay > r.st.daily ? { color: "var(--red)" } : null }, r.st.twoDay),
+                                        React.createElement("span", { style: r.st.cap3 && r.st.threeDay > r.st.cap3 ? { color: "var(--red)" } : null }, `${r.st.threeDay}/${r.st.cap3}`),
+                                        React.createElement("span", { style: r.st.roomToday === 0 ? { color: "var(--red)", fontWeight: 700 } : null }, r.st.roomToday === 0 ? "\u2014" : r.st.roomToday)))),
+                                rows.filter((r) => r.st.notes.length).map((r, i) => React.createElement("p", { key: i, style: { textTransform: "none", letterSpacing: 0, color: "var(--red)", fontSize: 12, margin: "6px 0 0" } }, `${r.name}: ${r.st.notes.join(" \u00b7 ")}`)),
+                                React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--powder)", fontSize: 11, margin: "6px 0 0" } }, "From saved games with dates \u00b7 handbook 5.2.8, 5.2.9.1\u20132"));
+                        })(),
                         React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr" } },
                             React.createElement("button", { className: "dg hit", onClick: sharePitchSheet }, "\uD83D\uDDBC Export sheet (image)"),
                             React.createElement("button", { className: "dg ghost", onClick: () => setSheetOpen(false) }, "Close"))));
