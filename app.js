@@ -729,7 +729,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "158"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "159"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -3584,14 +3584,14 @@ function DugoutScorecard() {
         setBaseMenu(null);
     };
     // Stolen base: advance one base (3rd steals home and scores, no RBI)
-    const stealBase = (base) => {
+    const stealBase = (base, di) => {
         const who = runnerLabel(base);
         if (base === "third") {
             mutate((g) => {
                 creditRun(g, g.bases.third);
                 g.bases.third = false;
                 addRuns(g, 1, "steal");
-                logDuringPA(g, `${who} steals home!`);
+                logDuringPA(g, di ? `${who} scores \u2014 defensive indifference` : `${who} steals home!`);
             });
             setBaseMenu(null);
             return;
@@ -3606,7 +3606,7 @@ function DugoutScorecard() {
             g.bases[target] = g.bases[base];
             g.bases[base] = false;
             cardAdvance(g, g.bases[target], target === "second" ? 2 : 3);
-            logDuringPA(g, `${who} steals ${baseLabel(target)}`);
+            logDuringPA(g, di ? `${who} to ${baseLabel(target)} \u2014 defensive indifference` : `${who} steals ${baseLabel(target)}`);
         });
         setBaseMenu(null);
     };
@@ -3646,17 +3646,18 @@ function DugoutScorecard() {
         });
         setRhbMenu(false);
     };
-    const runnerOut = (base) => {
+    const runnerOut = (base, why) => {
         const who = runnerLabel(base);
+        const txt = why ? `${who} ${why}` : `${who} out at ${baseLabel(base)}`;
         mutate((g) => {
             cardOut(g, g.bases[base], g.outs + 1);
             g.bases[base] = false;
             chargeP(g, "outs");
             if (g.openHit != null) {
-                amendOpenHit(g, `${who} out at ${baseLabel(base)}`, `${who} out at ${baseLabel(base)} on the play`);
+                amendOpenHit(g, txt, `${txt} on the play`);
             }
             else {
-                logPlay(g, `${who} out at ${baseLabel(base)}`);
+                logPlay(g, txt);
             }
             recordOut(g);
         });
@@ -7134,11 +7135,16 @@ function DugoutScorecard() {
                         React.createElement("button", { className: "dg", onClick: () => runnerAdvanceOn(baseMenu, "pb") }, baseMenu === "third" ? "Scores on passed ball" : `Takes ${baseMenu === "first" ? "2nd" : "3rd"} on passed ball`),
                         React.createElement("button", { className: "dg", onClick: () => { const b = baseMenu; closeBaseMenu(); openFieldOne("Error", "Tap the fielder who made the error.", (pos) => advanceOnError(b, pos)); } }, baseMenu === "third" ? "Scores on error (E)" : `Takes ${baseMenu === "first" ? "2nd" : "3rd"} on error (E)`),
                         React.createElement("button", { className: "dg", onClick: () => obstruction(baseMenu) }, baseMenu === "third" ? "Obstruction \u2014 awarded home" : `Obstruction \u2014 awarded ${baseMenu === "first" ? "2nd" : "3rd"}`),
+                        React.createElement("button", { className: "dg", onClick: () => stealBase(baseMenu, true) }, "Defensive indifference"),
                         React.createElement("button", { className: "dg", onClick: () => runnerScores(baseMenu) }, "Scores \u2014 no RBI"),
                         React.createElement("button", { className: "dg ghost", onClick: () => setBaseMode(null) }, "\u2190 Back")),
                     baseMode === "out" && React.createElement("div", { className: "btnrow" },
                         React.createElement("button", { className: "dg outb", onClick: () => { const b = baseMenu; closeBaseMenu(); openFieldSeq("Caught stealing", "Tap the throw in order (e.g. 2-6) \u2014 or Skip.", (note) => caughtStealing(b, note)); } }, baseMenu === "third" ? "Caught stealing home" : `Caught stealing ${baseMenu === "first" ? "2nd" : "3rd"}`),
                         React.createElement("button", { className: "dg outb", onClick: () => { const b = baseMenu; closeBaseMenu(); openFieldSeq("Picked off", "Tap the throw in order (e.g. 1-3) \u2014 or Skip.", (note) => pickedOff(b, note)); } }, `Picked off ${baseLabel(baseMenu)}`),
+                        React.createElement("button", { className: "dg outb", onClick: () => runnerOut(baseMenu, `doubled off ${baseLabel(baseMenu)}`) }, "Doubled off"),
+                        React.createElement("button", { className: "dg outb", onClick: () => runnerOut(baseMenu, "out on appeal \u2014 did not tag up") }, "Did not tag up"),
+                        React.createElement("button", { className: "dg outb", onClick: () => runnerOut(baseMenu, "out on appeal \u2014 missed a base") }, "Out on appeal (missed base)"),
+                        React.createElement("button", { className: "dg outb", onClick: () => runnerOut(baseMenu, "out \u2014 interference") }, "Interference"),
                         React.createElement("button", { className: "dg outb", onClick: () => runnerOut(baseMenu) }, "Out on the bases"),
                         React.createElement("button", { className: "dg ghost", onClick: () => setBaseMode(null) }, "\u2190 Back"))))),
             crMenu && game && (React.createElement("div", { className: "modal-back", onClick: () => setCrMenu(null) },
