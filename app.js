@@ -729,7 +729,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "157"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "158"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -5618,6 +5618,11 @@ function DugoutScorecard() {
         .limitcard { margin-top: 16px; }
         .limitrow { display: grid; grid-template-columns: 90px 1fr; gap: 10px; align-items: center; }
         .limithint { font-size: 13px; color: var(--powder); letter-spacing: .04em; }
+        .togglerow { display: flex; align-items: center; gap: 10px; cursor: pointer;
+          padding: 8px 12px; border: 1px solid var(--line); border-radius: 12px;
+          background: rgba(255,255,255,.05); }
+        .togglerow input { width: 18px; height: 18px; flex: none; accent-color: var(--amberw); margin: 0; }
+        .togglerow span { font-size: 13px; color: var(--powder); letter-spacing: .04em; line-height: 1.3; }
         .license-card { max-width: 420px; margin: 24px auto 0; }
         .license-sub { color: var(--powder); font-size: 14px; margin: 4px 0 14px; line-height: 1.4; }
         .license-in {
@@ -6108,19 +6113,17 @@ function DugoutScorecard() {
                             : "age division \u00B7 pitch count rules + sheet")),
                     React.createElement("div", { className: "limitrow" },
                         React.createElement("select", { className: "dg-sel", value: String(runCap), onChange: (e) => setRunCap(parseInt(e.target.value, 10) || 0), "aria-label": "Runs allowed per inning" },
-                            React.createElement("option", { value: "0" }, "No run limit"),
-                            [3, 4, 5, 6, 7, 8, 10].map((v) => React.createElement("option", { key: v, value: String(v) }, `${v} runs / inning`))),
+                            React.createElement("option", { value: "0" }, "None"),
+                            [3, 4, 5, 6, 7, 8, 10].map((v) => React.createElement("option", { key: v, value: String(v) }, `${v} runs`))),
                         React.createElement("span", { className: "limithint" }, runCap > 0
                             ? (capLastOpen ? `capped \u00B7 last inning (${scheduledInnings()}+) open` : "capped every inning")
                             : "runs per half-inning")),
-                    React.createElement("div", { className: "limitrow" },
-                        React.createElement("label", { className: "theme-bar", style: { cursor: "pointer" } },
-                            React.createElement("input", { type: "checkbox", checked: extraRunner, onChange: (e) => setExtraRunner(e.target.checked), "aria-label": "Extra innings start with a runner on second" }),
-                            React.createElement("span", { style: { fontSize: 13 } }, "Extra innings start with a runner on 2nd"))),
-                    runCap > 0 && React.createElement("div", { className: "limitrow" },
-                        React.createElement("label", { className: "theme-bar", style: { cursor: "pointer" } },
-                            React.createElement("input", { type: "checkbox", checked: capLastOpen, onChange: (e) => setCapLastOpen(e.target.checked), "aria-label": "Last inning has no run limit" }),
-                            React.createElement("span", { style: { fontSize: 13 } }, "Last inning open (no limit)"))),
+                    runCap > 0 && React.createElement("label", { className: "togglerow" },
+                        React.createElement("input", { type: "checkbox", checked: capLastOpen, onChange: (e) => setCapLastOpen(e.target.checked), "aria-label": "Last inning has no run limit" }),
+                        React.createElement("span", null, "Last inning open (no run limit)")),
+                    React.createElement("label", { className: "togglerow" },
+                        React.createElement("input", { type: "checkbox", checked: extraRunner, onChange: (e) => setExtraRunner(e.target.checked), "aria-label": "Extra innings start with a runner on second" }),
+                        React.createElement("span", null, "Extra innings start with a runner on 2nd")),
                     React.createElement("div", { className: "limitrow" },
                         React.createElement("input", { className: "dg-in", type: "number", min: "0", max: "200", value: pitchLimit, onChange: (e) => setPitchLimit(Math.max(0, parseInt(e.target.value || "0", 10))), "aria-label": "Pitch limit per pitcher" }),
                         React.createElement("span", { className: "limithint" },
