@@ -620,6 +620,8 @@ const jerseyForLog = (lineup, e) => {
     const hit = lu.find((p) => p.name === e.batter);
     return hit && hit.num != null && String(hit.num).trim() ? `#${String(hit.num).trim()} ${e.batter}` : e.batter;
 };
+const ordinal = (n) => { const v = n % 100; if (v >= 11 && v <= 13) return `${n}th`;
+    return `${n}${["th", "st", "nd", "rd"][n % 10] || "th"}`; };
 const renameInLogText = (txt, oldName, nm) => {
     if (typeof txt !== "string" || !oldName || txt.indexOf(oldName) === -1)
         return txt;
@@ -692,7 +694,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "151"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "154"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1250,6 +1252,9 @@ function DugoutScorecard() {
         if (typeof snap.pitchLimit !== "undefined")
             setPitchLimit(snap.pitchLimit);
         setDivision(snap.division || "");
+        setRunCap(snap.runCap == null ? 0 : snap.runCap);
+        setCapLastOpen(snap.capLastOpen == null ? true : !!snap.capLastOpen);
+        setExtraRunner(!!snap.extraRunner);
         archivedIdRef.current = record.id; // already saved — don't re-archive on the over-effect
         setHistory([]);
         setPhase("game");
@@ -1555,6 +1560,9 @@ function DugoutScorecard() {
             id: Date.now(),
             date: gameDate,
             division: division || "",
+            runCap: runCap || 0,
+            capLastOpen: !!capLastOpen,
+            extraRunner: !!extraRunner,
             inning: 1,
             half: "top",
             balls: 0,
@@ -1610,11 +1618,27 @@ function DugoutScorecard() {
         setHistory((h) => h.slice(0, -1));
         setBaseMenu(null);
     };
+    /* --- per-inning run limit -------------------------------------------
+       Leagues cap runs per half-inning (BNS league play is 5, tournaments vary,
+       and the last inning is usually open). Runs past the cap don't count and
+       the half-inning is over the moment the cap is reached. --------------- */
+    const scheduledInnings = () => DIVISION_INNINGS[division] || 7;
+    const capOn = (g) => runCap > 0 && !(capLastOpen && g.inning >= scheduledInnings());
+    const halfScored = (g) => { const r = g.linescore && g.linescore[g.inning - 1]; return (r && r[battingSide]) || 0; };
+    // runs already counted this half, plus any credited earlier in THIS play
+    const capRoom = (g) => Math.max(0, runCap - halfScored(g) - (g.pendRuns || 0));
     const mutate = (fn) => {
         pushHistory();
         setGame((g) => {
             const n = snapshot(g);
+            n.pendRuns = 0;
+            const inn0 = n.inning, half0 = n.half;
             fn(n);
+            n.pendRuns = 0;
+            // Reaching the cap ends the half-inning — unless the play already
+            // ended it (third out) or we're in an uncapped inning.
+            if (capOn(n) && n.inning === inn0 && n.half === half0 && halfScored(n) >= runCap)
+                endHalf(n);
             return n;
         });
     };
@@ -1626,6 +1650,13 @@ function DugoutScorecard() {
     const addRuns = (g, n, kind) => {
         if (n <= 0)
             return;
+        if (capOn(g)) {
+            const room = Math.max(0, runCap - halfScored(g));
+            if (n > room)
+                n = room; // runs past the cap don't count
+            if (n <= 0)
+                return;
+        }
         const row = g.linescore[g.inning - 1];
         row[battingSide] = (row[battingSide] || 0) + n;
         if (!g.scoring)
@@ -1656,6 +1687,31 @@ function DugoutScorecard() {
         g.strikes = 0;
     };
     const endHalf = (g) => {
+        // Half-inning summary line: what the side that just batted did, and who's
+        // due up next. Gives the play-by-play natural breaks and the replay
+        // chapter markers. Computed BEFORE the flip, while inning/half still
+        // describe the half that just finished.
+        try {
+            const bs = g.half === "top" ? "away" : "home";
+            const fs = bs === "away" ? "home" : "away";
+            const mark = g.halfMark || { hits: 0, err: 0 };
+            const row = g.linescore[g.inning - 1] || {};
+            const R = (row[bs] || 0);
+            const H = Math.max(0, (g.hits[bs] || 0) - (mark.hits || 0));
+            const E = Math.max(0, (g.errors[fs] || 0) - (mark.err || 0));
+            const P = ((g.pitchers && g.pitchers[fs]) || []).reduce((a, p) => a + ((p.pInn && p.pInn[g.inning]) || 0), 0);
+            const nextLU = (g.lineup && g.lineup[fs]) || [];
+            const start = (g.batter && g.batter[fs]) || 0;
+            const due = nextLU.length
+                ? [0, 1, 2].map((k) => { const p = nextLU[(start + k) % nextLU.length]; return p ? p.name : ""; }).filter(Boolean).join(", ")
+                : "";
+            const when = g.half === "top" ? `Middle of ${ordinal(g.inning)}` : `End of ${ordinal(g.inning)}`;
+            const bat = (teams[bs] && teams[bs].name) || (bs === "away" ? "Visitors" : "Home");
+            const fld = (teams[fs] && teams[fs].name) || (fs === "away" ? "Visitors" : "Home");
+            g.log.push({ type: "ev", i: g.inning, h: g.half, k: "half",
+                t: `${when} \u2014 ${bat} ${R}R ${H}H ${E}E on ${P} pitch${P === 1 ? "" : "es"}${due ? ` \u00B7 ${fld} due up: ${due}` : ""}` });
+        }
+        catch (_h) { }
         g.balls = 0;
         g.strikes = 0;
         g.outs = 0;
@@ -1665,6 +1721,7 @@ function DugoutScorecard() {
         // An at-bat cut short by a third out on the bases never closed. Release it,
         // or the next half-inning's first pitch lands on the previous batter's row.
         g.openPA = null;
+        g.pendRuns = 0;
         g.openK = null;
         g.openTag = null;
         if (g.half === "top") {
@@ -1680,6 +1737,28 @@ function DugoutScorecard() {
                 g.linescore.push({ away: 0, home: null });
         }
         g.halfPA = 0;
+        // baseline for the next half's summary
+        {
+            const nbs = g.half === "top" ? "away" : "home";
+            const nfs = nbs === "away" ? "home" : "away";
+            g.halfMark = { hits: g.hits[nbs] || 0, err: g.errors[nfs] || 0 };
+            // Extra-innings tiebreak: the half starts with a runner on 2nd — the
+            // batter who made the last out, i.e. the one ahead of the leadoff
+            // hitter. He's flagged `placed` (no plate appearance, so his scorebook
+            // cell is left alone) and `ue`, because the pitcher didn't put him on:
+            // a run he scores is unearned.
+            if (extraRunner && g.inning > scheduledInnings()) {
+                const lu = (g.lineup && g.lineup[nbs]) || [];
+                if (lu.length) {
+                    const nextIdx = (g.batter && g.batter[nbs]) || 0;
+                    const bIdx = (nextIdx - 1 + lu.length) % lu.length;
+                    g.bases.second = { b: bIdx, rp: curPIdx(g, nfs), ue: true, placed: true };
+                    const who = lu[bIdx] ? lu[bIdx].name : "Runner";
+                    g.log.push({ type: "ev", i: g.inning, h: g.half, k: "half",
+                        t: `Extra innings \u2014 ${who} starts at 2nd` });
+                }
+            }
+        }
     };
     const recordOut = (g) => {
         g.outs += 1;
@@ -1891,6 +1970,9 @@ function DugoutScorecard() {
     const creditRun = (g, runner) => {
         if (!runner)
             return;
+        if (capOn(g) && capRoom(g) <= 0)
+            return; // half-inning already at its run limit — this runner doesn't score
+        g.pendRuns = (g.pendRuns || 0) + 1;
         if (runner.b != null) {
             g.stats[battingSide][runner.b].r += 1;
             cardAdvance(g, runner, 4);
@@ -1927,7 +2009,7 @@ function DugoutScorecard() {
     };
     // a runner moved up: update how far their scorebook diamond is drawn
     const cardAdvance = (g, runner, base) => {
-        if (!g.card || !runner || runner.b == null)
+        if (!g.card || !runner || runner.b == null || runner.placed)
             return;
         const list = g.card[battingSide];
         for (let i = list.length - 1; i >= 0; i--) {
@@ -3200,6 +3282,9 @@ function DugoutScorecard() {
     const [replaySpeed, setReplaySpeed] = useState(1);
     const [rpBgOk, setRpBgOk] = useState(false); // painted background exists?
     const [hrMenu, setHrMenu] = useState(false); // HR: over the fence or inside the park
+    const [runCap, setRunCap] = useState(() => { const v = saved0 && saved0.runCap; return v == null ? 0 : v; }); // 0 = no limit
+    const [capLastOpen, setCapLastOpen] = useState(() => (saved0 && saved0.capLastOpen != null) ? !!saved0.capLastOpen : true);
+    const [extraRunner, setExtraRunner] = useState(() => !!(saved0 && saved0.extraRunner)); // runner on 2nd in extras
     const replayTimer = useRef(null);
     const demoTimer = useRef(null);
     const demoMode = (() => { try { return /[?&]demo\b/.test(window.location.search); } catch (_a) { return false; } })();
@@ -5370,6 +5455,8 @@ function DugoutScorecard() {
         .rp-text.ev { color:var(--amberw); font-style:italic; }
         .rp-prog { height:4px; background:rgba(255,255,255,.08); border-radius:2px; overflow:hidden; }
         .rp-bar { height:100%; background:var(--amberw); transition:width .15s linear; }
+        .log-row.half { background:rgba(245,197,24,.08); border-left:3px solid var(--amberw); }
+        .log-row.half .log-txt { color:var(--amberw); font-weight:700; font-size:12.5px; letter-spacing:.02em; }
         .log-mid, .pbp-mid { display:block; color:var(--amberw); font-size:12px; font-style:italic;
           margin-top:2px; opacity:.9; }
         .rp-count { text-align:center; font-size:11px; color:var(--powder); margin-top:4px; }
@@ -5968,6 +6055,21 @@ function DugoutScorecard() {
                         React.createElement("span", { className: "limithint" }, division
                             ? `${division.startsWith("LL ") ? "Little League" : division.startsWith("USSSA ") ? "Pitch Smart" : "BNS"} thresholds ${PITCH_DIVISIONS[division].join(" / ")}`
                             : "age division \u00B7 pitch count rules + sheet")),
+                    React.createElement("div", { className: "limitrow" },
+                        React.createElement("select", { className: "dg-sel", value: String(runCap), onChange: (e) => setRunCap(parseInt(e.target.value, 10) || 0), "aria-label": "Runs allowed per inning" },
+                            React.createElement("option", { value: "0" }, "No run limit"),
+                            [3, 4, 5, 6, 7, 8, 10].map((v) => React.createElement("option", { key: v, value: String(v) }, `${v} runs / inning`))),
+                        React.createElement("span", { className: "limithint" }, runCap > 0
+                            ? (capLastOpen ? `capped \u00B7 last inning (${scheduledInnings()}+) open` : "capped every inning")
+                            : "runs per half-inning")),
+                    React.createElement("div", { className: "limitrow" },
+                        React.createElement("label", { className: "theme-bar", style: { cursor: "pointer" } },
+                            React.createElement("input", { type: "checkbox", checked: extraRunner, onChange: (e) => setExtraRunner(e.target.checked), "aria-label": "Extra innings start with a runner on second" }),
+                            React.createElement("span", { style: { fontSize: 13 } }, "Extra innings start with a runner on 2nd"))),
+                    runCap > 0 && React.createElement("div", { className: "limitrow" },
+                        React.createElement("label", { className: "theme-bar", style: { cursor: "pointer" } },
+                            React.createElement("input", { type: "checkbox", checked: capLastOpen, onChange: (e) => setCapLastOpen(e.target.checked), "aria-label": "Last inning has no run limit" }),
+                            React.createElement("span", { style: { fontSize: 13 } }, "Last inning open (no limit)"))),
                     React.createElement("div", { className: "limitrow" },
                         React.createElement("input", { className: "dg-in", type: "number", min: "0", max: "200", value: pitchLimit, onChange: (e) => setPitchLimit(Math.max(0, parseInt(e.target.value || "0", 10))), "aria-label": "Pitch limit per pitcher" }),
                         React.createElement("span", { className: "limithint" },
