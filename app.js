@@ -415,8 +415,19 @@ const buildReplaySteps = (g) => {
                 steps.push(Object.assign({}, ident, pre, { kind: "pitch", balls: b, strikes: s, text }));
             });
             (e.mid || []).forEach((m) => {
-                steps.push(Object.assign({}, ident, pre, { kind: "event", balls: b, strikes: s, text: m,
-                    seqPos: seqFromResult(m), scored: false, runs: 0 }));
+                const mt = typeof m === "string" ? m : ((m && m.t) || "");
+                const before = accA + accH;
+                const mr = parseRunsFromText(mt);
+                if (e.h === "top") accA += mr; else accH += mr;
+                // older games stored plain strings with no state — fall back to the
+                // at-bat's opening picture rather than showing nothing
+                const mstate = (m && typeof m === "object")
+                    ? { outs: m.outs, on1: !!m.on1, on2: !!m.on2, on3: !!m.on3,
+                        r1: m.r1 || null, r2: m.r2 || null, r3: m.r3 || null }
+                    : {};
+                steps.push(Object.assign({}, ident, pre, mstate, { aR: accA, hR: accH,
+                    kind: "event", balls: b, strikes: s, text: mt, seqPos: seqFromResult(mt),
+                    scored: (accA + accH) > before, runs: (accA + accH) - before }));
             });
             if (e.result) {
                 const runs = parseRunsFromText(e.result);
@@ -694,7 +705,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "154"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "155"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1828,7 +1839,21 @@ function DugoutScorecard() {
     const logDuringPA = (g, text, kind = "play") => {
         const row = g.openPA != null ? g.log[g.openPA] : null;
         if (row && row.type === "pa" && !row.result) {
-            (row.mid = row.mid || []).push(text);
+            // stamp the bases AS THEY NOW STAND — a steal mid-at-bat has already
+            // moved the runner, and the replay needs that to animate on this beat
+            // rather than waiting for the at-bat to finish.
+            const b = g.bases;
+            const rn = (r) => {
+                if (!r)
+                    return null;
+                if (r.cr)
+                    return r.cr.name;
+                const p = r.b != null && g.lineup[battingSide] ? g.lineup[battingSide][r.b] : null;
+                return p ? p.name : null;
+            };
+            (row.mid = row.mid || []).push({ t: text, outs: g.outs,
+                on1: !!b.first, on2: !!b.second, on3: !!b.third,
+                r1: rn(b.first), r2: rn(b.second), r3: rn(b.third) });
             g.lastPlay = text;
         }
         else
@@ -6324,7 +6349,7 @@ function DugoutScorecard() {
                                 e.seq.join("-"),
                                 e.seq.length > 0 && "-"),
                             React.createElement("span", { className: e.result ? "log-res" : "log-open" }, e.result || "batting…"),
-                            (e.mid || []).map((m, mi) => React.createElement("span", { className: "log-mid", key: mi }, m))))) : (React.createElement("div", { className: `log-row ${e.k}`, key: game.log.length - idx },
+                            (e.mid || []).map((m, mi) => React.createElement("span", { className: "log-mid", key: mi }, typeof m === "string" ? m : m.t))))) : (React.createElement("div", { className: `log-row ${e.k}`, key: game.log.length - idx },
                         React.createElement("span", { className: "log-inn" },
                             e.h === "top" ? "T" : "B",
                             e.i),
@@ -6354,7 +6379,7 @@ function DugoutScorecard() {
                                 React.createElement("button", { className: "dg ghost", onClick: () => { setPbpEdit(null); setPbpText(""); } }, "Cancel"))) : (React.createElement("button", { className: "pbp-tap", onClick: () => startLogEdit(idx) },
                                 e.type === "pa" && React.createElement("span", { className: "pbp-bat" }, logBatterLabel(e)),
                                 React.createElement("span", { className: "pbp-text" }, text),
-                                e.type === "pa" && (e.mid || []).map((m, mi) => React.createElement("span", { className: "pbp-mid", key: mi }, m)),
+                                e.type === "pa" && (e.mid || []).map((m, mi) => React.createElement("span", { className: "pbp-mid", key: mi }, typeof m === "string" ? m : m.t)),
                                 e.type === "pa" && e.seq && e.seq.length > 0 && (React.createElement("span", { className: "pbp-seq" }, e.seq.join(" · ")))))));
                         });
                         return rows;
@@ -6473,6 +6498,15 @@ function DugoutScorecard() {
                                         moves.push({ nm, keys: [b, to], fade: false, dest: to }); // manual correction: direct
                                     else if (st.scored)
                                         moves.push({ nm, keys: pathBetween(ringIdx[b], 4), fade: true });
+                                    else {
+                                        // Put out. He was going somewhere — show the break for
+                                        // the next base and fade him out short of it, rather
+                                        // than having him vanish off the bag. A pickoff barely
+                                        // leaves; a force or steal is most of the way there.
+                                        const nxt = RING[ringIdx[b] + 1];
+                                        const off = /picked off/i.test(st.text || "");
+                                        moves.push({ nm, keys: [b, nxt], fade: true, partial: off ? 0.3 : 0.76 });
+                                    }
                                 });
                                 if (st.batter) {
                                     const to = Object.keys(now).find((k) => now[k] === st.batter && was[k] !== st.batter);
@@ -6491,8 +6525,11 @@ function DugoutScorecard() {
                                 const pts = m.keys.map((k) => BP[k]);
                                 const out = [];
                                 for (let k = 1; k < pts.length; k++) {
-                                    const a = pts[k - 1], z = pts[k];
+                                    const a = pts[k - 1];
+                                    let z = pts[k];
                                     const last = k === pts.length - 1;
+                                    if (last && m.partial)
+                                        z = [a[0] + (z[0] - a[0]) * m.partial, a[1] + (z[1] - a[1]) * m.partial];
                                     const cls = last ? (m.fade ? "leg score" : "leg stay") : "leg";
                                     const yOff = m.keys[k] === "home" ? -8 : -10;
                                     out.push(chip(z[0], z[1] + yOff, m.nm, `run ${cls}`, {
