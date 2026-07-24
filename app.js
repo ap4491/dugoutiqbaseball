@@ -803,7 +803,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "166"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "167"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1973,6 +1973,11 @@ function DugoutScorecard() {
     const staffTotal = (g, side) => g.pitchers[side].reduce((s, p) => s + p.pitches, 0);
     // every pitch is charged to the fielding team's current pitcher
     const addPitch = (g, isStrike = true) => {
+        // Once coach pitch is under way the coach is throwing, so nothing after
+        // ball four counts on the pitcher's count. Guarding here covers every play
+        // path (hit, out, FC, DP...) rather than 18 separate call sites.
+        if (g.coachPitch)
+            return;
         const p = curP(g, fieldingSide);
         p.pitches += 1;
         p.pInn = p.pInn || {};
