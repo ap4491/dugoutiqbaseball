@@ -158,6 +158,17 @@ const multiDayStatus = (dv, history, onDate, todayPitches) => {
         earlierToday, blockedSameDay, blockedTwoDay, roomForTomorrow,
         roomToday: Math.max(0, room === Infinity ? 0 : room) };
 };
+// Pitching-then-catching restrictions differ by rule set, so this is per-division:
+//   BNS 5.2.7.21      — ANY pitching bars catching for the rest of the day
+//   Little League VI  — only once the pitcher delivers 41+ pitches
+//   USSSA / Pitch Smart — Pitch Smart advises against it but publishes no
+//                         threshold, so nothing is enforced rather than invented.
+const CATCH_AFTER_PITCH_MIN = {
+    "11U": 1, "13U": 1, "15U": 1, "18U": 1, "22U": 1,
+    "12U Girls": 1, "14U Girls": 1, "17U Girls": 1, "18U Girls": 1,
+    "LL 7-8": 41, "LL 9-10": 41, "LL 11-12": 41, "LL 13-14": 41,
+    "LL 15-16": 41, "LL 17-18": 41,
+};
 // Picker grouping — keeps the country/organization sets visually separate.
 const DIVISION_GROUPS = [
     { label: "Baseball Canada", keys: ["11U", "13U", "15U", "18U", "22U"] },
@@ -823,7 +834,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "172"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "173"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1506,36 +1517,34 @@ function DugoutScorecard() {
     // BNS 5.2.7.21 — once a player pitches they can't catch for the rest of the DAY,
     // so this spans games, not just the one being scored. One-directional: catching
     // first and pitching later is allowed.
-    const pitchedTodayNames = (side) => {
+    // pitches thrown today, by player, across every game that day
+    const pitchesTodayByName = (side) => {
         const today = dayKey((game && game.date) || gameDate);
-        const set = {};
-        ((game && game.pitchers && game.pitchers[side]) || []).forEach((p) => {
-            if ((p.pitches || 0) > 0 && p.name)
-                set[lc(p.name)] = true;
-        });
+        const tot = {};
+        const add = (n, v) => { if (n && v > 0) tot[lc(n)] = (tot[lc(n)] || 0) + v; };
+        ((game && game.pitchers && game.pitchers[side]) || []).forEach((p) => add(p.name, p.pitches || 0));
         games.forEach((rec) => {
             if (!rec || dayKey(rec.date) !== today || (game && rec.id === game.id))
                 return;
             const g2 = rec.snapshot && rec.snapshot.game;
             if (!g2 || !g2.pitchers)
                 return;
-            ["away", "home"].forEach((sd) => {
-                (g2.pitchers[sd] || []).forEach((p) => {
-                    if ((p.pitches || 0) > 0 && p.name)
-                        set[lc(p.name)] = true;
-                });
-            });
+            ["away", "home"].forEach((sd) => (g2.pitchers[sd] || []).forEach((p) => add(p.name, p.pitches || 0)));
         });
-        return set;
+        return tot;
     };
     const catcherViolations = (side) => {
-        if (!game || !game.lineup)
-            return [];
-        const pitched = pitchedTodayNames(side);
+        const min = CATCH_AFTER_PITCH_MIN[division];
+        if (!min || !game || !game.lineup)
+            return []; // division has no published pitch-to-catch restriction
+        const tot = pitchesTodayByName(side);
         const out = [];
         (game.lineup[side] || []).forEach((p) => {
-            if (p && p.name && (p.pos || "").trim().toUpperCase() === "C" && pitched[lc(p.name)])
-                out.push(p.name);
+            if (!p || !p.name || (p.pos || "").trim().toUpperCase() !== "C")
+                return;
+            const n = tot[lc(p.name)] || 0;
+            if (n >= min)
+                out.push(min > 1 ? `${p.name} (${n} pitches)` : p.name);
         });
         return out;
     };
@@ -6491,7 +6500,9 @@ function DugoutScorecard() {
                         return React.createElement("div", { className: "cp-banner rule" },
                             React.createElement("span", null, "\u26A0 ",
                                 React.createElement("strong", null, bad.map((x) => `${x.names.join(", ")} (${teams[x.sd].name})`).join(" \u00b7 ")),
-                                " pitched today \u2014 can't catch (5.2.7.21)"));
+                                (CATCH_AFTER_PITCH_MIN[division] > 1
+                                    ? " \u2014 41+ pitches today, can't catch (LL Reg VI)"
+                                    : " pitched today \u2014 can't catch (BNS 5.2.7.21)")));
                     })(),
                     game.coachPitch && !game.over && (React.createElement("div", { className: "cp-banner" },
                         React.createElement("span", null, "Coach pitch \u00b7 ",
@@ -7126,7 +7137,7 @@ function DugoutScorecard() {
                                         React.createElement("span", { title: "throw this many more today and still be eligible tomorrow" }, r.st.roomForTomorrow == null ? "\u2014" : r.st.roomForTomorrow)))),
                                 rows.filter((r) => r.st.notes.length).map((r, i) => React.createElement("p", { key: i, style: { textTransform: "none", letterSpacing: 0, color: "var(--red)", fontSize: 12, margin: "6px 0 0" } }, `${r.name}: ${r.st.notes.join(" \u00b7 ")}`)),
                                 React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--powder)", fontSize: 11, margin: "6px 0 0" } }, "From saved games with dates \u00b7 handbook 5.2.7.1\u201313 \u00b7 \u201cTmrw\u201d = pitches left today while staying eligible tomorrow"),
-                                ["home", "away"].map((sd) => { const v = catcherViolations(sd); return v.length ? React.createElement("p", { key: sd, style: { textTransform: "none", letterSpacing: 0, color: "var(--red)", fontSize: 12, margin: "6px 0 0" } }, `${teams[sd].name}: ${v.join(", ")} pitched today and cannot catch (5.2.7.21)`) : null; }));
+                                ["home", "away"].map((sd) => { const v = catcherViolations(sd); return v.length ? React.createElement("p", { key: sd, style: { textTransform: "none", letterSpacing: 0, color: "var(--red)", fontSize: 12, margin: "6px 0 0" } }, `${teams[sd].name}: ${v.join(", ")} cannot catch today (${CATCH_AFTER_PITCH_MIN[division] > 1 ? "LL Reg VI \u2014 41+ pitches" : "BNS 5.2.7.21"})`) : null; }));
                         })(),
                         React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr" } },
                             React.createElement("button", { className: "dg hit", onClick: sharePitchSheet }, "\uD83D\uDDBC Export sheet (image)"),
