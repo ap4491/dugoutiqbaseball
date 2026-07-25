@@ -823,7 +823,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "171"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "172"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1500,6 +1500,42 @@ function DugoutScorecard() {
                         out.push({ date: rec.date, pitches: p.pitches || 0 });
                 });
             });
+        });
+        return out;
+    };
+    // BNS 5.2.7.21 — once a player pitches they can't catch for the rest of the DAY,
+    // so this spans games, not just the one being scored. One-directional: catching
+    // first and pitching later is allowed.
+    const pitchedTodayNames = (side) => {
+        const today = dayKey((game && game.date) || gameDate);
+        const set = {};
+        ((game && game.pitchers && game.pitchers[side]) || []).forEach((p) => {
+            if ((p.pitches || 0) > 0 && p.name)
+                set[lc(p.name)] = true;
+        });
+        games.forEach((rec) => {
+            if (!rec || dayKey(rec.date) !== today || (game && rec.id === game.id))
+                return;
+            const g2 = rec.snapshot && rec.snapshot.game;
+            if (!g2 || !g2.pitchers)
+                return;
+            ["away", "home"].forEach((sd) => {
+                (g2.pitchers[sd] || []).forEach((p) => {
+                    if ((p.pitches || 0) > 0 && p.name)
+                        set[lc(p.name)] = true;
+                });
+            });
+        });
+        return set;
+    };
+    const catcherViolations = (side) => {
+        if (!game || !game.lineup)
+            return [];
+        const pitched = pitchedTodayNames(side);
+        const out = [];
+        (game.lineup[side] || []).forEach((p) => {
+            if (p && p.name && (p.pos || "").trim().toUpperCase() === "C" && pitched[lc(p.name)])
+                out.push(p.name);
         });
         return out;
     };
@@ -5953,6 +5989,8 @@ function DugoutScorecard() {
         .cp-banner strong { font-weight:700; color:#fff; }
         .cp-acts { display:flex; gap:6px; }
         .cp-acts .dg { padding:6px 10px; font-size:12px; }
+        .cp-banner.rule { border-color:var(--red); background:rgba(224,49,49,.12); color:var(--red); }
+        .cp-banner.rule strong { color:#fff; }
         button.d3k-banner.tagup { border-color: var(--powder); color: var(--powder); }
         table.lineup tr.retired td { color: var(--powder); opacity: .7; font-style: italic; }
         table.lineup tr.retired em { font-style: normal; opacity: .8; }
@@ -6446,6 +6484,15 @@ function DugoutScorecard() {
                             return `${s.h}-${s.ab} · ${s.r} R · ${s.rbi} RBI · ${s.bb} BB`;
                         })()),
                         React.createElement("span", { className: "atbat-edit" }, "edit \u203A")),
+                    !game.over && (() => {
+                        const bad = ["away", "home"].map((sd) => ({ sd, names: catcherViolations(sd) })).filter((x) => x.names.length);
+                        if (!bad.length)
+                            return null;
+                        return React.createElement("div", { className: "cp-banner rule" },
+                            React.createElement("span", null, "\u26A0 ",
+                                React.createElement("strong", null, bad.map((x) => `${x.names.join(", ")} (${teams[x.sd].name})`).join(" \u00b7 ")),
+                                " pitched today \u2014 can't catch (5.2.7.21)"));
+                    })(),
                     game.coachPitch && !game.over && (React.createElement("div", { className: "cp-banner" },
                         React.createElement("span", null, "Coach pitch \u00b7 ",
                             React.createElement("strong", null, `${game.coachPitch.left} attempt${game.coachPitch.left === 1 ? "" : "s"} left`)),
@@ -7078,7 +7125,8 @@ function DugoutScorecard() {
                                         React.createElement("span", { style: r.st.roomToday === 0 ? { color: "var(--red)", fontWeight: 700 } : null }, r.st.roomToday === 0 ? "\u2014" : r.st.roomToday),
                                         React.createElement("span", { title: "throw this many more today and still be eligible tomorrow" }, r.st.roomForTomorrow == null ? "\u2014" : r.st.roomForTomorrow)))),
                                 rows.filter((r) => r.st.notes.length).map((r, i) => React.createElement("p", { key: i, style: { textTransform: "none", letterSpacing: 0, color: "var(--red)", fontSize: 12, margin: "6px 0 0" } }, `${r.name}: ${r.st.notes.join(" \u00b7 ")}`)),
-                                React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--powder)", fontSize: 11, margin: "6px 0 0" } }, "From saved games with dates \u00b7 handbook 5.2.7.1\u201313 \u00b7 \u201cTmrw\u201d = pitches left today while staying eligible tomorrow"));
+                                React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--powder)", fontSize: 11, margin: "6px 0 0" } }, "From saved games with dates \u00b7 handbook 5.2.7.1\u201313 \u00b7 \u201cTmrw\u201d = pitches left today while staying eligible tomorrow"),
+                                ["home", "away"].map((sd) => { const v = catcherViolations(sd); return v.length ? React.createElement("p", { key: sd, style: { textTransform: "none", letterSpacing: 0, color: "var(--red)", fontSize: 12, margin: "6px 0 0" } }, `${teams[sd].name}: ${v.join(", ")} pitched today and cannot catch (5.2.7.21)`) : null; }));
                         })(),
                         React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr" } },
                             React.createElement("button", { className: "dg hit", onClick: sharePitchSheet }, "\uD83D\uDDBC Export sheet (image)"),
