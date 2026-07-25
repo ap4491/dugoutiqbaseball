@@ -823,7 +823,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "169"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "171"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -2783,7 +2783,7 @@ function DugoutScorecard() {
         });
         setSacMenu(false);
     };
-    const playSac = (kind) => {
+    const playSac = (kind, fnote) => {
         mutate((g) => {
             addPitch(g);
             g.openK = null;
@@ -2797,11 +2797,12 @@ function DugoutScorecard() {
             const willPlay = g.outs < 2;
             const flyScores = kind === "fly" && willPlay && g.bases.third;
             cardMark(g, bIdx, kind === "fly" ? "SF" : "SAC", 0);
+            const sn = fnote ? ` ${fnote}` : "";
             closePA(g, kind === "fly"
-                ? `sac fly${flyScores ? " — run scores" : ""}`
-                : `sac bunt${willPlay ? " — runners advance" : ""}`, kind === "fly"
-                ? `${name}: sacrifice fly${flyScores ? " — run scores" : ""}`
-                : `${name}: sacrifice bunt`, "SAC");
+                ? `sac fly${sn}${flyScores ? " — run scores" : ""}`
+                : `sac bunt${sn}${willPlay ? " — runners advance" : ""}`, kind === "fly"
+                ? `${name}: sacrifice fly${sn}${flyScores ? " — run scores" : ""}`
+                : `${name}: sacrifice bunt${sn}`, "SAC");
             const flipped = recordOut(g);
             if (!flipped) {
                 if (kind === "fly") {
@@ -3289,6 +3290,7 @@ function DugoutScorecard() {
             g.subs[side].push({
                 slot,
                 name: cur.name,
+                num: cur.num || "", // was dropped — the box score showed them numberless
                 pos: cur.pos,
                 ab: st.ab,
                 h: st.h,
@@ -3527,6 +3529,7 @@ function DugoutScorecard() {
     const [seasonType, setSeasonType] = useState("all"); // season-stats filter
     const [seasonEvent, setSeasonEvent] = useState("all"); // specific tournament/playoff
     const [seasonYear, setSeasonYear] = useState("all"); // baseball seasons sit inside one calendar year
+    const [popMenu, setPopMenu] = useState(false); // pop-up: fair or foul territory
     const replayTimer = useRef(null);
     const demoTimer = useRef(null);
     const demoMode = (() => { try { return /[?&]demo\b/.test(window.location.search); } catch (_a) { return false; } })();
@@ -6518,7 +6521,7 @@ function DugoutScorecard() {
                     React.createElement("div", { className: "btnrow r5" },
                         React.createElement("button", { className: "dg outb", onClick: () => openFieldPick("groundout", false) }, "Gnd"),
                         React.createElement("button", { className: "dg outb", onClick: () => openFieldPick("flyout", false) }, "Fly"),
-                        React.createElement("button", { className: "dg outb", onClick: () => openFieldPick("popup", false) }, "Pop"),
+                        React.createElement("button", { className: "dg outb", onClick: () => setPopMenu(true) }, "Pop"),
                         React.createElement("button", { className: "dg outb", onClick: () => openFieldPick("lineout", false) }, "Line"),
                         React.createElement("button", { className: "dg outb", onClick: () => playOut("strikeout", true) }, "K")),
                     React.createElement("div", { className: "btnrow r5" },
@@ -7376,6 +7379,14 @@ function DugoutScorecard() {
                                 setConfirmNew(false);
                             } }, "New game \u2014 fresh lineups"),
                         React.createElement("button", { className: "dg ghost", onClick: () => setConfirmNew(false) }, "Keep current game"))))),
+            popMenu && game && (React.createElement("div", { className: "modal-back", onClick: () => setPopMenu(false) },
+                React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
+                    React.createElement("h3", null, "Pop up"),
+                    React.createElement("p", null, "Fair or foul territory?"),
+                    React.createElement("div", { className: "btnrow" },
+                        React.createElement("button", { className: "dg outb", onClick: () => { setPopMenu(false); openFieldPick("popup", false); } }, "Fair territory"),
+                        React.createElement("button", { className: "dg outb", onClick: () => { setPopMenu(false); openFieldOne("Foul pop", "Tap the fielder who caught it.", (pos) => playOut("popup", false, `P${pos} foul`)); } }, "Foul territory"),
+                        React.createElement("button", { className: "dg ghost", onClick: () => setPopMenu(false) }, "Cancel"))))),
             hrMenu && game && (React.createElement("div", { className: "modal-back", onClick: () => setHrMenu(false) },
                 React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
                     React.createElement("h3", null, "Home run"),
@@ -7419,6 +7430,9 @@ function DugoutScorecard() {
                     baseMode === "out" && React.createElement("div", { className: "btnrow" },
                         React.createElement("button", { className: "dg outb", onClick: () => { const b = baseMenu; closeBaseMenu(); openFieldSeq("Caught stealing", "Tap the throw in order (e.g. 2-6) \u2014 or Skip.", (note) => caughtStealing(b, note)); } }, baseMenu === "third" ? "Caught stealing home" : `Caught stealing ${baseMenu === "first" ? "2nd" : "3rd"}`),
                         React.createElement("button", { className: "dg outb", onClick: () => { const b = baseMenu; closeBaseMenu(); openFieldSeq("Picked off", "Tap the throw in order (e.g. 1-3) \u2014 or Skip.", (note) => pickedOff(b, note)); } }, `Picked off ${baseLabel(baseMenu)}`),
+                        baseMenu === "first" && React.createElement("button", { className: "dg outb", onClick: () => { const b = baseMenu; closeBaseMenu(); openFieldSeq("Thrown out at 2nd", "Tap the throw in order (e.g. 8-4) \u2014 or Skip.", (note) => runnerOut(b, `thrown out at 2nd${note ? ` (${note})` : ""}`)); } }, "Thrown out at 2nd"),
+                        (baseMenu === "first" || baseMenu === "second") && React.createElement("button", { className: "dg outb", onClick: () => { const b = baseMenu; closeBaseMenu(); openFieldSeq("Thrown out at 3rd", "Tap the throw in order (e.g. 7-5) \u2014 or Skip.", (note) => runnerOut(b, `thrown out at 3rd${note ? ` (${note})` : ""}`)); } }, "Thrown out at 3rd"),
+                        React.createElement("button", { className: "dg outb", onClick: () => { const b = baseMenu; closeBaseMenu(); openFieldSeq("Thrown out at home", "Tap the throw in order (e.g. 9-2) \u2014 or Skip.", (note) => runnerOut(b, `thrown out at home${note ? ` (${note})` : ""}`)); } }, "Thrown out at home"),
                         React.createElement("button", { className: "dg outb", onClick: () => runnerOut(baseMenu, `doubled off ${baseLabel(baseMenu)}`) }, "Doubled off"),
                         React.createElement("button", { className: "dg outb", onClick: () => runnerOut(baseMenu, "out on appeal \u2014 did not tag up") }, "Did not tag up"),
                         React.createElement("button", { className: "dg outb", onClick: () => runnerOut(baseMenu, "out on appeal \u2014 missed a base") }, "Out on appeal (missed base)"),
@@ -7481,8 +7495,8 @@ function DugoutScorecard() {
                     React.createElement("h3", null, "Sacrifice"),
                     React.createElement("p", null, "Batter is out with no at-bat charged \u2014 unless an error lets the batter reach."),
                     React.createElement("div", { className: "btnrow" },
-                        React.createElement("button", { className: "dg outb", onClick: () => playSac("fly"), disabled: !game.bases.third }, "Sac fly \u2014 runner on 3rd scores (RBI)"),
-                        React.createElement("button", { className: "dg outb", onClick: () => playSac("bunt") }, "Sac bunt \u2014 runners advance"),
+                        React.createElement("button", { className: "dg outb", onClick: () => { setMoreMenu(false); openFieldOne("Sacrifice fly", "Tap the fielder who caught it.", (pos) => playSac("fly", "F" + pos)); }, disabled: !game.bases.third }, "Sac fly \u2014 runner on 3rd scores (RBI)"),
+                        React.createElement("button", { className: "dg outb", onClick: () => { setMoreMenu(false); openFieldSeq("Sacrifice bunt", "Tap the throw in order (e.g. 1-3) \u2014 or Skip.", (note) => playSac("bunt", note)); } }, "Sac bunt \u2014 runners advance"),
                         React.createElement("button", { className: "dg", onClick: () => { setSacMenu(false); openFieldOne("Sacrifice + error", "Tap the fielder who made the error.", (pos) => playSacError("bunt", pos)); } }, "Error on the play \u2014 batter safe, runners take extra base"),
                         React.createElement("button", { className: "dg ghost", onClick: () => setSacMenu(false) }, "Cancel"))))),
             decisionsOpen && game && (React.createElement("div", { className: "modal-back", onClick: () => setDecisionsOpen(false) },
