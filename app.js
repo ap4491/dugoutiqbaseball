@@ -827,14 +827,14 @@ const fieldNote = (label, seq) => {
         if (!document.querySelector('link[href*="fonts.googleapis.com/css2"]')) {
             var l = document.createElement("link");
             l.rel = "stylesheet";
-            l.href = "https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700;800&family=Caveat:wght@500;600;700&display=swap";
+            l.href = "https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700;800&display=swap";
             document.head.appendChild(l);
         }
     }
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "173"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "176"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -5348,7 +5348,7 @@ function DugoutScorecard() {
     };
     // Lineup card image — the classic two-column "System 17" layout: numbered
     // batting order (No. / Name / Pos) on the left, subs on the right, notes box.
-    // Names render in a handwriting font (Caveat) so it reads like a filled card.
+    // Filled fields render in the app's own condensed face for legibility.
     const drawLineupCardCanvas = (side) => {
         const lineup = game.lineup[side] || [];
         const subs = (game.subs && game.subs[side]) || [];
@@ -5372,8 +5372,11 @@ function DugoutScorecard() {
         const ink = "#141414";
         const grid = "#555";
         const shade = "#ECECEC";
-        const hand = "'Caveat', 'Saira Condensed', cursive";
         const block = "'Saira Condensed', sans-serif";
+        // Filled-in fields use the app's own face rather than a script font —
+        // it reads cleanly at card size and is already loaded, so the export
+        // can't depend on a web font arriving in time.
+        const hand = block;
         ctx.fillStyle = "#FFFFFF";
         ctx.fillRect(0, 0, W, H);
 
@@ -5528,11 +5531,11 @@ function DugoutScorecard() {
         try {
             // make sure the handwriting font is ready before the canvas draws,
             // or the first render silently falls back to a default face
+            // Saira is used throughout the DOM so it's already loaded, but wait on
+            // fonts.ready anyway — a cold start can still race the first export.
             try {
-                if (document.fonts && document.fonts.load) {
-                    await document.fonts.load("36px 'Caveat'");
+                if (document.fonts && document.fonts.ready)
                     await document.fonts.ready;
-                }
             }
             catch (_f) { }
             const c = drawLineupCardCanvas(side);
@@ -6101,7 +6104,15 @@ function DugoutScorecard() {
           font-size: 15px; cursor: pointer;
         }
         .lineup td.num { font-family: 'Saira Condensed', sans-serif; color: var(--powder); width: 28px; font-size: 12px; }
-        .lineup td.stat { font-family: 'Saira Condensed', sans-serif; font-size: 12px; color: var(--powder); text-align: right; white-space: nowrap; }
+        .lineup td.stat { font-family: 'Saira Condensed', sans-serif; font-size: 12px; color: var(--powder);
+          white-space: nowrap; width: 154px; padding-right: 12px; }
+        /* one fixed cell per stat so every value sits under its header */
+        .lineup td.stat i, .lh-stats i {
+          display: inline-block; width: 26px; text-align: right; font-style: normal;
+          font-variant-numeric: tabular-nums; }
+        .lineup td.stat i.hab, .lh-stats i:first-child { width: 46px; }
+        .lh-stats { display: inline-block; letter-spacing: 0; }
+        .lh-stats i { font-size: 11px; }
         .lineup tr.cur td { background: var(--royal); color: var(--white); }
         .lineup tr.cur td.stat { color: var(--white); }
 
@@ -6608,7 +6619,12 @@ function DugoutScorecard() {
                         React.createElement("span", null,
                             teams[battingSide].name,
                             " \u2014 batting order"),
-                        React.createElement("span", null, "H-AB \u00B7 R \u00B7 RBI \u00B7 BB \u00B7 K")),
+                        React.createElement("span", { className: "lh-stats" },
+                            React.createElement("i", null, "H-AB"),
+                            React.createElement("i", null, "R"),
+                            React.createElement("i", null, "RBI"),
+                            React.createElement("i", null, "BB"),
+                            React.createElement("i", null, "K"))),
                     React.createElement("table", { className: "lineup" },
                         React.createElement("tbody", null,
                             (game.lineup ? game.lineup[battingSide] : teams[battingSide].lineup).map((p, i) => {
@@ -6619,17 +6635,11 @@ function DugoutScorecard() {
                                         p.name,
                                         p.pos ? ` · ${p.pos}` : ""),
                                     React.createElement("td", { className: "stat" },
-                                        s.h,
-                                        "-",
-                                        s.ab,
-                                        " \u00B7 ",
-                                        s.r,
-                                        " \u00B7 ",
-                                        s.rbi,
-                                        " \u00B7 ",
-                                        s.bb,
-                                        " \u00B7 ",
-                                        s.k)));
+                                        React.createElement("i", { className: "hab" }, `${s.h}-${s.ab}`),
+                                        React.createElement("i", null, s.r),
+                                        React.createElement("i", null, s.rbi),
+                                        React.createElement("i", null, s.bb),
+                                        React.createElement("i", null, s.k))));
                             }),
                             game.subs &&
                                 game.subs[battingSide].map((p, i) => (React.createElement("tr", { key: `sub${i}`, className: "retired" },
@@ -6640,17 +6650,11 @@ function DugoutScorecard() {
                                         " ",
                                         React.createElement("em", null, "(out)")),
                                     React.createElement("td", { className: "stat" },
-                                        p.h,
-                                        "-",
-                                        p.ab,
-                                        " \u00B7 ",
-                                        p.r,
-                                        " \u00B7 ",
-                                        p.rbi,
-                                        " \u00B7 ",
-                                        p.bb,
-                                        " \u00B7 ",
-                                        p.k)))))))),
+                                        React.createElement("i", { className: "hab" }, `${p.h}-${p.ab}`),
+                                        React.createElement("i", null, p.r),
+                                        React.createElement("i", null, p.rbi),
+                                        React.createElement("i", null, p.bb),
+                                        React.createElement("i", null, p.k))))))))),
                 React.createElement("div", { className: "lineup-wrap" },
                     React.createElement("button", { className: "lineup-head loghead", onClick: () => setShowLog((v) => !v), "aria-expanded": showLog },
                         React.createElement("span", null,
