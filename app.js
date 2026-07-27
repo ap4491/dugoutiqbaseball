@@ -827,14 +827,14 @@ const fieldNote = (label, seq) => {
         if (!document.querySelector('link[href*="fonts.googleapis.com/css2"]')) {
             var l = document.createElement("link");
             l.rel = "stylesheet";
-            l.href = "https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700;800&display=swap";
+            l.href = "https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700;800&family=Patrick+Hand&display=swap";
             document.head.appendChild(l);
         }
     }
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "176"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "180"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -2872,7 +2872,23 @@ function DugoutScorecard() {
     };
     // Dropped 3rd strike: rewind to the pre-K snapshot and replay it as
     // "strikeout, batter safe at 1st". K still counts for pitcher & batter; the out doesn't.
-    const d3kReach = () => {
+    // Uncaught third strike where the batter reaches. `errPos` charges the error
+    // that let him reach — the classic K+E2 (catcher retrieves and throws wild)
+    // or K+E3 (good throw, first baseman drops it). The batter is still charged
+    // the at-bat and the strikeout either way, and the pitcher still gets the K:
+    // an error never erases a strikeout.
+    // Uncaught third strike where the batter is thrown out at first: the notation
+    // is K 2-3 — assist to the catcher, putout to the first baseman. Stats don't
+    // change (a strikeout is a strikeout); this records HOW he was retired.
+    const kThrowNote = (note) => mutate((g) => {
+        const idx = lastPAIdx(g);
+        if (note && idx >= 0 && g.log[idx] && g.log[idx].result) {
+            g.log[idx].result += ` ${note}`;
+            g.lastPlay = `${g.log[idx].batter}: ${g.log[idx].result}`;
+        }
+        g.openK = null;
+    });
+    const d3kReach = (errPos) => {
         if (!history.length || !game || !game.openK)
             return;
         const g = snapshot(history[history.length - 1]); // state before the 3rd strike
@@ -2896,9 +2912,27 @@ function DugoutScorecard() {
             g.log.push({ type: "pa", i: g.inning, h: g.half, batter: name, seq: [], result: null });
             g.openPA = g.log.length - 1;
         }
-        g.log[g.openPA].result = "strikeout — safe at 1st (dropped 3rd strike)";
+        let enote = "";
+        if (errPos) {
+            const n = Number(errPos);
+            g.errors[fSide] = (g.errors[fSide] || 0) + 1;
+            if (!g.errLog)
+                g.errLog = [];
+            const who = (g.lineup[fSide] || []).find((p) => (p.pos || "").toUpperCase() === posLabel(n));
+            g.errLog.push({ side: fSide, pos: n || null, name: who ? who.name : "", inning: g.inning });
+            enote = n ? `E${n}` : "E";
+        }
+        const paIdx = g.openPA;
+        g.log[paIdx].result = enote
+            ? `strikeout \u2014 safe at 1st on ${enote}`
+            : "strikeout \u2014 safe at 1st (dropped 3rd strike)";
         g.openPA = null;
-        g.lastPlay = `${name} strikes out but reaches 1st — dropped 3rd strike`;
+        // leave the play open so "takes 2nd on the overthrow" folds onto this
+        // line instead of spawning a separate event
+        g.openPlay = paIdx;
+        g.lastPlay = enote
+            ? `${name} strikes out, reaches on ${enote}`
+            : `${name} strikes out but reaches 1st — dropped 3rd strike`;
         // batter takes 1st; with 2 outs and 1st occupied, runners are forced up
         if (!g.bases.first) {
             g.bases.first = mkRunner(g, bIdx);
@@ -5373,10 +5407,12 @@ function DugoutScorecard() {
         const grid = "#555";
         const shade = "#ECECEC";
         const block = "'Saira Condensed', sans-serif";
-        // Filled-in fields use the app's own face rather than a script font —
-        // it reads cleanly at card size and is already loaded, so the export
-        // can't depend on a web font arriving in time.
-        const hand = block;
+        // Filled fields use a PRINT handwriting face (not script), so the card
+        // reads like a neatly filled paper lineup card. Patrick Hand ships a
+        // single weight, so the weight drawn always matches the weight loaded —
+        // the mismatch that silently broke the handwriting the first time.
+        const haveHand = (() => { try { return document.fonts && document.fonts.check && document.fonts.check("36px 'Patrick Hand'"); } catch (_c) { return false; } })();
+        const hand = haveHand ? "'Patrick Hand', " + block : block;
         ctx.fillStyle = "#FFFFFF";
         ctx.fillRect(0, 0, W, H);
 
@@ -5412,7 +5448,7 @@ function DugoutScorecard() {
         const handwrite = (t, x, y, size, maxW) => {
             ctx.textAlign = "left";
             ctx.fillStyle = "#1B3A6B";
-            ctx.font = `600 ${size}px ${hand}`;
+            ctx.font = `${size}px ${hand}`;
             let s = t || "";
             while (s && ctx.measureText(s).width > maxW)
                 s = s.slice(0, -1);
@@ -5482,12 +5518,12 @@ function DugoutScorecard() {
                     // jersey number (handwritten)
                     if (p.num != null && String(p.num).trim()) {
                         ctx.textAlign = "center";
-                        ctx.font = `600 34px ${hand}`;
+                        ctx.font = `34px ${hand}`;
                         ctx.fillText(String(p.num).trim(), x + numColW + 34, y + rowH / 2 + 12);
                     }
                     // name (handwritten)
                     ctx.textAlign = "left";
-                    ctx.font = `600 36px ${hand}`;
+                    ctx.font = `36px ${hand}`;
                     const nameX = x + numColW + 74;
                     const nameMax = (withPos ? x + w - posColW : x + w) - nameX - 10;
                     let nm = p.name || "";
@@ -5497,7 +5533,7 @@ function DugoutScorecard() {
                     // position (handwritten)
                     if (withPos && p.pos) {
                         ctx.textAlign = "center";
-                        ctx.font = `600 30px ${hand}`;
+                        ctx.font = `30px ${hand}`;
                         ctx.fillText(p.pos, x + w - posColW / 2, y + rowH / 2 + 11);
                     }
                 }
@@ -5531,9 +5567,11 @@ function DugoutScorecard() {
         try {
             // make sure the handwriting font is ready before the canvas draws,
             // or the first render silently falls back to a default face
-            // Saira is used throughout the DOM so it's already loaded, but wait on
-            // fonts.ready anyway — a cold start can still race the first export.
+            // Patrick Hand is only ever used on canvas, so the browser won't fetch
+            // it on its own — load it explicitly at the size/weight actually drawn.
             try {
+                if (document.fonts && document.fonts.load)
+                    await document.fonts.load("36px 'Patrick Hand'").catch(() => { });
                 if (document.fonts && document.fonts.ready)
                     await document.fonts.ready;
             }
@@ -6001,6 +6039,7 @@ function DugoutScorecard() {
         .cp-banner strong { font-weight:700; color:#fff; }
         .cp-acts { display:flex; gap:6px; }
         .cp-acts .dg { padding:6px 10px; font-size:12px; }
+        .cp-banner.d3k { border-color:var(--powder); background:rgba(169,197,232,.10); color:var(--powder); }
         .cp-banner.rule { border-color:var(--red); background:rgba(224,49,49,.12); color:var(--red); }
         .cp-banner.rule strong { color:#fff; }
         button.d3k-banner.tagup { border-color: var(--powder); color: var(--powder); }
@@ -6094,10 +6133,14 @@ function DugoutScorecard() {
         /* ---- lineup table ---- */
         .lineup-wrap { border: 1px solid var(--line); border-radius: 6px; overflow: hidden; margin-top: 16px; }
         .lineup-head {
-          display: flex; justify-content: space-between; padding: 8px 12px;
+          display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+          padding: 8px 12px;
           background: var(--navy-deep); font-size: 12px; letter-spacing: .25em;
           color: var(--powder); text-transform: uppercase;
         }
+        /* the title may wrap; the stat headers never do, or they fall out of
+           line with the columns below (K was dropping to a second row) */
+        .lineup-head > span:first-child { flex: 1 1 auto; min-width: 0; }
         table.lineup { width: 100%; border-collapse: collapse; background: rgba(20,32,74,.6); }
         .lineup td {
           padding: 8px 10px; border-top: 1px solid var(--line);
@@ -6111,7 +6154,7 @@ function DugoutScorecard() {
           display: inline-block; width: 26px; text-align: right; font-style: normal;
           font-variant-numeric: tabular-nums; }
         .lineup td.stat i.hab, .lh-stats i:first-child { width: 46px; }
-        .lh-stats { display: inline-block; letter-spacing: 0; }
+        .lh-stats { display: inline-block; letter-spacing: 0; white-space: nowrap; flex: 0 0 auto; }
         .lh-stats i { font-size: 11px; }
         .lineup tr.cur td { background: var(--royal); color: var(--white); }
         .lineup tr.cur td.stat { color: var(--white); }
@@ -6521,9 +6564,12 @@ function DugoutScorecard() {
                         React.createElement("span", { className: "cp-acts" },
                             React.createElement("button", { className: "dg ghost", onClick: coachPitchMiss, disabled: game.coachPitch.left <= 0 }, "Miss / foul"),
                             React.createElement("button", { className: "dg outb", onClick: coachPitchOut }, "Out on attempts")))),
-                    game.openK && !game.over && (React.createElement("button", { className: "d3k-banner", onClick: d3kReach },
-                        "Dropped 3rd strike? ",
-                        React.createElement("strong", null, "Batter safe at 1st \u2014 tap here"))),
+                    game.openK && !game.over && (React.createElement("div", { className: "cp-banner d3k" },
+                        React.createElement("span", null, "Dropped 3rd strike \u00b7 ", React.createElement("strong", null, "batter reached?")),
+                        React.createElement("span", { className: "cp-acts" },
+                            React.createElement("button", { className: "dg ghost", onClick: () => d3kReach() }, "Safe at 1st"),
+                            React.createElement("button", { className: "dg ghost", onClick: () => openFieldOne("Reached on an error", "Tap the fielder who made the error (2 = catcher's throw, 3 = dropped at first).", (pos) => d3kReach(pos)) }, "Safe on error"),
+                            React.createElement("button", { className: "dg ghost", onClick: () => openFieldSeq("Thrown out", "Tap the throw in order \u2014 e.g. 2-3 for catcher to first.", (note) => kThrowNote(note)) }, "Thrown out")))),
                     game.openTag &&
                         !game.over &&
                         game.openTag.kind === "dp" &&
