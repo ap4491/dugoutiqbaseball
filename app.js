@@ -834,7 +834,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "180"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "181"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1851,11 +1851,31 @@ function DugoutScorecard() {
        Leagues cap runs per half-inning (BNS league play is 5, tournaments vary,
        and the last inning is usually open). Runs past the cap don't count and
        the half-inning is over the moment the cap is reached. --------------- */
-    const scheduledInnings = () => DIVISION_INNINGS[division] || 7;
+    const scheduledInnings = () => DIVISION_INNINGS[division] || 9; // no division set -> full game
     const capOn = (g) => runCap > 0 && !(capLastOpen && g.inning >= scheduledInnings());
     const halfScored = (g) => { const r = g.linescore && g.linescore[g.inning - 1]; return (r && r[battingSide]) || 0; };
     // runs already counted this half, plus any credited earlier in THIS play
     const capRoom = (g) => Math.max(0, runCap - halfScored(g) - (g.pendRuns || 0));
+    // Is the game decided? Scheduled length comes from the division (9 if none
+    // is set). Play only continues past it while the score is tied.
+    //   · bottom half of a scheduled-or-later inning with the home team ahead —
+    //     they either don't need to bat, or just walked off
+    //   · back at the top of a later inning means the previous bottom half
+    //     finished, so anything but a tie is final
+    const autoFinal = (g) => {
+        if (g.over || !g.linescore)
+            return false;
+        const sched = scheduledInnings();
+        if (g.inning < sched)
+            return false;
+        const sum = (side) => g.linescore.reduce((t, r) => t + (r[side] || 0), 0);
+        const a = sum("away"), h = sum("home");
+        if (g.half === "bottom" && h > a)
+            return true;
+        if (g.half === "top" && g.inning > sched && a !== h)
+            return true;
+        return false;
+    };
     const mutate = (fn) => {
         pushHistory();
         setGame((g) => {
@@ -1868,6 +1888,15 @@ function DugoutScorecard() {
             // ended it (third out) or we're in an uncapped inning.
             if (capOn(n) && n.inning === inn0 && n.half === half0 && halfScored(n) >= runCap)
                 endHalf(n);
+            // ...then see whether that settled the game
+            if (autoFinal(n)) {
+                n.over = true;
+                n.bases = emptyBases();
+                if (!n.decisions)
+                    n.decisions = { w: null, l: null, s: null };
+                n.decisions = suggestDecisions(n);
+                n.lastPlay = "Final";
+            }
             return n;
         });
     };
