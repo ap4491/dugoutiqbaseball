@@ -834,7 +834,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "181"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "182"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -3468,6 +3468,62 @@ function DugoutScorecard() {
         // put the old name back in state, then let editLineup rename through
         setGame((g) => { const n = snapshot(g); if (n.lineup[side][slot]) n.lineup[side][slot].name = oldName; return n; });
         editLineup(side, slot, to, cur.pos || "", cur.num != null ? cur.num : "");
+    };
+    // Names are edited freely (like the # field) and committed together when the
+    // lineup editor closes, so the whole order can be typed in one pass instead
+    // of the modal closing after each player.
+    const nameBaseRef = useRef(null); // names as they were when the editor opened
+    const captureNameBase = () => {
+        if (!game || !game.lineup)
+            return;
+        const snap = {};
+        ["away", "home"].forEach((sd) => (game.lineup[sd] || []).forEach((p, i) => { snap[`${sd}:${i}`] = p.name; }));
+        nameBaseRef.current = snap;
+    };
+    const commitLineupNames = () => {
+        const base = nameBaseRef.current;
+        nameBaseRef.current = null;
+        if (!base || !game || !game.lineup)
+            return;
+        const jobs = [];
+        ["away", "home"].forEach((sd) => (game.lineup[sd] || []).forEach((p, i) => {
+            const was = base[`${sd}:${i}`];
+            const now = (p.name || "").trim();
+            if (was != null && now && now !== was)
+                jobs.push({ side: sd, slot: i, from: was, to: now });
+        }));
+        if (!jobs.length)
+            return;
+        mutate((g) => {
+            jobs.forEach(({ side, slot, from, to }) => {
+                const cur = g.lineup[side][slot];
+                if (!cur)
+                    return;
+                cur.name = to;
+                if (g.pitchers && g.pitchers[side])
+                    g.pitchers[side].forEach((pp) => { if (pp.name === from) pp.name = to; });
+                if (Array.isArray(g.log)) {
+                    const myHalf = side === "away" ? "top" : "bottom";
+                    g.log.forEach((e) => {
+                        const eHalf = e.h === "top" ? "top" : "bottom";
+                        const isChange = typeof e.t === "string" && e.t.indexOf("Pitching change") === 0;
+                        const mine = isChange ? eHalf !== myHalf : eHalf === myHalf;
+                        if (!mine)
+                            return;
+                        if (!isChange && e.batter === from)
+                            e.batter = to;
+                        if (e.t)
+                            e.t = renameInLogText(e.t, from, to);
+                        if (e.result)
+                            e.result = renameInLogText(e.result, from, to);
+                    });
+                }
+            });
+            repairLogNames(g);
+            g.lastPlay = jobs.length === 1
+                ? `Lineup updated: ${jobs[0].to}`
+                : `Lineup updated \u2014 ${jobs.length} names`;
+        });
     };
     const editLineup = (side, slot, newName, newPos, newNum) => {
         mutate((g) => {
@@ -6500,7 +6556,7 @@ function DugoutScorecard() {
             licensed && phase === "game" && game && (React.createElement(React.Fragment, null,
                 game.over && React.createElement("div", { className: "final-banner" }, "Final"),
                 React.createElement("div", { className: "board" },
-                    React.createElement("div", { className: `team-cell ${battingSide === "away" && !game.over ? "atbat" : ""}`, style: Object.assign({ cursor: "pointer" }, (battingSide === "away" && !game.over ? { borderColor: teamColor("away") } : {})), onClick: () => { setSubSide("away"); setSubSlot(null); setSubMenu(true); }, title: "Edit lineup" },
+                    React.createElement("div", { className: `team-cell ${battingSide === "away" && !game.over ? "atbat" : ""}`, style: Object.assign({ cursor: "pointer" }, (battingSide === "away" && !game.over ? { borderColor: teamColor("away") } : {})), onClick: () => { setSubSide("away"); setSubSlot(null); captureNameBase(); setSubMenu(true); }, title: "Edit lineup" },
                         teams.away.logo
                             ? React.createElement("div", { className: "tname logo-only" }, React.createElement("img", { src: teams.away.logo, className: "tlogo-lg", alt: teams.away.name }))
                             : React.createElement("div", { className: "tname", style: { color: teamColor("away") } }, React.createElement(FitName, { name: teams.away.name })),
@@ -6509,7 +6565,7 @@ function DugoutScorecard() {
                         React.createElement("div", { className: "arrow" }, game.half === "top" ? "▲" : "▽"),
                         React.createElement("div", { className: "num" }, game.inning),
                         React.createElement("div", { className: "lbl" }, game.half === "top" ? "TOP" : "BOT")),
-                    React.createElement("div", { className: `team-cell ${battingSide === "home" && !game.over ? "atbat" : ""}`, style: Object.assign({ cursor: "pointer" }, (battingSide === "home" && !game.over ? { borderColor: teamColor("home") } : {})), onClick: () => { setSubSide("home"); setSubSlot(null); setSubMenu(true); }, title: "Edit lineup" },
+                    React.createElement("div", { className: `team-cell ${battingSide === "home" && !game.over ? "atbat" : ""}`, style: Object.assign({ cursor: "pointer" }, (battingSide === "home" && !game.over ? { borderColor: teamColor("home") } : {})), onClick: () => { setSubSide("home"); setSubSlot(null); captureNameBase(); setSubMenu(true); }, title: "Edit lineup" },
                         teams.home.logo
                             ? React.createElement("div", { className: "tname logo-only" }, React.createElement("img", { src: teams.home.logo, className: "tlogo-lg", alt: teams.home.name }))
                             : React.createElement("div", { className: "tname", style: { color: teamColor("home") } }, React.createElement(FitName, { name: teams.home.name })),
@@ -6681,7 +6737,7 @@ function DugoutScorecard() {
                         React.createElement("button", { className: "dg ghost", onClick: () => {
                                 setSubSide(battingSide);
                                 setSubSlot(null);
-                                setSubMenu(true);
+                                captureNameBase(); setSubMenu(true);
                             } }, "Lineup"),
                         React.createElement("button", { className: "dg ghost", onClick: undo, disabled: !history.length }, "Undo"),
                         React.createElement("button", { className: "dg ghost", onClick: manualEndHalf }, "End half")))),
@@ -7700,6 +7756,7 @@ function DugoutScorecard() {
                     React.createElement("div", { className: "btnrow", style: { marginTop: 10 } },
                         React.createElement("button", { className: "dg ghost", onClick: () => setBatterMenu(false) }, "Close"))))),
             subMenu && game && game.lineup && (React.createElement("div", { className: "modal-back", onClick: () => {
+                    commitLineupNames();
                     setSubMenu(false);
                     setSubSlot(null);
                 } },
@@ -7728,7 +7785,7 @@ function DugoutScorecard() {
                         return (React.createElement("div", { key: i, className: `lu-row ${subSlot === i ? "open" : ""}` },
                             React.createElement("span", { className: "lu-idx" }, i + 1),
                             React.createElement("input", { className: "dg-in lu-num", value: p.num || "", onChange: (e) => setBatterField(subSide, i, "num", e.target.value), inputMode: "numeric", placeholder: "#", "aria-label": `Spot ${i + 1} number` }),
-                            React.createElement("input", { className: "dg-in lu-name", value: p.name, onFocus: () => { editNameRef.current[`${subSide}:${i}`] = p.name; }, onChange: (e) => setBatterField(subSide, i, "name", e.target.value), onBlur: () => commitBatterName(subSide, i), "aria-label": `Spot ${i + 1} name` }),
+                            React.createElement("input", { className: "dg-in lu-name", value: p.name, onChange: (e) => setBatterField(subSide, i, "name", e.target.value), "aria-label": `Spot ${i + 1} name` }),
                             React.createElement("input", { className: "dg-in lu-pos", value: p.pos || "", onChange: (e) => setBatterField(subSide, i, "pos", e.target.value), placeholder: "Pos", "aria-label": `Spot ${i + 1} position` }),
                             (atBat || onBase) && React.createElement("span", { className: "lu-tag" }, atBat ? "AB" : onBase === "first" ? "1B" : onBase === "second" ? "2B" : "3B"),
                             React.createElement("button", { className: "lu-more", onClick: () => {
@@ -7755,6 +7812,7 @@ function DugoutScorecard() {
                         } },
                         orderOpen(subSide) && (React.createElement("button", { className: "dg ghost", onClick: () => addBatter(subSide) }, "+ Add batter")),
                         React.createElement("button", { className: "dg ghost", onClick: () => {
+                                commitLineupNames();
                                 setSubMenu(false);
                                 setSubSlot(null);
                             } }, "Close"))))),
