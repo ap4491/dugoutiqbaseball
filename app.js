@@ -780,6 +780,33 @@ const renameInLogText = (txt, oldName, nm) => {
 // Repair leftover jersey-number placeholders using the lineup's # field:
 // any log entry naming "12" becomes the player whose number is 12. Side-aware
 // (top half = away batting), so #12 on each team maps to the right player.
+// Heal a finished game that was saved by a build which rolled the inning over
+// after the final out: it left an unplayed linescore column and, past the
+// scheduled length, a stray "Extra innings" line for a half never played.
+const healFinishedGame = (g) => {
+    if (!g || !g.over || !Array.isArray(g.linescore) || !Array.isArray(g.log))
+        return g;
+    // highest inning that actually saw a plate appearance
+    let played = 0;
+    g.log.forEach((e) => { if (e && e.type === "pa" && e.i > played) played = e.i; });
+    if (!played)
+        return g;
+    // drop trailing columns nobody batted in
+    while (g.linescore.length > played) {
+        const row = g.linescore[g.linescore.length - 1];
+        const empty = (row.away == null || row.away === 0) && (row.home == null || row.home === 0);
+        if (!empty)
+            break;
+        g.linescore.pop();
+    }
+    // and any inning marker beyond the last inning actually played
+    g.log = g.log.filter((e) => !(e && e.type === "ev" && e.i > played && /Extra innings/.test(e.t || "")));
+    if (g.inning > played) {
+        g.inning = played;
+        g.half = "bottom";
+    }
+    return g;
+};
 const repairLogNames = (g) => {
     if (!g || !Array.isArray(g.log) || !g.lineup)
         return;
@@ -834,7 +861,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "186"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "187"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -877,6 +904,7 @@ catch (_a) {
 const saved0 = loadSaved();
 if (saved0 && saved0.game) {
     const g = saved0.game;
+    healFinishedGame(g); // repair a rolled-over final saved by an older build
     if (!g.lineup && saved0.teams) {
         try {
             g.lineup = { away: saved0.teams.away.lineup.map((p) => ({ name: p.name, pos: p.pos || "", num: p.num || "" })), home: saved0.teams.home.lineup.map((p) => ({ name: p.name, pos: p.pos || "", num: p.num || "" })) };
@@ -1381,6 +1409,8 @@ function DugoutScorecard() {
         });
     };
     const reopenGame = (record) => {
+        if (record && record.snapshot && record.snapshot.game)
+            healFinishedGame(record.snapshot.game);
         const snap = record.snapshot || {};
         if (snap.teams)
             setTeams(snapshot(snap.teams));
