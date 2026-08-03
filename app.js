@@ -834,7 +834,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "182"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "186"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1870,10 +1870,10 @@ function DugoutScorecard() {
             return false;
         const sum = (side) => g.linescore.reduce((t, r) => t + (r[side] || 0), 0);
         const a = sum("away"), h = sum("home");
+        // Home ahead in the bottom of a final-or-later inning: they've won it.
         if (g.half === "bottom" && h > a)
             return true;
-        if (g.half === "top" && g.inning > sched && a !== h)
-            return true;
+        // Everything else is judged in endHalf, once a half is genuinely complete.
         return false;
     };
     const mutate = (fn) => {
@@ -1889,7 +1889,8 @@ function DugoutScorecard() {
             if (capOn(n) && n.inning === inn0 && n.half === half0 && halfScored(n) >= runCap)
                 endHalf(n);
             // ...then see whether that settled the game
-            if (autoFinal(n)) {
+            if (n.autoOver || autoFinal(n)) {
+                n.autoOver = false;
                 n.over = true;
                 n.bases = emptyBases();
                 if (!n.decisions)
@@ -1945,6 +1946,23 @@ function DugoutScorecard() {
         g.strikes = 0;
     };
     const endHalf = (g) => {
+        // A half-inning just finished — this is the only safe moment to call a
+        // game on the away team's lead, because the home half is now over too.
+        (() => {
+            if (g.over || !g.linescore)
+                return;
+            const sched = scheduledInnings();
+            if (g.inning < sched)
+                return;
+            const sum = (side) => g.linescore.reduce((t, r) => t + (r[side] || 0), 0);
+            const a = sum("away"), h = sum("home");
+            // top half done and home already ahead -> they don't need to bat
+            if (g.half === "top" && h > a)
+                g.autoOver = true;
+            // bottom half done and someone leads -> final
+            if (g.half === "bottom" && a !== h)
+                g.autoOver = true;
+        })();
         // Half-inning summary line: what the side that just batted did, and who's
         // due up next. Gives the play-by-play natural breaks and the replay
         // chapter markers. Computed BEFORE the flip, while inning/half still
@@ -1983,6 +2001,13 @@ function DugoutScorecard() {
         g.pendRuns = 0;
         g.openK = null;
         g.openTag = null;
+        // If that half ended the game, stop here. Flipping would add a phantom
+        // inning to the linescore and — past the scheduled length — place an
+        // extra-innings runner for a half that will never be played.
+        if (g.autoOver) {
+            g.halfPA = 0;
+            return;
+        }
         if (g.half === "top") {
             g.half = "bottom";
             const row = g.linescore[g.inning - 1];
@@ -2109,6 +2134,8 @@ function DugoutScorecard() {
                 r1: rn(b.first), r2: rn(b.second), r3: rn(b.third) });
             g.lastPlay = text;
         }
+        else if (g.openPlay != null && g.log[g.openPlay])
+            amendPA(g, g.openPlay, text, text); // still part of the batted ball
         else
             logPlay(g, text, kind);
     };
@@ -2548,7 +2575,7 @@ function DugoutScorecard() {
     /* --- play outcomes (one tap, auto baserunning) --- */
     // loc: fielder position number (1-9) where the ball was hit, or "" if skipped.
     // The scorebook cell reads "1B8" — a single to center.
-    const playHit = (basesTaken, label, loc, over) => mutate((g) => {
+    const playHit = (basesTaken, label, loc, over, hold) => mutate((g) => {
         addPitch(g);
         g.openK = null;
         const bIdxForHit = g.batter[battingSide];
@@ -2569,7 +2596,23 @@ function DugoutScorecard() {
         const hitTag = ["1B", "2B", "3B", "HR"][Math.min(basesTaken, 4) - 1];
         const where = posLabel(loc);
         cardMark(g, bIdxForHit, hitTag + (loc ? String(loc) : ""), Math.min(basesTaken, 4));
-        const runs = advanceAll(g, basesTaken, g.batter[battingSide]);
+        // On an infield hit the ball never leaves the infield, so runners hold
+        // and the scorer moves whoever actually went. Everything else advances.
+        let runs = 0;
+        if (hold) {
+            const b = g.bases;
+            const nb = { first: mkRunner(g, g.batter[battingSide]), second: b.second, third: b.third };
+            if (b.first) { // forced up only if first was occupied
+                if (!b.second)
+                    nb.second = b.first;
+                else if (!b.third)
+                    nb.third = b.first;
+                else { runs += 1; creditRun(g, b.third); nb.third = b.second; nb.second = b.first; }
+            }
+            g.bases = nb;
+        }
+        else
+            runs = advanceAll(g, basesTaken, g.batter[battingSide]);
         addRuns(g, runs, hitTag + (loc ? ":" + loc : ""));
         st.rbi += runs;
         // "over the CF fence" vs the (default) inside-the-park "to CF" — most
@@ -2775,6 +2818,10 @@ function DugoutScorecard() {
             st.rbi += runs;
             const tail = `${fnote ? " " + fnote : ""} — all safe${runs ? ` — ${runs} score${runs > 1 ? "" : "s"}` : ""}`;
             closePA(g, `fielder's choice${tail}`, `${name}: fielder's choice${tail}`, "FC");
+            // keep the drag/advance window open so runner movement on this
+            // play folds onto its line rather than spawning separate events
+            if (g.bases.first || g.bases.second || g.bases.third)
+                g.openPlay = lastPAIdx(g);
             nextBatter(g);
         });
         setFcMenu(false);
@@ -2800,7 +2847,11 @@ function DugoutScorecard() {
                 st.rbi += runs; // productive out — RBI credited
                 if (runs)
                     amendPA(g, lastPAIdx(g), runs === 1 ? "run scores — RBI" : `${runs} score — RBI`, "Run scores on the play");
-                nextBatter(g);
+                // keep the drag/advance window open so runner movement on this
+            // play folds onto its line rather than spawning separate events
+            if (g.bases.first || g.bases.second || g.bases.third)
+                g.openPlay = lastPAIdx(g);
+            nextBatter(g);
             }
             else
                 advanceOrder(g);
@@ -6742,6 +6793,7 @@ function DugoutScorecard() {
                         React.createElement("button", { className: "dg ghost", onClick: undo, disabled: !history.length }, "Undo"),
                         React.createElement("button", { className: "dg ghost", onClick: manualEndHalf }, "End half")))),
                 React.createElement("div", { className: "btnrow r3", style: { marginTop: 4 } },
+                    game.over && React.createElement("button", { className: "dg ghost", onClick: undo, disabled: !history.length, title: "Reopen the game" }, "\u21B6 Undo final"),
                     React.createElement("button", { className: "dg ghost", onClick: () => setShareOpen(true) }, "Share recap"),
                     !game.over ? (React.createElement("button", { className: "dg ghost", onClick: endGame }, "Call it final")) : (React.createElement("button", { className: "dg ghost", onClick: () => setDecisionsOpen(true) }, "Decisions")),
                     React.createElement("button", { className: "dg ghost", onClick: () => setConfirmNew(true) }, "New game")),
@@ -6803,8 +6855,8 @@ function DugoutScorecard() {
                             React.createElement("span", { className: "log-seq" },
                                 e.seq.join("-"),
                                 e.seq.length > 0 && "-"),
-                            React.createElement("span", { className: e.result ? "log-res" : "log-open" }, e.result || "batting…"),
-                            (e.mid || []).map((m, mi) => React.createElement("span", { className: "log-mid", key: mi }, typeof m === "string" ? m : m.t))))) : (React.createElement("div", { className: `log-row ${e.k}`, key: game.log.length - idx },
+                            (e.mid || []).map((m, mi) => React.createElement("span", { className: "log-mid", key: mi }, typeof m === "string" ? m : m.t)),
+                            React.createElement("span", { className: e.result ? "log-res" : "log-open" }, e.result || "batting…")))) : (React.createElement("div", { className: `log-row ${e.k}`, key: game.log.length - idx },
                         React.createElement("span", { className: "log-inn" },
                             e.h === "top" ? "T" : "B",
                             e.i),
@@ -6833,8 +6885,8 @@ function DugoutScorecard() {
                                 React.createElement("button", { className: "dg hit", onClick: saveLogEdit }, "Save"),
                                 React.createElement("button", { className: "dg ghost", onClick: () => { setPbpEdit(null); setPbpText(""); } }, "Cancel"))) : (React.createElement("button", { className: "pbp-tap", onClick: () => startLogEdit(idx) },
                                 e.type === "pa" && React.createElement("span", { className: "pbp-bat" }, logBatterLabel(e)),
-                                React.createElement("span", { className: "pbp-text" }, text),
                                 e.type === "pa" && (e.mid || []).map((m, mi) => React.createElement("span", { className: "pbp-mid", key: mi }, typeof m === "string" ? m : m.t)),
+                                React.createElement("span", { className: "pbp-text" }, text),
                                 e.type === "pa" && e.seq && e.seq.length > 0 && (React.createElement("span", { className: "pbp-seq" }, e.seq.join(" · ")))))));
                         });
                         return rows;
@@ -7689,8 +7741,9 @@ function DugoutScorecard() {
                     React.createElement("h3", null, "Sacrifice"),
                     React.createElement("p", null, "Batter is out with no at-bat charged \u2014 unless an error lets the batter reach."),
                     React.createElement("div", { className: "btnrow" },
-                        React.createElement("button", { className: "dg outb", onClick: () => { setMoreMenu(false); openFieldOne("Sacrifice fly", "Tap the fielder who caught it.", (pos) => playSac("fly", "F" + pos)); }, disabled: !game.bases.third }, "Sac fly \u2014 runner on 3rd scores (RBI)"),
-                        React.createElement("button", { className: "dg outb", onClick: () => { setMoreMenu(false); openFieldSeq("Sacrifice bunt", "Tap the throw in order (e.g. 1-3) \u2014 or Skip.", (note) => playSac("bunt", note)); } }, "Sac bunt \u2014 runners advance"),
+                        React.createElement("button", { className: "dg hit", onClick: () => { setSacMenu(false); openFieldOne("Infield hit", "Tap the infielder the ball went to.", (pos) => playHit(1, "single", pos, false, true)); } }, "Infield hit \u2014 runners hold"),
+                        React.createElement("button", { className: "dg outb", onClick: () => { setSacMenu(false); openFieldOne("Sacrifice fly", "Tap the fielder who caught it.", (pos) => playSac("fly", "F" + pos)); }, disabled: !game.bases.third }, "Sac fly \u2014 runner on 3rd scores (RBI)"),
+                        React.createElement("button", { className: "dg outb", onClick: () => { setSacMenu(false); openFieldSeq("Sacrifice bunt", "Tap the throw in order (e.g. 1-3) \u2014 or Skip.", (note) => playSac("bunt", note)); } }, "Sac bunt \u2014 runners advance"),
                         React.createElement("button", { className: "dg", onClick: () => { setSacMenu(false); openFieldOne("Sacrifice + error", "Tap the fielder who made the error.", (pos) => playSacError("bunt", pos)); } }, "Error on the play \u2014 batter safe, runners take extra base"),
                         React.createElement("button", { className: "dg ghost", onClick: () => setSacMenu(false) }, "Cancel"))))),
             decisionsOpen && game && (React.createElement("div", { className: "modal-back", onClick: () => setDecisionsOpen(false) },
