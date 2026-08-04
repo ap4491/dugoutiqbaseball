@@ -861,7 +861,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "187"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "189"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -2674,6 +2674,10 @@ function DugoutScorecard() {
         if (g.bases.first)
             g.bases.first.ue = true; // reached on error -> unearned if he scores
         closePA(g, `reached on ${enote}${runs ? ", run scores" : ""}`, `${name} reaches on error (${enote})${runs ? ", run scores" : ""}`, "ROE");
+        // leave the drag/advance window open so another runner taking an extra
+        // base on the same play folds onto this line instead of a new event
+        if (g.bases.first || g.bases.second || g.bases.third)
+            g.openPlay = lastPAIdx(g);
         nextBatter(g);
     });
     // Coach pitch: one attempt used (swing and miss, or a foul that counts).
@@ -2973,6 +2977,11 @@ function DugoutScorecard() {
                     addRuns(g, runs, "sacbunt");
                     st.rbi += runs;
                 }
+                // On a sac fly the runner from 3rd scores automatically, but a
+                // runner on 1st or 2nd may tag as well — leave the play open so
+                // advancing them folds onto this line instead of a new event.
+                if (g.bases.first || g.bases.second || g.bases.third)
+                    g.openPlay = lastPAIdx(g);
                 nextBatter(g);
             }
             else
@@ -3210,6 +3219,10 @@ function DugoutScorecard() {
             addRuns(g, runs, "ci");
             st.rbi += runs;
             closePA(g, `catcher's interference${runs ? " — run forced in" : ""}`, `${name}: catcher's interference (E2) — awarded first${runs ? ", run forced in" : ""}`, "CI");
+                // leave the drag/advance window open so another runner taking an extra
+            // base on the same play folds onto this line instead of a new event
+            if (g.bases.first || g.bases.second || g.bases.third)
+                g.openPlay = lastPAIdx(g);
             nextBatter(g);
         });
         setMoreMenu(false);
@@ -4083,6 +4096,8 @@ function DugoutScorecard() {
                 nextBatter(g);
             else
                 advanceOrder(g);
+            if (g.bases.first || g.bases.second || g.bases.third)
+                g.openPlay = lastPAIdx(g);
         });
         setRhbMenu(false);
     };
@@ -6929,7 +6944,15 @@ function DugoutScorecard() {
                     React.createElement("p", null, "Games are saved here automatically when you tap \u201CCall it final.\u201D Tap one to reopen and re-share its box score."),
                     React.createElement("div", { className: "plog", style: { textAlign: "left" } },
                         games.length === 0 && (React.createElement("div", { className: "plog-row", style: { opacity: 0.7, padding: "8px 4px" } }, "No saved games yet.")),
-                        games.map((gm) => {
+                        // Always newest game DATE first. The stored array is in save
+                        // order, so reopening an old game used to jump it to the top.
+                        games.slice().sort((x, y) => {
+                            const d = (r) => (r.date || (r.snapshot && r.snapshot.game && r.snapshot.game.date) || "");
+                            const dx = d(x), dy = d(y);
+                            if (dx !== dy)
+                                return dx < dy ? 1 : -1;       // newer date first
+                            return (y.savedAt || y.id || 0) - (x.savedAt || x.id || 0); // same day: later game first
+                        }).map((gm) => {
                             const played = gm.date || (gm.snapshot && gm.snapshot.game && gm.snapshot.game.date) || null;
                             const dstr = (played ? new Date(played + "T00:00:00") : new Date(gm.savedAt)).toLocaleDateString(undefined, {
                                 month: "short",
