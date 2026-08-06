@@ -861,7 +861,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "191"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "192"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -3646,6 +3646,55 @@ function DugoutScorecard() {
                 : `Lineup updated \u2014 ${jobs.length} names`;
         });
     };
+    // Move a batter to a different spot in the order. Every structure that stores
+    // a slot index has to move with him, or stats land on the wrong player:
+    // lineup, stats, scorebook cells, runners on base, the scoring log, PA rows,
+    // archived subs and the current batter pointer.
+    const moveInOrder = (side, from, to) => {
+        if (from === to)
+            return;
+        mutate((g) => {
+            const lu = g.lineup[side];
+            if (!lu || from < 0 || to < 0 || from >= lu.length || to >= lu.length)
+                return;
+            const order = lu.map((_, i) => i);
+            order.splice(to, 0, order.splice(from, 1)[0]); // order[newIdx] = oldIdx
+            const map = {};
+            order.forEach((oldIdx, newIdx) => { map[oldIdx] = newIdx; });
+            g.lineup[side] = order.map((i) => lu[i]);
+            if (g.stats && g.stats[side])
+                g.stats[side] = order.map((i) => g.stats[side][i]);
+            const rm = (v) => (map[v] != null ? map[v] : v);
+            if (g.card && g.card[side])
+                g.card[side].forEach((c) => { if (c.b != null) c.b = rm(c.b); });
+            if (g.subs && g.subs[side])
+                g.subs[side].forEach((x) => { if (x.slot != null) x.slot = rm(x.slot); });
+            if (g.batter && g.batter[side] != null)
+                g.batter[side] = rm(g.batter[side]);
+            const mySide = side === "away" ? "top" : "bottom";
+            (g.log || []).forEach((e) => {
+                if (e.type === "pa" && e.bi != null && (e.side === side || e.h === mySide))
+                    e.bi = rm(e.bi);
+            });
+            (g.scoring || []).forEach((e) => { if (e.side === side && e.bi != null) e.bi = rm(e.bi); });
+            // runners and open-play markers only belong to the batting team
+            if (side === battingSide) {
+                ["first", "second", "third"].forEach((b) => {
+                    const r = g.bases[b];
+                    if (r && r.b != null)
+                        r.b = rm(r.b);
+                });
+                if (g.openHit && g.openHit.b != null)
+                    g.openHit.b = rm(g.openHit.b);
+                if (g.openK && g.openK.b != null)
+                    g.openK.b = rm(g.openK.b);
+                if (g.coachPitch && g.coachPitch.b != null)
+                    g.coachPitch.b = rm(g.coachPitch.b);
+            }
+            const nm = g.lineup[side][to] ? g.lineup[side][to].name : "Batter";
+            g.lastPlay = `${nm} moved to spot ${to + 1}`;
+        });
+    };
     const editLineup = (side, slot, newName, newPos, newNum) => {
         mutate((g) => {
             const cur = g.lineup[side][slot];
@@ -6348,6 +6397,12 @@ function DugoutScorecard() {
 
         /* ---- lineup table ---- */
         .lineup-wrap { border: 1px solid var(--line); border-radius: 6px; overflow: hidden; margin-top: 16px; }
+        .lu-move { display:flex; flex-direction:column; gap:2px; flex:0 0 auto; }
+        .lu-move button { width:26px; height:17px; padding:0; line-height:1; font-size:9px;
+          background:rgba(255,255,255,.06); color:var(--powder); border:1px solid var(--line);
+          border-radius:4px; cursor:pointer; }
+        .lu-move button:disabled { opacity:.25; cursor:default; }
+        .lu-move button:active:not(:disabled) { background:var(--amberw); color:#0A1A33; }
         .lineup-head {
           display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
           padding: 8px 12px;
@@ -7924,6 +7979,9 @@ function DugoutScorecard() {
                             game.bases[b].b === i);
                         const atBat = subSide === battingSide && i === game.batter[battingSide];
                         return (React.createElement("div", { key: i, className: `lu-row ${subSlot === i ? "open" : ""}` },
+                            React.createElement("span", { className: "lu-move" },
+                                React.createElement("button", { onClick: () => { commitLineupNames(); moveInOrder(subSide, i, i - 1); }, disabled: i === 0, "aria-label": `Move spot ${i + 1} up`, title: "Move up" }, "\u25B2"),
+                                React.createElement("button", { onClick: () => { commitLineupNames(); moveInOrder(subSide, i, i + 1); }, disabled: i === (game.lineup[subSide] || []).length - 1, "aria-label": `Move spot ${i + 1} down`, title: "Move down" }, "\u25BC")),
                             React.createElement("span", { className: "lu-idx" }, i + 1),
                             React.createElement("input", { className: "dg-in lu-num", value: p.num || "", onChange: (e) => setBatterField(subSide, i, "num", e.target.value), inputMode: "numeric", placeholder: "#", "aria-label": `Spot ${i + 1} number` }),
                             React.createElement("input", { className: "dg-in lu-name", value: p.name, onChange: (e) => setBatterField(subSide, i, "name", e.target.value), "aria-label": `Spot ${i + 1} name` }),
