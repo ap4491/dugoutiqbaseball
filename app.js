@@ -861,7 +861,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "189"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "191"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1388,6 +1388,8 @@ function DugoutScorecard() {
             id: g.id || Date.now(),
             savedAt: Date.now(),
             date: g.date || null, // the date the game was PLAYED — never changes
+            gameType: g.gameType || gameType || "season",
+            eventName: (g.eventName || eventName || "").trim(),
             away: { name: teams.away.name, color: teams.away.color || "", logo: teams.away.logo || "" },
             home: { name: teams.home.name, color: teams.home.color || "", logo: teams.home.logo || "" },
             awayRuns: sumRuns("away"),
@@ -1578,8 +1580,16 @@ function DugoutScorecard() {
         });
         return out;
     };
-    const recType = (rec) => (rec && rec.gameType) || (rec && rec.snapshot && rec.snapshot.gameType) || "season";
-    const recEvent = (rec) => ((rec && rec.eventName) || (rec && rec.snapshot && rec.snapshot.eventName) || "").trim();
+    // The type/event live on the record, but older saves only have them on the
+    // game object inside the snapshot — check both.
+    const recType = (rec) => (rec && rec.gameType)
+        || (rec && rec.snapshot && rec.snapshot.gameType)
+        || (rec && rec.snapshot && rec.snapshot.game && rec.snapshot.game.gameType)
+        || "season";
+    const recEvent = (rec) => ((rec && rec.eventName)
+        || (rec && rec.snapshot && rec.snapshot.eventName)
+        || (rec && rec.snapshot && rec.snapshot.game && rec.snapshot.game.eventName)
+        || "").trim();
     // A baseball season sits inside one calendar year, so the game date is the
     // season. Undated saves fall outside every year filter but still count in "All".
     const recYear = (rec) => { const d = (rec && rec.date) || ""; const m = String(d).match(/^(\d{4})/); return m ? m[1] : ""; };
@@ -2767,8 +2777,13 @@ function DugoutScorecard() {
         // If runners are still on and the inning continues, a manual drag right
         // after this out folds onto this out's line ("groundout 3; X takes 3rd")
         // rather than spawning a separate play-by-play event.
-        if (!flipped && (g.bases.first || g.bases.second || g.bases.third))
+        if (!flipped && (g.bases.first || g.bases.second || g.bases.third)) {
             g.openPlay = lastPAIdx(g);
+            // 9.04(a)(2) — a run scoring on an infield out is an RBI. Not on a
+            // strikeout: a runner coming home there did it on his own.
+            if (!isK)
+                g.openHit = { b: bIdx, log: lastPAIdx(g) };
+        }
     });
     // Fielder picker: choose fielder(s) -> 6-3, F8, 6-4-3, etc. Used by batted outs, DP and FC.
     const isAirOut = (lb) => lb === "flyout" || lb === "popup" || lb === "lineout" || lb === "infieldfly";
@@ -2827,6 +2842,9 @@ function DugoutScorecard() {
                 // onto this FC's play-by-play line instead of a separate event
                 if (g.bases.first || g.bases.second || g.bases.third)
                     g.openPlay = lastPAIdx(g);
+                // 9.04(a)(2) — a run scoring on a fielder's choice or a
+                // sacrifice is an RBI, same as on a hit.
+                g.openHit = { b: bIdx, log: lastPAIdx(g) };
             }
             else
                 advanceOrder(g);
@@ -2856,6 +2874,9 @@ function DugoutScorecard() {
             // play folds onto its line rather than spawning separate events
             if (g.bases.first || g.bases.second || g.bases.third)
                 g.openPlay = lastPAIdx(g);
+                // 9.04(a)(2) — a run scoring on a fielder's choice or a
+                // sacrifice is an RBI, same as on a hit.
+                g.openHit = { b: bIdx, log: lastPAIdx(g) };
             nextBatter(g);
         });
         setFcMenu(false);
@@ -2885,6 +2906,9 @@ function DugoutScorecard() {
             // play folds onto its line rather than spawning separate events
             if (g.bases.first || g.bases.second || g.bases.third)
                 g.openPlay = lastPAIdx(g);
+                // 9.04(a)(2) — a run scoring on a fielder's choice or a
+                // sacrifice is an RBI, same as on a hit.
+                g.openHit = { b: bIdx, log: lastPAIdx(g) };
             nextBatter(g);
             }
             else
@@ -2982,6 +3006,9 @@ function DugoutScorecard() {
                 // advancing them folds onto this line instead of a new event.
                 if (g.bases.first || g.bases.second || g.bases.third)
                     g.openPlay = lastPAIdx(g);
+                // 9.04(a)(2) — a run scoring on a fielder's choice or a
+                // sacrifice is an RBI, same as on a hit.
+                g.openHit = { b: bIdx, log: lastPAIdx(g) };
                 nextBatter(g);
             }
             else
@@ -3846,8 +3873,16 @@ function DugoutScorecard() {
                     const batterName = g.lineup[battingSide][g.openHit.b].name;
                     amendOpenHit(g, `${who} scores`, `${who} scores on the play — RBI ${batterName}`);
                 }
+                else if (g.openRbi != null && g.openPlay != null && g.log[g.openPlay]) {
+                    // 9.04(a)(3): a run scoring on an infield out, fielder's choice
+                    // or sacrifice IS an RBI. Double plays and errors set no marker,
+                    // so they correctly fall through to the no-RBI branch below.
+                    g.stats[battingSide][g.openRbi].rbi += 1;
+                    const rbiName = g.lineup[battingSide][g.openRbi].name;
+                    amendPA(g, g.openPlay, `${who} scores \u2014 RBI ${rbiName}`, `${who} scores on the play \u2014 RBI ${rbiName}`);
+                }
                 else if (g.openPlay != null && g.log[g.openPlay]) {
-                    // fold onto the last play's line (e.g. the groundout), no RBI
+                    // double play, error, interference — run counts, no RBI
                     amendPA(g, g.openPlay, `${who} scores`, `${who} scores on the play`);
                 }
                 else {
