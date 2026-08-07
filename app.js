@@ -87,6 +87,12 @@ const THREE_DAY_MAX = {
 // Handbook 5.2.8 — a pitcher cannot pitch 3 consecutive days unless their first
 // two days combined stay within the no-rest threshold (column 0 of the table).
 const consecutiveDayAllowance = (dv) => (PITCH_DIVISIONS[dv] ? PITCH_DIVISIONS[dv][0] : 0);
+// Little League: "may not pitch on 3 consecutive days regardless of
+// circumstances", and "may only pitch in one game per day". BNS has neither —
+// it allows a third straight day if the first two combined stayed within the
+// no-rest number, and says nothing about games per day.
+const isLittleLeague = (dv) => /^LL /.test(dv || "");
+const ONE_GAME_PER_DAY = (dv) => isLittleLeague(dv);
 const dayKey = (d) => String(d || "").slice(0, 10);
 const daysApart = (a, b) => {
     const t1 = Date.parse(dayKey(a) + "T00:00:00"), t2 = Date.parse(dayKey(b) + "T00:00:00");
@@ -131,31 +137,37 @@ const multiDayStatus = (dv, history, onDate, todayPitches) => {
     // combined stayed within the no-rest number. This blocks the day outright,
     // so it's checked whether or not they've thrown yet today.
     const allow = consecutiveDayAllowance(dv);
-    const blockedByStreak = d1 > 0 && d2 > 0 && (d1 + d2) > allow;
+    const blockedByStreak = d1 > 0 && d2 > 0 && (isLittleLeague(dv) || (d1 + d2) > allow);
     // --- same-day doubleheader gates ---
     const noRest = PITCH_DIVISIONS[dv] ? PITCH_DIVISIONS[dv][0] : 0;   // col 0
     const oneDay = PITCH_DIVISIONS[dv] ? PITCH_DIVISIONS[dv][1] : 0;   // col 1
     // 5.2.7.10 — passing the no-rest threshold in an earlier game today means
     // they've earned a day of rest, so they can't come back in game two.
-    const blockedSameDay = earlierToday > 0 && noRest > 0 && earlierToday > noRest;
+    // LL Reg VI: one game per day, full stop — a single pitch counts as the game.
+    const blockedOneGame = ONE_GAME_PER_DAY(dv) && earlierToday > 0;
+    const blockedSameDay = !blockedOneGame && earlierToday > 0 && noRest > 0 && earlierToday > noRest;
     // 5.2.7.13 — hitting the two-day limit in game one ends their day.
     const blockedTwoDay = earlierToday > 0 && oneDay > 0 && (d1 + earlierToday) > oneDay;
-    if (blockedSameDay)
+    if (blockedOneGame)
+        notes.push(`already pitched today (${earlierToday}) \u2014 one game per day (LL Reg VI)`);
+    else if (blockedSameDay)
         notes.push(`threw ${earlierToday} earlier today \u2014 past the ${noRest} no-rest threshold, done for the day`);
     else if (blockedTwoDay)
         notes.push(`2-day total ${d1 + earlierToday} after game 1 \u2014 past ${oneDay}, done for the day`);
     if (blockedByStreak)
-        notes.push(d0 > 0
-            ? `3rd straight day \u2014 prior 2 days ${d1 + d2} over ${allow}`
-            : `not eligible today \u2014 3rd straight day, prior 2 days ${d1 + d2} over ${allow}`);
+        notes.push(isLittleLeague(dv)
+            ? "3rd consecutive day \u2014 not permitted (LL Reg VI)"
+            : (d0 > 0
+                ? `3rd straight day \u2014 prior 2 days ${d1 + d2} over ${allow}`
+                : `not eligible today \u2014 3rd straight day, prior 2 days ${d1 + d2} over ${allow}`));
     // 5.2.7.11 — to stay eligible tomorrow, the day's total must stay within the
     // no-rest number; this is what "call last batter" is protecting.
     const roomForTomorrow = noRest > 0 ? Math.max(0, noRest - d0) : null;
-    const room = (blockedByStreak || blockedSameDay || blockedTwoDay) ? 0 : [daily ? daily - d0 : Infinity,
+    const room = (blockedByStreak || blockedOneGame || blockedSameDay || blockedTwoDay) ? 0 : [daily ? daily - d0 : Infinity,
         daily ? daily - twoDay + d0 : Infinity,
         cap3 ? cap3 - threeDay + d0 : Infinity].reduce((a, b) => Math.min(a, b), Infinity);
     return { d0, d1, d2, twoDay, threeDay, cap3, daily, notes, blockedByStreak,
-        earlierToday, blockedSameDay, blockedTwoDay, roomForTomorrow,
+        earlierToday, blockedSameDay, blockedTwoDay, blockedOneGame, roomForTomorrow,
         roomToday: Math.max(0, room === Infinity ? 0 : room) };
 };
 // Pitching-then-catching restrictions differ by rule set, so this is per-division:
@@ -861,7 +873,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "192"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "194"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1582,6 +1594,46 @@ function DugoutScorecard() {
     };
     // The type/event live on the record, but older saves only have them on the
     // game object inside the snapshot — check both.
+    // Tournament pitcher board: every arm that has thrown in this event, what
+    // they've used, what's left today, and when they're next eligible.
+    const tourneyPitchers = (evName, dv) => {
+        const key = lc(evName);
+        const today = dayKey((game && game.date) || gameDate);
+        const byName = {};
+        const note = (name, date, pitches, teamName) => {
+            if (!name || !pitches)
+                return;
+            const k = lc(name);
+            if (!byName[k])
+                byName[k] = { name, team: teamName || "", total: 0, days: {} };
+            byName[k].total += pitches;
+            byName[k].days[dayKey(date)] = (byName[k].days[dayKey(date)] || 0) + pitches;
+        };
+        games.forEach((rec) => {
+            if (!rec || lc(recEvent(rec)) !== key)
+                return;
+            const g2 = rec.snapshot && rec.snapshot.game;
+            if (!g2 || !g2.pitchers)
+                return;
+            ["away", "home"].forEach((sd) => (g2.pitchers[sd] || []).forEach((p) => note(p.name, rec.date, p.pitches || 0, rec[sd] && rec[sd].name)));
+        });
+        // include the game being scored right now
+        if (game && game.pitchers && lc(eventName) === key)
+            ["away", "home"].forEach((sd) => (game.pitchers[sd] || []).forEach((p) => note(p.name, today, p.pitches || 0, teams[sd].name)));
+        return Object.values(byName).map((p) => {
+            const hist = Object.entries(p.days).map(([date, pitches]) => ({ date, pitches }));
+            const st = multiDayStatus(dv, hist.filter((h) => h.date !== today), today, p.days[today] || 0);
+            // when can they next throw? walk forward until the rest they've earned is served
+            let nextDay = "today";
+            if (st.roomToday <= 0) {
+                const rest = daysRestFor(dv, p.days[today] || 0);
+                const lastDay = Object.keys(p.days).sort().pop();
+                const d = new Date(Date.parse(lastDay + "T00:00:00") + (Math.max(1, rest) * 86400000));
+                nextDay = isNaN(d) ? "\u2014" : d.toISOString().slice(0, 10);
+            }
+            return Object.assign({}, p, { st, nextDay, todayCount: p.days[today] || 0 });
+        }).sort((a, b) => b.total - a.total);
+    };
     const recType = (rec) => (rec && rec.gameType)
         || (rec && rec.snapshot && rec.snapshot.gameType)
         || (rec && rec.snapshot && rec.snapshot.game && rec.snapshot.game.gameType)
@@ -1737,10 +1789,12 @@ function DugoutScorecard() {
         return Object.assign(Object.assign({}, t), { [side]: Object.assign(Object.assign({}, t[side]), { lineup }) });
     });
     const orderTarget = (d, len) => Math.max(0, Math.min(len - 1, d.from + Math.round(d.dy / ROW_H)));
-    const rowHandleDown = (side, idx) => (e) => {
+    // `live` = the in-game lineup editor, where a reorder has to remap stats,
+    // scorebook cells and runners rather than just shuffle an array.
+    const rowHandleDown = (side, idx, live) => (e) => {
         e.preventDefault();
         e.currentTarget.setPointerCapture(e.pointerId);
-        setRowDragBoth({ side, from: idx, startY: e.clientY, dy: 0 });
+        setRowDragBoth({ side, from: idx, startY: e.clientY, dy: 0, live: !!live });
     };
     const rowHandleMove = (e) => {
         const d = rowDragRef.current;
@@ -1753,8 +1807,17 @@ function DugoutScorecard() {
         if (!d)
             return;
         setRowDragBoth(null);
-        const to = orderTarget(d, teams[d.side].lineup.length);
-        if (to !== d.from)
+        const len = d.live
+            ? ((game && game.lineup && game.lineup[d.side]) || []).length
+            : teams[d.side].lineup.length;
+        const to = orderTarget(d, len);
+        if (to === d.from)
+            return;
+        if (d.live) {
+            commitLineupNames(); // apply any typed names before the slots move
+            moveInOrder(d.side, d.from, to);
+        }
+        else
             reorderLineup(d.side, d.from, to);
     };
     // visual shift for rows while one is being dragged
@@ -3864,6 +3927,7 @@ function DugoutScorecard() {
     const [seasonEvent, setSeasonEvent] = useState("all"); // specific tournament/playoff
     const [seasonYear, setSeasonYear] = useState("all"); // baseball seasons sit inside one calendar year
     const [popMenu, setPopMenu] = useState(false); // pop-up: fair or foul territory
+    const [tourneyOpen, setTourneyOpen] = useState(false); // tournament pitcher availability board
     const replayTimer = useRef(null);
     const demoTimer = useRef(null);
     const demoMode = (() => { try { return /[?&]demo\b/.test(window.location.search); } catch (_a) { return false; } })();
@@ -6397,12 +6461,7 @@ function DugoutScorecard() {
 
         /* ---- lineup table ---- */
         .lineup-wrap { border: 1px solid var(--line); border-radius: 6px; overflow: hidden; margin-top: 16px; }
-        .lu-move { display:flex; flex-direction:column; gap:2px; flex:0 0 auto; }
-        .lu-move button { width:26px; height:17px; padding:0; line-height:1; font-size:9px;
-          background:rgba(255,255,255,.06); color:var(--powder); border:1px solid var(--line);
-          border-radius:4px; cursor:pointer; }
-        .lu-move button:disabled { opacity:.25; cursor:default; }
-        .lu-move button:active:not(:disabled) { background:var(--amberw); color:#0A1A33; }
+        .lu-row.dragging { opacity:.55; }
         .lineup-head {
           display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
           padding: 8px 12px;
@@ -7339,6 +7398,7 @@ function DugoutScorecard() {
                                 setShareOpen(false);
                                 setSheetOpen(true);
                             } }, "\uD83D\uDCCB Pitch count sheet (BNS)"),
+                        (eventName || "").trim() && React.createElement("button", { className: "dg", onClick: () => { setShareOpen(false); setTourneyOpen(true); } }, "\uD83C\uDFC6 Tournament arms"),
                         React.createElement("button", { className: "dg", onClick: () => {
                                 setShareOpen(false);
                                 setLineupCardSide("choose");
@@ -7768,6 +7828,37 @@ function DugoutScorecard() {
                                 setConfirmNew(false);
                             } }, "New game \u2014 fresh lineups"),
                         React.createElement("button", { className: "dg ghost", onClick: () => setConfirmNew(false) }, "Keep current game"))))),
+            tourneyOpen && game && (() => {
+                const ev = (eventName || "").trim();
+                const dv = (game.division || division) || "";
+                const rows = tourneyPitchers(ev, dv);
+                return (React.createElement("div", { className: "modal-back", onClick: () => setTourneyOpen(false) },
+                    React.createElement("div", { className: "modal set-modal", onClick: (e) => e.stopPropagation() },
+                        React.createElement("h3", null, "Tournament arms"),
+                        React.createElement("p", { style: { textTransform: "none", letterSpacing: 0 } }, ev, dv ? ` \u00b7 ${dv}` : " \u00b7 no division set"),
+                        rows.length === 0
+                            ? React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--powder)" } }, "No pitchers recorded in this event yet.")
+                            : React.createElement("div", { className: "sit-table" },
+                                React.createElement("div", { className: "sit-row sit-head", style: { gridTemplateColumns: "1.5fr .6fr .6fr .7fr 1fr" } },
+                                    React.createElement("span", null, "Pitcher"),
+                                    React.createElement("span", null, "Total"),
+                                    React.createElement("span", null, "Today"),
+                                    React.createElement("span", null, "Left"),
+                                    React.createElement("span", null, "Next")),
+                                rows.map((r, i) => React.createElement("div", { className: "sit-row", key: i, style: { gridTemplateColumns: "1.5fr .6fr .6fr .7fr 1fr" } },
+                                    React.createElement("span", { className: "sit-lbl" }, r.name),
+                                    React.createElement("span", null, r.total),
+                                    React.createElement("span", null, r.todayCount),
+                                    React.createElement("span", { style: r.st.roomToday === 0 ? { color: "var(--red)", fontWeight: 700 } : { color: "var(--amberw)" } }, r.st.roomToday === 0 ? "\u2014" : r.st.roomToday),
+                                    React.createElement("span", { style: r.nextDay === "today" ? { color: "var(--amberw)" } : { color: "var(--powder)" } }, r.nextDay === "today" ? "available" : r.nextDay)))),
+                        rows.filter((r) => r.st.notes.length).map((r, i) => React.createElement("p", { key: i, style: { textTransform: "none", letterSpacing: 0, color: "var(--red)", fontSize: 12, margin: "6px 0 0" } }, `${r.name}: ${r.st.notes.join(" \u00b7 ")}`)),
+                        React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--powder)", fontSize: 11, margin: "8px 0 0" } },
+                            "Both teams \u00b7 every game tagged to this event. ",
+                            React.createElement("b", null, "\u201CTotal\u201D is a running tally, not a budget"),
+                            THREE_DAY_MAX[dv]
+                                ? ` \u2014 the limits that bind are daily (${PITCH_DIVISIONS[dv] ? PITCH_DIVISIONS[dv][4] : "\u2014"}), 2-day and the ${THREE_DAY_MAX[dv]} three-day cap.`
+                                : " \u2014 this rule set has no cumulative cap; only the daily max and rest days apply, so an arm resets fully once rested."),
+                        React.createElement("button", { className: "dg ghost", style: { width: "100%", marginTop: 10 }, onClick: () => setTourneyOpen(false) }, "Close")))); })(),
             popMenu && game && (React.createElement("div", { className: "modal-back", onClick: () => setPopMenu(false) },
                 React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
                     React.createElement("h3", null, "Pop up"),
@@ -7978,11 +8069,10 @@ function DugoutScorecard() {
                             game.bases[b] &&
                             game.bases[b].b === i);
                         const atBat = subSide === battingSide && i === game.batter[battingSide];
-                        return (React.createElement("div", { key: i, className: `lu-row ${subSlot === i ? "open" : ""}` },
-                            React.createElement("span", { className: "lu-move" },
-                                React.createElement("button", { onClick: () => { commitLineupNames(); moveInOrder(subSide, i, i - 1); }, disabled: i === 0, "aria-label": `Move spot ${i + 1} up`, title: "Move up" }, "\u25B2"),
-                                React.createElement("button", { onClick: () => { commitLineupNames(); moveInOrder(subSide, i, i + 1); }, disabled: i === (game.lineup[subSide] || []).length - 1, "aria-label": `Move spot ${i + 1} down`, title: "Move down" }, "\u25BC")),
-                            React.createElement("span", { className: "lu-idx" }, i + 1),
+                        return (React.createElement("div", { key: i, className: `lu-row ${subSlot === i ? "open" : ""} ${rowDrag && rowDrag.live && rowDrag.side === subSide && rowDrag.from === i ? "dragging" : ""}`, style: rowStyle(subSide, i) },
+                            React.createElement("button", { className: "drag-handle", onPointerDown: rowHandleDown(subSide, i, true), onPointerMove: rowHandleMove, onPointerUp: rowHandleUp, onPointerCancel: rowHandleUp, "aria-label": `Spot ${i + 1} \u2014 drag to reorder` },
+                                React.createElement("span", null, i + 1),
+                                React.createElement("span", { className: "grip" }, "\u2261")),
                             React.createElement("input", { className: "dg-in lu-num", value: p.num || "", onChange: (e) => setBatterField(subSide, i, "num", e.target.value), inputMode: "numeric", placeholder: "#", "aria-label": `Spot ${i + 1} number` }),
                             React.createElement("input", { className: "dg-in lu-name", value: p.name, onChange: (e) => setBatterField(subSide, i, "name", e.target.value), "aria-label": `Spot ${i + 1} name` }),
                             React.createElement("input", { className: "dg-in lu-pos", value: p.pos || "", onChange: (e) => setBatterField(subSide, i, "pos", e.target.value), placeholder: "Pos", "aria-label": `Spot ${i + 1} position` }),
