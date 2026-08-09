@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "196"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "199"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1822,13 +1822,82 @@ function DugoutScorecard() {
         lineup.splice(to, 0, moved);
         return Object.assign(Object.assign({}, t), { [side]: Object.assign(Object.assign({}, t[side]), { lineup }) });
     });
-    const orderTarget = (d, len) => Math.max(0, Math.min(len - 1, d.from + Math.round(d.dy / ROW_H)));
+    const orderTarget = (d, len) => Math.max(0, Math.min(len - 1, d.from + Math.round(d.dy / (d.rowH || ROW_H))));
     // `live` = the in-game lineup editor, where a reorder has to remap stats,
     // scorebook cells and runners rather than just shuffle an array.
     const rowHandleDown = (side, idx, live) => (e) => {
         e.preventDefault();
         e.currentTarget.setPointerCapture(e.pointerId);
-        setRowDragBoth({ side, from: idx, startY: e.clientY, dy: 0, live: !!live });
+        let rowH = ROW_H;
+        try {
+            const row = e.currentTarget.parentElement;
+            const next = row && row.nextElementSibling;
+            // distance between consecutive rows = height + whatever gap is in play
+            if (row && next)
+                rowH = Math.abs(next.getBoundingClientRect().top - row.getBoundingClientRect().top) || row.offsetHeight || ROW_H;
+            else if (row)
+                rowH = row.offsetHeight || ROW_H;
+        }
+        catch (_m) { }
+        setRowDragBoth({ side, from: idx, startY: e.clientY, dy: 0, live: !!live, rowH });
+    };
+    /* --- press-and-hold anywhere on a lineup row to drag it ---------------
+       A small handle is a poor target on a phone, so holding the row (the name
+       bubble included) picks it up. A quick tap still focuses the field for
+       editing, and a drag that starts as a scroll cancels the hold. --------- */
+    const holdRef = useRef(null);
+    const clearHold = () => {
+        if (holdRef.current && holdRef.current.timer)
+            clearTimeout(holdRef.current.timer);
+        holdRef.current = null;
+    };
+    const rowPressDown = (side, idx, live) => (e) => {
+        if (rowDragRef.current)
+            return;
+        const el = e.currentTarget, pid = e.pointerId;
+        const startY = e.clientY, startX = e.clientX;
+        const timer = setTimeout(() => {
+            holdRef.current = null;
+            try {
+                el.setPointerCapture(pid);
+            }
+            catch (_c) { }
+            try {
+                if (document.activeElement && document.activeElement.blur)
+                    document.activeElement.blur(); // drop the keyboard before dragging
+            }
+            catch (_b) { }
+            try {
+                if (navigator.vibrate)
+                    navigator.vibrate(12); // it engaged
+            }
+            catch (_v) { }
+            let rowH = ROW_H;
+            try {
+                const next = el.nextElementSibling;
+                rowH = (next ? Math.abs(next.getBoundingClientRect().top - el.getBoundingClientRect().top) : el.offsetHeight) || ROW_H;
+            }
+            catch (_m) { }
+            setRowDragBoth({ side, from: idx, startY, dy: 0, live: !!live, rowH });
+        }, 320);
+        holdRef.current = { timer, startX, startY };
+    };
+    const rowPressMove = (e) => {
+        const h = holdRef.current;
+        if (h) {
+            // moved before the hold fired -> they're scrolling, not dragging
+            if (Math.abs(e.clientY - h.startY) > 8 || Math.abs(e.clientX - h.startX) > 8)
+                clearHold();
+            return;
+        }
+        rowHandleMove(e);
+    };
+    const rowPressUp = (e) => {
+        if (holdRef.current) {
+            clearHold(); // short tap — leave the field to focus normally
+            return;
+        }
+        rowHandleUp(e);
     };
     const rowHandleMove = (e) => {
         const d = rowDragRef.current;
@@ -1863,9 +1932,9 @@ function DugoutScorecard() {
             return { transform: `translateY(${d.dy}px)`, position: "relative", zIndex: 5, transition: "none" };
         const t = orderTarget(d, teams[side].lineup.length);
         if (d.from < t && i > d.from && i <= t)
-            return { transform: `translateY(-${ROW_H}px)` };
+            return { transform: `translateY(-${(d.rowH || ROW_H)}px)` };
         if (t < d.from && i >= t && i < d.from)
-            return { transform: `translateY(${ROW_H}px)` };
+            return { transform: `translateY(${(d.rowH || ROW_H)}px)` };
         return undefined;
     };
     const copyLineups = async () => {
@@ -2266,7 +2335,7 @@ function DugoutScorecard() {
                 const p = r.b != null && g.lineup[battingSide] ? g.lineup[battingSide][r.b] : null;
                 return p ? p.name : null;
             };
-            (row.mid = row.mid || []).push({ t: text, outs: g.outs,
+            (row.mid = row.mid || []).push({ t: text, at: (row.seq || []).length, outs: g.outs,
                 on1: !!b.first, on2: !!b.second, on3: !!b.third,
                 r1: rn(b.first), r2: rn(b.second), r3: rn(b.third) });
             g.lastPlay = text;
@@ -2610,6 +2679,10 @@ function DugoutScorecard() {
             addRuns(g, runs, "walk");
             st.rbi += runs; // bases-loaded walk
             closePA(g, runs ? "walk, run forced in" : "walk", `${currentBatterName()} walks${runs ? ", run forced in" : ""}`, "BB");
+            // Ball four is often also a wild pitch or passed ball — runners moving
+            // on it belong on the walk's line, not as separate events afterwards.
+            if (g.bases.first || g.bases.second || g.bases.third)
+                g.openPlay = lastPAIdx(g);
             nextBatter(g);
         }
         else {
@@ -6495,7 +6568,8 @@ function DugoutScorecard() {
 
         /* ---- lineup table ---- */
         .lineup-wrap { border: 1px solid var(--line); border-radius: 6px; overflow: hidden; margin-top: 16px; }
-        .lu-row.dragging { opacity:.55; }
+        .lu-row.dragging, .prow.dragging { opacity:.6; }
+        .lu-row.dragging { box-shadow:0 0 0 2px var(--amberw) inset; border-radius:8px; }
         .lineup-head {
           display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
           padding: 8px 12px;
@@ -6586,12 +6660,15 @@ function DugoutScorecard() {
         .prow.dragging .dg-in, .prow.dragging .dg-sel { border-color: var(--amberw); }
         button.drag-handle {
           display: flex; flex-direction: column; align-items: center; justify-content: center;
-          height: 32px; padding: 0; background: transparent; border: 1px solid var(--line);
-          border-radius: 4px; color: var(--powder); cursor: grab; touch-action: none;
-          font-family: 'Saira Condensed', sans-serif; font-size: 11px; line-height: 1;
+          gap: 2px; min-height: 46px; min-width: 38px; padding: 0 4px;
+          background: rgba(255,255,255,.05); border: 1px solid var(--line);
+          border-radius: 6px; color: var(--powder); cursor: grab; touch-action: none;
+          font-family: 'Saira Condensed', sans-serif; font-size: 13px; line-height: 1;
         }
         button.drag-handle:active { cursor: grabbing; border-color: var(--amberw); color: var(--amberw); }
-        .drag-handle .grip { font-size: 9px; line-height: .7; opacity: .7; }
+        .drag-handle .grip { font-size: 15px; line-height: .6; opacity: .8; letter-spacing: 1px; }
+        button.drag-handle:active { background: var(--amberw); color: #0A1A33; }
+        .drag-handle:active .grip { opacity: 1; }
         .prow .n { font-family: 'Saira Condensed', sans-serif; font-size: 12px; color: var(--powder); text-align: right; }
         button.rm {
           background: transparent; border: 1px solid var(--line); border-radius: 4px;
@@ -6765,8 +6842,8 @@ function DugoutScorecard() {
                             "\uD83D\uDCC2 My teams (",
                             rosters.length,
                             ")")),
-                    teams[side].lineup.map((p, i) => (React.createElement("div", { className: `prow ${rowDrag && rowDrag.side === side && rowDrag.from === i ? "dragging" : ""}`, key: i, style: rowStyle(side, i) },
-                        React.createElement("button", { className: "drag-handle", onPointerDown: rowHandleDown(side, i), onPointerMove: rowHandleMove, onPointerUp: rowHandleUp, "aria-label": `Batter ${i + 1} — drag to reorder` },
+                    teams[side].lineup.map((p, i) => (React.createElement("div", { className: `prow ${rowDrag && rowDrag.side === side && rowDrag.from === i ? "dragging" : ""}`, key: i, style: rowStyle(side, i), onPointerDown: rowPressDown(side, i, false), onPointerMove: rowPressMove, onPointerUp: rowPressUp, onPointerCancel: rowPressUp },
+                        React.createElement("button", { className: "drag-handle", onPointerDown: (e) => { clearHold(); rowHandleDown(side, i)(e); }, onPointerMove: rowHandleMove, onPointerUp: rowHandleUp, onPointerCancel: rowHandleUp, "aria-label": `Batter ${i + 1} — drag to reorder` },
                             i + 1,
                             React.createElement("span", { className: "grip" }, "\u2261")),
                         React.createElement("input", { className: "dg-in jersey-in", value: p.num || "", onChange: (e) => setPlayer(side, i, "num", e.target.value.replace(/[^0-9]/g, "").slice(0, 2)), inputMode: "numeric", placeholder: "#", "aria-label": `${side} batter ${i + 1} number` }),
@@ -7080,10 +7157,21 @@ function DugoutScorecard() {
                         React.createElement("span", { className: "log-txt" },
                             React.createElement("strong", null, logBatterLabel(e)),
                             " ",
-                            React.createElement("span", { className: "log-seq" },
-                                e.seq.join("-"),
-                                e.seq.length > 0 && "-"),
-                            (e.mid || []).map((m, mi) => React.createElement("span", { className: "log-mid", key: mi }, typeof m === "string" ? m : m.t)),
+                            // pitches and mid-at-bat events, in the order they happened:
+                            // ball - runners advance on a wild pitch - ball - strike
+                            (() => {
+                                const seq = e.seq || [];
+                                const mids = (e.mid || []).map((m, mi) => (typeof m === "string"
+                                    ? { t: m, at: seq.length, mi }
+                                    : { t: m.t, at: m.at == null ? seq.length : m.at, mi }));
+                                const out = [];
+                                seq.forEach((lab, i) => {
+                                    mids.filter((m) => m.at === i).forEach((m) => out.push(React.createElement("span", { className: "log-mid", key: `m${m.mi}` }, m.t)));
+                                    out.push(React.createElement("span", { className: "log-seq", key: `s${i}` }, lab, "-"));
+                                });
+                                mids.filter((m) => m.at >= seq.length).forEach((m) => out.push(React.createElement("span", { className: "log-mid", key: `m${m.mi}` }, m.t)));
+                                return out;
+                            })(),
                             React.createElement("span", { className: e.result ? "log-res" : "log-open" }, e.result || "batting…")))) : (React.createElement("div", { className: `log-row ${e.k}`, key: game.log.length - idx },
                         React.createElement("span", { className: "log-inn" },
                             e.h === "top" ? "T" : "B",
@@ -8108,8 +8196,8 @@ function DugoutScorecard() {
                             game.bases[b] &&
                             game.bases[b].b === i);
                         const atBat = subSide === battingSide && i === game.batter[battingSide];
-                        return (React.createElement("div", { key: i, className: `lu-row ${subSlot === i ? "open" : ""} ${rowDrag && rowDrag.live && rowDrag.side === subSide && rowDrag.from === i ? "dragging" : ""}`, style: rowStyle(subSide, i) },
-                            React.createElement("button", { className: "drag-handle", onPointerDown: rowHandleDown(subSide, i, true), onPointerMove: rowHandleMove, onPointerUp: rowHandleUp, onPointerCancel: rowHandleUp, "aria-label": `Spot ${i + 1} \u2014 drag to reorder` },
+                        return (React.createElement("div", { key: i, className: `lu-row ${subSlot === i ? "open" : ""} ${rowDrag && rowDrag.live && rowDrag.side === subSide && rowDrag.from === i ? "dragging" : ""}`, style: rowStyle(subSide, i), onPointerDown: rowPressDown(subSide, i, true), onPointerMove: rowPressMove, onPointerUp: rowPressUp, onPointerCancel: rowPressUp },
+                            React.createElement("button", { className: "drag-handle", onPointerDown: (e) => { clearHold(); rowHandleDown(subSide, i, true)(e); }, onPointerMove: rowHandleMove, onPointerUp: rowHandleUp, onPointerCancel: rowHandleUp, "aria-label": `Spot ${i + 1} \u2014 drag to reorder` },
                                 React.createElement("span", null, i + 1),
                                 React.createElement("span", { className: "grip" }, "\u2261")),
                             React.createElement("input", { className: "dg-in lu-num", value: p.num || "", onChange: (e) => setBatterField(subSide, i, "num", e.target.value), inputMode: "numeric", placeholder: "#", "aria-label": `Spot ${i + 1} number` }),
