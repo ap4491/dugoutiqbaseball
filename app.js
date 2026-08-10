@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "199"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "201"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -2987,7 +2987,7 @@ function DugoutScorecard() {
     const skipFieldOut = () => { if (fieldPick) finishFieldPick(""); };
     // Fielder's choice: batter reaches, the selected runner is forced out.
     // Remaining runners + batter advance on the force.
-    const playFC = (outBase, fnote) => {
+    const playFC = (outBase, fnote, interf) => {
         mutate((g) => {
             addPitch(g);
             g.openK = null;
@@ -3000,7 +3000,10 @@ function DugoutScorecard() {
             chargeP(g, "outs");
             cardOut(g, g.bases[outBase], g.outs + 1); // the forced runner's own cell
             cardMark(g, bIdx, fnote || "FC", 1);
-            closePA(g, `fielder's choice${fnote ? " " + fnote : ""} — runner from ${baseLabel(outBase)} forced out`, `${name}: fielder's choice${fnote ? " " + fnote : ""} — runner from ${baseLabel(outBase)} forced out`, "FC");
+            const fcTxt = interf
+                ? `runner interference${fnote ? " " + fnote : ""} — runner from ${baseLabel(outBase)} out`
+                : `fielder's choice${fnote ? " " + fnote : ""} — runner from ${baseLabel(outBase)} forced out`;
+            closePA(g, fcTxt, `${name}: ${fcTxt}`, "FC");
             const flipped = recordOut(g);
             if (!flipped) {
                 const runs = fcAdvance(g, outBase, bIdx);
@@ -6757,7 +6760,11 @@ function DugoutScorecard() {
         .season-table th { position: sticky; top: 0; background: #16244f; color: var(--powder); cursor: pointer; user-select: none; font-weight: 700; border-bottom: 1px solid var(--line); }
         .season-table th.on { color: var(--amber); }
         .season-table th.l, .season-table td.l { text-align: left; position: sticky; left: 0; background: var(--navy-deep); z-index: 1; }
-        .season-table th.l { background: #16244f; z-index: 2; }
+        .season-table th.l { background: #16244f; z-index: 3; }
+        /* a visible edge so it's clear the name column is pinned while you scroll */
+        .season-table th.l, .season-table td.l { box-shadow: 1px 0 0 var(--line); max-width: 150px;
+          overflow: hidden; text-overflow: ellipsis; }
+        .season-table th.t, .season-table td.t { text-align: left; }
         .season-table tbody tr:nth-child(odd) td { background: rgba(255,255,255,.03); }
         .season-table tbody tr:nth-child(odd) td.l { background: #101a3d; }
         .season-table td { color: var(--white); }
@@ -7678,7 +7685,7 @@ function DugoutScorecard() {
                         const va = sortVal(a, seasonSort.col), vb = sortVal(b, seasonSort.col);
                         return va < vb ? -seasonSort.dir : va > vb ? seasonSort.dir : a.name.localeCompare(b.name);
                     });
-                    const teamCol = seasonTeam === "*" ? [["team", "Team", "l"]] : [];
+                    const teamCol = seasonTeam === "*" ? [["team", "Team", "t"]] : [];
                     const cols = seasonTab === "bat"
                         ? [["name", "Player", "l"]].concat(teamCol, [["gp", "GP"], ["ab", "AB"], ["r", "R"], ["h", "H"], ["x2b", "2B"], ["x3b", "3B"], ["xhr", "HR"], ["rbi", "RBI"], ["bb", "BB"], ["k", "K"], ["avg", "AVG"], ["obp", "OBP"]])
                         : [["name", "Player", "l"]].concat(teamCol, [["app", "APP"], ["ip", "IP"], ["h", "H"], ["r", "R"], ["er", "ER"], ["bb", "BB"], ["k", "K"], ["era", "ERA"]]);
@@ -7735,10 +7742,10 @@ function DugoutScorecard() {
                                 " stats for this team yet.")) : (React.createElement("div", { className: "season-table" },
                                 React.createElement("table", null,
                                     React.createElement("thead", null,
-                                        React.createElement("tr", null, cols.map(([col, label, al]) => (React.createElement("th", { key: col, className: `${al === "l" ? "l" : ""} ${seasonSort.col === col ? "on" : ""}`, onClick: () => clickCol(col) },
+                                        React.createElement("tr", null, cols.map(([col, label, al]) => (React.createElement("th", { key: col, className: `${al === "l" ? "l" : al === "t" ? "t" : ""} ${seasonSort.col === col ? "on" : ""}`, onClick: () => clickCol(col) },
                                             label,
                                             seasonSort.col === col ? (seasonSort.dir < 0 ? " ▾" : " ▴") : ""))))),
-                                    React.createElement("tbody", null, sorted.map((r, i) => (React.createElement("tr", { key: i }, cols.map(([col, , al]) => (React.createElement("td", { key: col, className: al === "l" ? "l" : "" }, cellVal(r, col))))))))))),
+                                    React.createElement("tbody", null, sorted.map((r, i) => (React.createElement("tr", { key: i }, cols.map(([col, , al]) => (React.createElement("td", { key: col, className: al === "l" ? "l" : al === "t" ? "t" : "" }, cellVal(r, col))))))))))),
                             React.createElement("p", { className: "season-note" }, seasonTab === "bat"
                                 ? "AVG = H/AB · OBP = (H+BB+HBP)/(AB+BB+HBP+SF). Players matched by name within the team."
                                 : `ERA shown on a ${inningsBasisFor(game && game.division || division)}-inning basis · ER = runs minus unearned.`),
@@ -8096,6 +8103,12 @@ function DugoutScorecard() {
                         })()),
                         React.createElement("button", { className: "dg outb", onClick: () => { setFcMenu(false); openFieldSeq("Out at 1st", "Tap fielders in order (e.g. 5-3).", (note) => playFCBatterOut(note)); } }, "Batter out at 1st \u2014 runners advance"),
                         React.createElement("button", { className: "dg", onClick: () => { setFcMenu(false); openFieldSeq("Fielder's choice \u2014 all safe", "Tap fielders in order (e.g. 6-4).", (note) => playFCAllSafe(note)); } }, "Everyone safe \u2014 no out"),
+                        // 6.01(a)(6): the runner is out, the batter is charged an
+                        // at-bat with no hit — a fielder's-choice-shaped play, but
+                        // he wasn't forced, so it can't say "forced out".
+                        ["third", "second", "first"].map((b) => game.bases[b] && React.createElement("button", { key: `int${b}`, className: "dg outb", onClick: () => { setFcMenu(false); openFieldOne("Runner interference", "Tap the fielder who was interfered with.", (pos) => playFC(b, `to ${posLabel(pos)}`, true)); } },
+                            "Interference by runner from ",
+                            baseLabel(b))),
                         React.createElement("button", { className: "dg ghost", onClick: () => setFcMenu(false) }, "Cancel"))))),
             sacMenu && game && (React.createElement("div", { className: "modal-back", onClick: () => setSacMenu(false) },
                 React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
