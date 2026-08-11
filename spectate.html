@@ -122,7 +122,9 @@
   .pl .r{ font-size:14px; color:var(--powder); margin-top:2px; line-height:1.45; }
   .pl.scored .r{ color:var(--amber); }
   .pl .q{ font-family:"Saira Condensed",sans-serif; font-size:11px; color:var(--muted); margin-top:5px; letter-spacing:.09em; }
+  .pl .q .mid{ font-style:italic; color:var(--gold,#F5C518); opacity:.95; }
   .pl.ev .r{ margin:0; color:var(--muted); font-size:13px; }
+  .pl.ev.half .r{ color:var(--gold,#F5C518); font-weight:700; }
   .pl.ev::before{ width:8px; height:8px; left:-21px; background:transparent; border:2px solid var(--line); box-shadow:none; }
 
   .msg{ text-align:center; color:var(--powder); padding:48px 10px; }
@@ -220,10 +222,25 @@
       if(key!==lastKey){ items.push(`<div class="inn-chip">${e.h==="top"?"Top":"Bottom"} ${e.i}</div>`); lastKey=key; }
       if(e.p){
         if(!e.r) continue;
-        const scored=/scores|home run|walk-off|grand slam/i.test(e.r);
-        items.push(`<div class="pl ${scored?'scored':''}"><div class="b">${esc(e.b||"")}</div><div class="r">${esc(e.r)}</div>${e.q?`<div class="q">${esc(e.q)}</div>`:""}</div>`);
+        const midTxt=Array.isArray(e.m)?e.m.map(x=>x&&x.t||"").join(" "):"";
+        const scored=/scores|home run|walk-off|grand slam/i.test(e.r+" "+midTxt);
+        // pitches and mid-at-bat events (steals, wild pitch, passed ball) in the
+        // order they happened: ball - runners advance on wild pitch - ball - strike
+        const seq=(e.q||"").split(" ").filter(Boolean);
+        const mids=Array.isArray(e.m)?e.m.map(x=>({t:x&&x.t||"",at:(x&&typeof x.at==="number")?x.at:seq.length})):[];
+        let line="";
+        if(seq.length||mids.length){
+          const parts=[];
+          seq.forEach((lab,si)=>{
+            mids.filter(m=>m.at===si).forEach(m=>parts.push(`<i class="mid">${esc(m.t)}</i>`));
+            parts.push(esc(lab));
+          });
+          mids.filter(m=>m.at>=seq.length).forEach(m=>parts.push(`<i class="mid">${esc(m.t)}</i>`));
+          line=`<div class="q">${parts.join(" &middot; ")}</div>`;
+        }
+        items.push(`<div class="pl ${scored?'scored':''}"><div class="b">${esc(e.b||"")}</div>${line}<div class="r">${esc(e.r)}</div></div>`);
       } else if(e.t){
-        items.push(`<div class="pl ev"><div class="r">${esc(e.t)}</div></div>`);
+        items.push(`<div class="pl ev ${e.k==="half"?"half":""}"><div class="r">${esc(e.t)}</div></div>`);
       }
     }
     if(!items.length) return "";

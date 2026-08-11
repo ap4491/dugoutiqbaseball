@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "201"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "203"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -4809,8 +4809,17 @@ function DugoutScorecard() {
             // high only as a runaway guard — a 9-inning game is ~150 entries,
             // each a handful of short fields, so even 600 is a small payload.
             log: (g.log || []).slice(-600).map((e) => e.type === "pa"
-                ? { p: 1, i: e.i, h: e.h, b: jerseyForLog(g.lineup, e), r: e.result || "", q: (e.seq || []).join(" ") }
-                : { i: e.i, h: e.h, t: e.t || "" }),
+                ? {
+                    p: 1, i: e.i, h: e.h, b: jerseyForLog(g.lineup, e), r: e.result || "",
+                    q: (e.seq || []).join(" "),
+                    // Mid-at-bat events (steals, wild pitch, passed ball, balk) with
+                    // the pitch they happened on, so spectators see the play unfold in
+                    // order rather than a walk appearing from nowhere.
+                    m: (e.mid || []).map((x) => (typeof x === "string"
+                        ? { t: x, at: (e.seq || []).length }
+                        : { t: x.t, at: x.at == null ? (e.seq || []).length : x.at })),
+                }
+                : { i: e.i, h: e.h, t: e.t || "", k: e.k || "" }),
             video: parseStreamUrl(liveVideo) || null,
         };
     };
@@ -8115,7 +8124,10 @@ function DugoutScorecard() {
                     React.createElement("h3", null, "Sacrifice"),
                     React.createElement("p", null, "Batter is out with no at-bat charged \u2014 unless an error lets the batter reach."),
                     React.createElement("div", { className: "btnrow" },
-                        React.createElement("button", { className: "dg hit", onClick: () => { setSacMenu(false); openFieldOne("Infield hit", "Tap the infielder the ball went to.", (pos) => playHit(1, "single", pos, false, true)); } }, "Infield hit \u2014 runners hold"),
+                        React.createElement("button", { className: "dg hit", onClick: () => { setSacMenu(false); openFieldOne("Infield hit \u2014 runners hold", "Tap the infielder the ball went to.", (pos) => playHit(1, "infield single", pos, false, true)); } }, "Infield hit \u00b7 hold"),
+                        React.createElement("button", { className: "dg hit", onClick: () => { setSacMenu(false); openFieldOne("Infield hit \u2014 runners advance", "Tap the infielder the ball went to.", (pos) => playHit(1, "infield single", pos, false, false)); } }, "Infield hit \u00b7 advance"),
+                        React.createElement("button", { className: "dg hit", onClick: () => { setSacMenu(false); openFieldOne("Bunt single \u2014 runners hold", "Tap the fielder who played it.", (pos) => playHit(1, "bunt single", pos, false, true)); } }, "Bunt single \u00b7 hold"),
+                        React.createElement("button", { className: "dg hit", onClick: () => { setSacMenu(false); openFieldOne("Bunt single \u2014 runners advance", "Tap the fielder who played it.", (pos) => playHit(1, "bunt single", pos, false, false)); } }, "Bunt single \u00b7 advance"),
                         React.createElement("button", { className: "dg outb", onClick: () => { setSacMenu(false); openFieldOne("Sacrifice fly", "Tap the fielder who caught it.", (pos) => playSac("fly", "F" + pos)); }, disabled: !game.bases.third }, "Sac fly \u2014 runner on 3rd scores (RBI)"),
                         React.createElement("button", { className: "dg outb", onClick: () => { setSacMenu(false); openFieldSeq("Sacrifice bunt", "Tap the throw in order (e.g. 1-3) \u2014 or Skip.", (note) => playSac("bunt", note)); } }, "Sac bunt \u2014 runners advance"),
                         React.createElement("button", { className: "dg", onClick: () => { setSacMenu(false); openFieldOne("Sacrifice + error", "Tap the fielder who made the error.", (pos) => playSacError("bunt", pos)); } }, "Error on the play \u2014 batter safe, runners take extra base"),
