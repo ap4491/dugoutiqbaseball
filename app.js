@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "203"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "204"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -3135,6 +3135,10 @@ function DugoutScorecard() {
             const totalRuns = sacRuns + errRuns;
             const tail = `${kind === "fly" ? "sacrifice fly" : "sacrifice bunt"}${sacRuns ? ", run scores" : ""} — ${enote}${errRuns ? `, ${errRuns} more score${errRuns > 1 ? "" : "s"}` : ""}, batter safe`;
             closePA(g, `sac ${kind === "fly" ? "fly" : "bunt"} — ${enote}${totalRuns ? `, ${totalRuns} score${totalRuns > 1 ? "" : "s"}` : ""}, batter safe`, `${name}: ${tail}`, "SACERR");
+            // the error keeps the play alive — the run and the batter's extra base
+            // belong on this line, not as events after it
+            if (g.bases.first || g.bases.second || g.bases.third)
+                g.openPlay = lastPAIdx(g);
             nextBatter(g);
         });
         setSacMenu(false);
@@ -4109,7 +4113,7 @@ function DugoutScorecard() {
                     amendPA(g, g.openPlay, `${who} scores`, `${who} scores on the play`);
                 }
                 else {
-                    logDuringPA(g, `${who} scores from ${baseLabel(from)} (steal/PB/WP — no RBI)`);
+                    foldOrLog(g, `${who} scores`, `${who} scores from ${baseLabel(from)}`, `${who} scores from ${baseLabel(from)} (no RBI)`);
                 }
             });
             return;
@@ -4131,7 +4135,7 @@ function DugoutScorecard() {
                 amendPA(g, g.openPlay, `${who} takes ${baseLabel(to)}`, `${who} takes ${baseLabel(to)} on the play`);
             }
             else {
-                logPlay(g, `${who}: ${baseLabel(from)} → ${baseLabel(to)}`);
+                foldOrLog(g, `${who} to ${baseLabel(to)}`, `${who} takes ${baseLabel(to)} on the play`, `${who}: ${baseLabel(from)} → ${baseLabel(to)}`);
             }
         });
     };
@@ -4245,7 +4249,9 @@ function DugoutScorecard() {
             g.bases[base] = false;
             addRuns(g, 1, cause === "wp" ? "wp" : cause === "pb" ? "pb" : "advance");
             const tag = cause === "wp" ? "wild pitch" : cause === "pb" ? "passed ball" : "no RBI";
-            logDuringPA(g, `${who} scores from ${baseLabel(base)} (${tag}${cause ? " — no RBI" : ""})`);
+            foldOrLog(g, `${who} scores${cause ? ` (${tag})` : ""}`,
+                `${who} scores from ${baseLabel(base)}`,
+                `${who} scores from ${baseLabel(base)} (${tag}${cause ? " — no RBI" : ""})`);
         });
         setBaseMenu(null);
     };
