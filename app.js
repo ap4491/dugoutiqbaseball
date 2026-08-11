@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "204"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "205"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -3010,14 +3010,17 @@ function DugoutScorecard() {
                 addRuns(g, runs, "fc");
                 if (runs)
                     amendPA(g, lastPAIdx(g), runs === 1 ? "run forced in" : `${runs} runs forced in`, "Run forced in on the play");
+                // Both must be set BEFORE nextBatter — it advances the batting
+                // pointer, and the RBI belongs to the batter who just hit.
+                // 9.04(a)(2): a run scoring on a fielder's choice is an RBI.
+                {
+                    const fcIdx = lastPAIdx(g);
+                    if (g.bases.first || g.bases.second || g.bases.third) {
+                        g.openPlay = fcIdx;
+                        g.openHit = { b: bIdx, log: fcIdx };
+                    }
+                }
                 nextBatter(g);
-                // runners still on -> a follow-up drag or error-advance folds
-                // onto this FC's play-by-play line instead of a separate event
-                if (g.bases.first || g.bases.second || g.bases.third)
-                    g.openPlay = lastPAIdx(g);
-                // 9.04(a)(2) — a run scoring on a fielder's choice or a
-                // sacrifice is an RBI, same as on a hit.
-                g.openHit = { b: bIdx, log: lastPAIdx(g) };
             }
             else
                 advanceOrder(g);
@@ -3043,13 +3046,16 @@ function DugoutScorecard() {
             st.rbi += runs;
             const tail = `${fnote ? " " + fnote : ""} — all safe${runs ? ` — ${runs} score${runs > 1 ? "" : "s"}` : ""}`;
             closePA(g, `fielder's choice${tail}`, `${name}: fielder's choice${tail}`, "FC");
-            // keep the drag/advance window open so runner movement on this
-            // play folds onto its line rather than spawning separate events
-            if (g.bases.first || g.bases.second || g.bases.third)
-                g.openPlay = lastPAIdx(g);
-                // 9.04(a)(2) — a run scoring on a fielder's choice or a
-                // sacrifice is an RBI, same as on a hit.
-                g.openHit = { b: bIdx, log: lastPAIdx(g) };
+            // Both must be set BEFORE nextBatter — it advances the batting
+            // pointer, and the RBI belongs to the batter who just hit.
+            // 9.04(a)(2): a run scoring on a fielder's choice is an RBI.
+            {
+                const fcIdx = lastPAIdx(g);
+                if (g.bases.first || g.bases.second || g.bases.third) {
+                    g.openPlay = fcIdx;
+                    g.openHit = { b: bIdx, log: fcIdx };
+                }
+            }
             nextBatter(g);
         });
         setFcMenu(false);
@@ -3075,14 +3081,17 @@ function DugoutScorecard() {
                 st.rbi += runs; // productive out — RBI credited
                 if (runs)
                     amendPA(g, lastPAIdx(g), runs === 1 ? "run scores — RBI" : `${runs} score — RBI`, "Run scores on the play");
-                // keep the drag/advance window open so runner movement on this
-            // play folds onto its line rather than spawning separate events
-            if (g.bases.first || g.bases.second || g.bases.third)
-                g.openPlay = lastPAIdx(g);
-                // 9.04(a)(2) — a run scoring on a fielder's choice or a
-                // sacrifice is an RBI, same as on a hit.
-                g.openHit = { b: bIdx, log: lastPAIdx(g) };
-            nextBatter(g);
+                // Both must be set BEFORE nextBatter — it advances the batting
+                // pointer, and the RBI belongs to the batter who just hit.
+                // 9.04(a)(2): a run scoring on a fielder's choice is an RBI.
+                {
+                    const fcIdx = lastPAIdx(g);
+                    if (g.bases.first || g.bases.second || g.bases.third) {
+                        g.openPlay = fcIdx;
+                        g.openHit = { b: bIdx, log: fcIdx };
+                    }
+                }
+                nextBatter(g);
             }
             else
                 advanceOrder(g);
