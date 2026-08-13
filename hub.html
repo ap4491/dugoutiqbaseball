@@ -55,6 +55,7 @@
     color:var(--powder); font-size:14px; line-height:1.55; text-align:center; }
   .foot{ margin:22px 16px 30px; color:var(--powder); font-size:11px; letter-spacing:.1em;
     text-transform:uppercase; text-align:center; opacity:.75; }
+  .s.next{ color:var(--gold,#F5C518); }
 </style>
 </head>
 <body>
@@ -93,19 +94,22 @@
         <div class="sc">${Number(runs) || 0}</div>
         ${winner ? '<div class="win"></div>' : ""}
       </div>`;
-    // manual results have no play-by-play, so they don't open anything
-    const tag = g.manual ? "div" : "a";
-    const href = g.manual ? "" : ` href="spectate.html?g=${encodeURIComponent(g.code)}"`;
+    // manual results and unplayed fixtures open nothing
+    const inert = g.manual || g.sched;
+    const tag = inert ? "div" : "a";
+    const href = inert ? "" : ` href="spectate.html?g=${encodeURIComponent(g.code)}"`;
     return `
-      <${tag} class="g${g.manual ? " manual" : ""}"${href}>
+      <${tag} class="g${inert ? " manual" : ""}"${href}>
         <div class="teams">
-          ${team(g.away, g.ac, g.sA, aWin, g.over && !aWin)}
-          ${team(g.home, g.hc, g.sH, hWin, g.over && !hWin)}
+          ${team(g.away, g.ac, g.sched ? "\u2014" : g.sA, aWin, g.over && !aWin)}
+          ${team(g.home, g.hc, g.sched ? "\u2014" : g.sH, hWin, g.over && !hWin)}
         </div>
         <div class="state">
-          ${live
-            ? `<div class="s live">Live</div><div class="meta">${half} ${ORD(g.inning || 1)}</div>`
-            : `<div class="s final">Final</div>${g.manual ? "" : `<div class="meta">${(g.linescore || []).length} inn</div>`}`}
+          ${g.sched
+            ? `<div class="s next">${esc(timeLabel(g.gtime) || "Upcoming")}</div>`
+            : live
+              ? `<div class="s live">Live</div><div class="meta">${half} ${ORD(g.inning || 1)}</div>`
+              : `<div class="s final">Final</div>${g.manual ? "" : `<div class="meta">${(g.linescore || []).length} inn</div>`}`}
           ${g.manual ? `<div class="meta">score only</div>` : ""}
           ${[timeLabel(g.gtime), g.gfield].filter(Boolean).length
             ? `<div class="meta">${esc([timeLabel(g.gtime), g.gfield].filter(Boolean).join(" \u00b7 "))}</div>` : ""}
@@ -150,7 +154,8 @@
     days.forEach((d) => {
       html += `<div class="sec">${esc(dayLabel(d))}</div>`;
       byDay[d].sort((a, b) => {
-        if (!!a.over !== !!b.over) return a.over ? 1 : -1;
+        const rank = (x) => (x.sched ? 2 : x.over ? 1 : 0); // live, final, then upcoming
+        if (rank(a) !== rank(b)) return rank(a) - rank(b);
         return String(a.gtime || "").localeCompare(String(b.gtime || ""));
       }).forEach((g) => { html += card(g); });
     });

@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "209"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "211"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1012,6 +1012,17 @@ const loadGames = () => { try {
 catch (_a) {
     return [];
 } };
+const SCHED_KEY = "dugoutiq-schedule-v1";
+const loadSchedule = () => { try {
+    return JSON.parse(localStorage.getItem(SCHED_KEY) || "[]") || [];
+}
+catch (_s) {
+    return [];
+} };
+const persistSchedule = (list) => { try {
+    localStorage.setItem(SCHED_KEY, JSON.stringify(list));
+}
+catch (_s) { } };
 const persistGames = (list) => { try {
     localStorage.setItem(GAMES_KEY, JSON.stringify(list));
 }
@@ -1521,6 +1532,114 @@ function DugoutScorecard() {
             });
         };
         replayTimer.current = setTimeout(tick, 500);
+    };
+    // Publish a finished, saved game to the hub. Rebuilds the same snapshot the
+    // live push sends, from the record rather than the in-progress game — so a
+    // tournament that's already over can be put up, and finished games stay
+    // openable with their full play-by-play rather than just a score.
+    const publishSavedGame = (rec) => {
+        const g = rec && rec.snapshot && rec.snapshot.game;
+        if (!g)
+            return null;
+        const code = rec.liveCode || ("G" + Math.random().toString(36).slice(2, 7).toUpperCase());
+        const nm = (side) => ((rec[side] && rec[side].name) || "").trim() || (side === "away" ? "Visitors" : "Home");
+        const sum = (side) => (g.linescore || []).reduce((t, r) => t + (r[side] || 0), 0);
+        const lastHalf = g.half === "bottom" ? "home" : "away";
+        const snap = {
+            v: 1, av: APP_VERSION, over: true,
+            away: { name: nm("away"), abbr: autoAbbr(nm("away")), runs: rec.awayRuns != null ? rec.awayRuns : sum("away"),
+                hits: (g.hits && g.hits.away) || 0, errors: (g.errors && g.errors.away) || 0,
+                color: (rec.away && rec.away.color) || "", logo: (rec.away && rec.away.logo) || "" },
+            home: { name: nm("home"), abbr: autoAbbr(nm("home")), runs: rec.homeRuns != null ? rec.homeRuns : sum("home"),
+                hits: (g.hits && g.hits.home) || 0, errors: (g.errors && g.errors.home) || 0,
+                color: (rec.home && rec.home.color) || "", logo: (rec.home && rec.home.logo) || "" },
+            inning: g.inning || (g.linescore || []).length || 1,
+            half: g.half || "bottom",
+            balls: 0, strikes: 0, outs: 3,
+            bases: { first: false, second: false, third: false },
+            batter: "", onDeck: "", pitches: 0, pitcher: "",
+            lastPlay: "Final",
+            ev: rec.eventName || (g.eventName || ""),
+            gdate: rec.date || g.date || "",
+            gtime: rec.gameTime || "",
+            gfield: rec.fieldName || "",
+            linescore: (g.linescore || []).map((r) => ({ away: r.away, home: r.home })),
+            log: (g.log || []).slice(-600).map((e) => e.type === "pa"
+                ? {
+                    p: 1, i: e.i, h: e.h, b: jerseyForLog(g.lineup || { away: [], home: [] }, e), r: e.result || "",
+                    q: (e.seq || []).join(" "),
+                    m: (e.mid || []).map((x) => (typeof x === "string"
+                        ? { t: x, at: (e.seq || []).length }
+                        : { t: x.t, at: x.at == null ? (e.seq || []).length : x.at })),
+                }
+                : { i: e.i, h: e.h, t: e.t || "", k: e.k || "" }),
+            video: null,
+        };
+        void lastHalf;
+        fetch(LIVE_ENDPOINT, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ code, list: true, snap }),
+        }).catch(() => { });
+        // remember the code so re-publishing updates the same card
+        if (!rec.liveCode) {
+            setGames((list) => {
+                const next = list.map((r) => (r.id === rec.id ? Object.assign({}, r, { liveCode: code }) : r));
+                persistGames(next);
+                return next;
+            });
+        }
+        return code;
+    };
+    /* --- tournament schedule ------------------------------------------------
+       Fixtures are published as "upcoming" cards so parents see the whole
+       weekend before a pitch is thrown. Each carries its own code; when you
+       score that fixture the live game publishes under the SAME code, so the
+       card turns from upcoming to live to final in place rather than doubling.
+    ------------------------------------------------------------------------ */
+    const saveSchedule = (list) => {
+        setSchedule(list);
+        persistSchedule(list);
+    };
+    const publishFixture = (row, remove) => {
+        if (!row || !row.code)
+            return;
+        fetch(LIVE_ENDPOINT, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(remove
+                ? { code: row.code, list: false, snap: { v: APP_VERSION, sched: true } }
+                : {
+                    code: row.code, list: true,
+                    snap: {
+                        v: APP_VERSION, over: false, sched: true,
+                        away: { name: (row.away || "TBD").trim(), runs: 0, color: "" },
+                        home: { name: (row.home || "TBD").trim(), runs: 0, color: "" },
+                        inning: 0, half: "top", linescore: [], log: [],
+                        ev: (row.event || "").trim(), gdate: row.date || "",
+                        gtime: row.time || "", gfield: (row.field || "").trim(),
+                    },
+                }),
+        }).catch(() => { });
+    };
+    const publishAllFixtures = () => {
+        schedule.forEach((r) => { if (!r.played) publishFixture(r, false); });
+    };
+    // Start scoring a fixture: pre-fill the setup and adopt its code, so the
+    // hub card becomes this live game instead of a second entry appearing.
+    const scoreFixture = (row) => {
+        setTeamName("away", row.away || "Visitors");
+        setTeamName("home", row.home || "Home");
+        setGameDate(row.date || gameDate);
+        setGameTime(row.time || "");
+        setFieldName(row.field || "");
+        if (row.event)
+            setEventName(row.event);
+        setLiveCode(row.code);
+        setLiveOn(true);
+        setLiveList(true);
+        saveSchedule(schedule.map((r) => (r.id === row.id ? Object.assign({}, r, { played: true }) : r)));
+        setSchedOpen(false);
     };
     // Save a game you didn't score: final score for the standings, plus the
     // pitchers and counts from the field's board so the arms board stays whole.
@@ -4148,6 +4267,8 @@ function DugoutScorecard() {
     const [tourneyOpen, setTourneyOpen] = useState(false); // tournament pitcher availability board
     const [resultForm, setResultForm] = useState(null); // manual result entry (games you didn't score)
     const [editDate, setEditDate] = useState(null); // {id, date} while correcting a saved game's date
+    const [schedule, setSchedule] = useState(() => loadSchedule()); // tournament fixtures
+    const [schedOpen, setSchedOpen] = useState(false);
     const [errKind, setErrKind] = useState(null); // {title, onPick} — fielding or throwing
     const replayTimer = useRef(null);
     const demoTimer = useRef(null);
@@ -7355,6 +7476,16 @@ function DugoutScorecard() {
                             pitchers: [{ side: "away", name: "", pitches: "" }, { side: "home", name: "", pitches: "" }],
                             share: !!(eventName || "").trim(),
                         }) }, "\u002B Add a result (game you didn\u2019t score)"),
+                    React.createElement("button", { className: "dg ghost", style: { width: "100%", marginBottom: 10 }, onClick: () => setSchedOpen(true) }, "\uD83D\uDCC5 Tournament schedule"),
+                    eventList().length > 0 && React.createElement("div", { className: "limitrow", style: { marginBottom: 10 } },
+                        React.createElement("select", { className: "dg-sel", value: seasonEvent, onChange: (e) => setSeasonEvent(e.target.value), "aria-label": "Event to post" },
+                            React.createElement("option", { value: "all" }, "Pick an event\u2026"),
+                            eventList().map((n) => React.createElement("option", { key: n, value: n }, n))),
+                        React.createElement("button", { className: "dg ghost", disabled: seasonEvent === "all", onClick: () => {
+                                const list = games.filter((r) => lc(recEvent(r)) === lc(seasonEvent) && !r.resultOnly);
+                                list.forEach((r) => publishSavedGame(r));
+                                alert(`Posted ${list.length} game${list.length === 1 ? "" : "s"} to the hub.`);
+                            } }, "Post event to hub")),
                     React.createElement("div", { className: "plog", style: { textAlign: "left" } },
                         games.length === 0 && (React.createElement("div", { className: "plog-row", style: { opacity: 0.7, padding: "8px 4px" } }, "No saved games yet.")),
                         // Always newest game DATE first. The stored array is in save
@@ -7391,6 +7522,7 @@ function DugoutScorecard() {
                                         React.createElement("button", { className: "replay-btn", onClick: () => setGameDateFor(gm.id, editDate.date), title: "Save date" }, "\u2713"),
                                         React.createElement("button", { className: "rm", onClick: () => setEditDate(null), "aria-label": "Cancel" }, "\u00D7"))
                                     : React.createElement("button", { className: "replay-btn", onClick: () => setEditDate({ id: gm.id, date: (gm.date || new Date(gm.savedAt).toISOString().slice(0, 10)) }), title: "Correct the date", "aria-label": "Edit date" }, "\u270E"),
+                                !gm.resultOnly && React.createElement("button", { className: "replay-btn", onClick: () => { const c = publishSavedGame(gm); if (c) alert(`Posted to the games hub.\n\nDirect link:\n${location.origin}/spectate.html?g=${c}`); }, title: gm.liveCode ? "Update on the games hub" : "Post to the games hub", "aria-label": "Post to hub" }, gm.liveCode ? "\u21BB" : "\u2191"),
                                 confirmGameDel === gm.id ? (React.createElement("span", { style: { display: "inline-flex", gap: 6, alignItems: "center" } },
                                     React.createElement("button", { onClick: () => { deleteGame(gm.id); setConfirmGameDel(null); }, style: { background: "#B91C1C", color: "#fff", border: "none", borderRadius: 6, padding: "5px 10px", fontSize: 13, fontWeight: 700, cursor: "pointer" } }, "Delete"),
                                     React.createElement("button", { onClick: () => setConfirmGameDel(null), style: { background: "transparent", color: "var(--powder)", border: "1px solid var(--line)", borderRadius: 6, padding: "5px 10px", fontSize: 13, cursor: "pointer" } }, "Keep"))) : (React.createElement("span", { style: { display: "inline-flex", gap: 6, alignItems: "center" } },
@@ -8113,6 +8245,37 @@ function DugoutScorecard() {
                         React.createElement("button", { className: "dg", onClick: () => { const f = errKind.onPick; setErrKind(null); f("t"); } }, "Throwing \u2014 bad throw"),
                         React.createElement("button", { className: "dg ghost", onClick: () => { const f = errKind.onPick; setErrKind(null); f(""); } }, "Skip \u2014 just E"),
                         React.createElement("button", { className: "dg ghost", onClick: () => setErrKind(null) }, "Cancel"))))),
+            schedOpen && (() => {
+                const rows = schedule.slice().sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
+                const upd = (id, k, v) => saveSchedule(schedule.map((r) => (r.id === id ? Object.assign({}, r, { [k]: v }) : r)));
+                return (React.createElement("div", { className: "modal-back", onClick: () => setSchedOpen(false) },
+                    React.createElement("div", { className: "modal set-modal", onClick: (e) => e.stopPropagation() },
+                        React.createElement("h3", null, "Tournament schedule"),
+                        React.createElement("p", { style: { textTransform: "none", letterSpacing: 0 } }, "Fixtures show on the games hub as upcoming, then turn live and final as you score them."),
+                        rows.length === 0 && React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--powder)" } }, "No games yet \u2014 add the first below."),
+                        rows.map((r) => React.createElement("div", { key: r.id, style: { border: "1px solid var(--line)", borderRadius: 12, padding: 10, marginBottom: 8, opacity: r.played ? .6 : 1 } },
+                            React.createElement("div", { className: "limitrow" },
+                                React.createElement("input", { className: "dg-in", placeholder: "Visitor", value: r.away || "", onChange: (e) => upd(r.id, "away", e.target.value), "aria-label": "Visiting team" }),
+                                React.createElement("input", { className: "dg-in", placeholder: "Home", value: r.home || "", onChange: (e) => upd(r.id, "home", e.target.value), "aria-label": "Home team" })),
+                            React.createElement("div", { className: "limitrow" },
+                                React.createElement("input", { className: "dg-in", type: "date", value: r.date || "", onChange: (e) => upd(r.id, "date", e.target.value), "aria-label": "Date" }),
+                                React.createElement("input", { className: "dg-in", type: "time", value: r.time || "", onChange: (e) => upd(r.id, "time", e.target.value), "aria-label": "Time" })),
+                            React.createElement("div", { className: "limitrow" },
+                                React.createElement("input", { className: "dg-in", placeholder: "Field", value: r.field || "", onChange: (e) => upd(r.id, "field", e.target.value), "aria-label": "Field" }),
+                                React.createElement("span", { className: "limithint" }, r.played ? "scored" : "upcoming")),
+                            React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr 44px", marginTop: 6 } },
+                                React.createElement("button", { className: "dg hit", disabled: !!game && !game.over, onClick: () => scoreFixture(r), title: game && !game.over ? "Finish the current game first" : "" }, "Score this"),
+                                React.createElement("button", { className: "dg ghost", onClick: () => publishFixture(r, false) }, "Publish"),
+                                React.createElement("button", { className: "rm", onClick: () => { publishFixture(r, true); saveSchedule(schedule.filter((x) => x.id !== r.id)); }, "aria-label": "Remove fixture" }, "\u00D7")))),
+                        React.createElement("button", { className: "dg ghost", style: { width: "100%", marginTop: 4 }, onClick: () => saveSchedule(schedule.concat([{
+                                id: Date.now() + Math.floor(Math.random() * 999),
+                                code: "S" + Math.random().toString(36).slice(2, 7).toUpperCase(),
+                                away: "", home: "", date: gameDate, time: "", field: "",
+                                event: (eventName || "").trim(), played: false,
+                            }])) }, "+ Add a game"),
+                        React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr", marginTop: 10 } },
+                            React.createElement("button", { className: "dg hit", onClick: publishAllFixtures }, "Publish all to hub"),
+                            React.createElement("button", { className: "dg ghost", onClick: () => setSchedOpen(false) }, "Close"))))); })(),
             resultForm && (() => {
                 const f = resultForm;
                 const set = (k, v) => setResultForm(Object.assign({}, f, { [k]: v }));
