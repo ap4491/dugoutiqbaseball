@@ -42,6 +42,8 @@ const publicEntry = (code, snap) => ({
   gfield: String(snap.gfield || "").slice(0, 24),
   // a score entered by hand — there is no play-by-play behind it
   manual: !!snap.manual,
+  // a fixture published before it's played — no score yet
+  sched: !!snap.sched,
   updated: Date.now(),
 });
 
