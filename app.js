@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "211"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "212"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1012,6 +1012,17 @@ const loadGames = () => { try {
 catch (_a) {
     return [];
 } };
+const POOLS_KEY = "dugoutiq-pools-v1";
+const loadPools = () => { try {
+    return JSON.parse(localStorage.getItem(POOLS_KEY) || "{}") || {};
+}
+catch (_p) {
+    return {};
+} };
+const persistPools = (m) => { try {
+    localStorage.setItem(POOLS_KEY, JSON.stringify(m));
+}
+catch (_p) { } };
 const SCHED_KEY = "dugoutiq-schedule-v1";
 const loadSchedule = () => { try {
     return JSON.parse(localStorage.getItem(SCHED_KEY) || "[]") || [];
@@ -1537,6 +1548,17 @@ function DugoutScorecard() {
     // live push sends, from the record rather than the in-progress game — so a
     // tournament that's already over can be put up, and finished games stay
     // openable with their full play-by-play rather than just a score.
+    const poolOf = (name) => (pools[lc(name)] || "").trim().toUpperCase();
+    const setPoolFor = (name, val) => {
+        const next = Object.assign({}, pools);
+        const k = lc(name);
+        if ((val || "").trim())
+            next[k] = val.trim().toUpperCase();
+        else
+            delete next[k];
+        setPools(next);
+        persistPools(next);
+    };
     const publishSavedGame = (rec) => {
         const g = rec && rec.snapshot && rec.snapshot.game;
         if (!g)
@@ -1560,6 +1582,8 @@ function DugoutScorecard() {
             batter: "", onDeck: "", pitches: 0, pitcher: "",
             lastPlay: "Final",
             ev: rec.eventName || (g.eventName || ""),
+            apool: poolOf(nm("away")),
+            hpool: poolOf(nm("home")),
             gdate: rec.date || g.date || "",
             gtime: rec.gameTime || "",
             gfield: rec.fieldName || "",
@@ -1616,7 +1640,9 @@ function DugoutScorecard() {
                         away: { name: (row.away || "TBD").trim(), runs: 0, color: "" },
                         home: { name: (row.home || "TBD").trim(), runs: 0, color: "" },
                         inning: 0, half: "top", linescore: [], log: [],
-                        ev: (row.event || "").trim(), gdate: row.date || "",
+                        ev: (row.event || "").trim(),
+                        apool: poolOf(row.away || ""), hpool: poolOf(row.home || ""),
+                        gdate: row.date || "",
                         gtime: row.time || "", gfield: (row.field || "").trim(),
                     },
                 }),
@@ -1699,7 +1725,8 @@ function DugoutScorecard() {
                         away: { name: rec.away.name, runs: rec.awayRuns, color: "" },
                         home: { name: rec.home.name, runs: rec.homeRuns, color: "" },
                         inning: 1, half: "top", linescore: line,
-                        ev: rec.eventName, gdate: rec.date, gtime: rec.gameTime, gfield: rec.fieldName,
+                        ev: rec.eventName, apool: poolOf(rec.away.name), hpool: poolOf(rec.home.name),
+                        gdate: rec.date, gtime: rec.gameTime, gfield: rec.fieldName,
                         // no log and no lineup — there is nothing to replay
                         log: [], manual: true,
                     },
@@ -4269,6 +4296,7 @@ function DugoutScorecard() {
     const [editDate, setEditDate] = useState(null); // {id, date} while correcting a saved game's date
     const [schedule, setSchedule] = useState(() => loadSchedule()); // tournament fixtures
     const [schedOpen, setSchedOpen] = useState(false);
+    const [pools, setPools] = useState(() => loadPools()); // { "team name": "A" }
     const [errKind, setErrKind] = useState(null); // {title, onPick} — fielding or throwing
     const replayTimer = useRef(null);
     const demoTimer = useRef(null);
@@ -5040,6 +5068,8 @@ function DugoutScorecard() {
             lastPlay: g.lastPlay || "",
             // tournament context for the hub — team-level only, no player names
             ev: (game && game.eventName) || eventName || "",
+            apool: poolOf(nm("away")),
+            hpool: poolOf(nm("home")),
             gdate: (game && game.date) || gameDate || "",
             gtime: (game && game.gameTime) || gameTime || "",
             gfield: (game && game.fieldName) || fieldName || "",
@@ -8267,6 +8297,22 @@ function DugoutScorecard() {
                                 React.createElement("button", { className: "dg hit", disabled: !!game && !game.over, onClick: () => scoreFixture(r), title: game && !game.over ? "Finish the current game first" : "" }, "Score this"),
                                 React.createElement("button", { className: "dg ghost", onClick: () => publishFixture(r, false) }, "Publish"),
                                 React.createElement("button", { className: "rm", onClick: () => { publishFixture(r, true); saveSchedule(schedule.filter((x) => x.id !== r.id)); }, "aria-label": "Remove fixture" }, "\u00D7")))),
+                        (() => {
+                            const teams2 = [];
+                            schedule.forEach((r) => ["away", "home"].forEach((k) => {
+                                const n = (r[k] || "").trim();
+                                if (n && !teams2.some((t) => lc(t) === lc(n)))
+                                    teams2.push(n);
+                            }));
+                            if (!teams2.length)
+                                return null;
+                            return React.createElement("div", { style: { marginTop: 12 } },
+                                React.createElement("div", { className: "sit-sec" }, "Pools"),
+                                React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--powder)", fontSize: 11, margin: "0 0 6px" } }, "Optional \u2014 leave blank for a single table. Republish after changing."),
+                                teams2.map((t) => React.createElement("div", { className: "limitrow", key: t, style: { gridTemplateColumns: "1fr 64px" } },
+                                    React.createElement("span", { style: { fontSize: 14, alignSelf: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, t),
+                                    React.createElement("input", { className: "dg-in", placeholder: "A", maxLength: 2, value: poolOf(t), onChange: (e) => setPoolFor(t, e.target.value), "aria-label": `Pool for ${t}` }))));
+                        })(),
                         React.createElement("button", { className: "dg ghost", style: { width: "100%", marginTop: 4 }, onClick: () => saveSchedule(schedule.concat([{
                                 id: Date.now() + Math.floor(Math.random() * 999),
                                 code: "S" + Math.random().toString(36).slice(2, 7).toUpperCase(),

@@ -56,6 +56,18 @@
   .foot{ margin:22px 16px 30px; color:var(--powder); font-size:11px; letter-spacing:.1em;
     text-transform:uppercase; text-align:center; opacity:.75; }
   .s.next{ color:var(--gold,#F5C518); }
+  .tabs{ display:flex; gap:20px; margin-top:11px; }
+  .tabs button{ background:none; border:0; padding:0 0 9px; cursor:pointer;
+    font-family:inherit; font-size:14.5px; font-weight:700; color:var(--muted);
+    border-bottom:3px solid transparent; }
+  .tabs button.on{ color:#fff; border-bottom-color:var(--gold,#F5C518); }
+  table.stand{ width:100%; border-collapse:collapse; margin:2px 0 14px; }
+  table.stand th, table.stand td{ padding:9px 12px; font-size:14px; text-align:right;
+    font-variant-numeric:tabular-nums; }
+  table.stand th{ font-size:11px; letter-spacing:.13em; text-transform:uppercase;
+    color:var(--muted); border-bottom:1px solid var(--line); }
+  table.stand td.l, table.stand th.l{ text-align:left; }
+  table.stand tbody tr:nth-child(odd){ background:rgba(255,255,255,.03); }
 </style>
 </head>
 <body>
@@ -63,6 +75,10 @@
 <div class="top">
   <h1 id="title">Games</h1>
   <div class="sub"><span class="dot" id="dot"></span><span id="status">Loading…</span></div>
+  <div class="tabs" id="tabs">
+    <button data-v="sched" class="on">Schedule</button>
+    <button data-v="stand">Standings</button>
+  </div>
 </div>
 
 <div id="content"><div class="msg">Loading games…</div></div>
@@ -135,6 +151,58 @@
     const ap = h >= 12 ? "PM" : "AM"; h = h % 12; if (!h) h = 12;
     return h + ":" + m + " " + ap;
   }
+  let view = "sched";
+  function standings(list){
+    // only completed games count; a game in progress has no result yet
+    const done = list.filter((g) => g.over && !g.sched);
+    const T = {};
+    const get = (name, pool) => {
+      const k = String(name || "").toLowerCase();
+      if (!T[k]) T[k] = { name: name || "?", pool: (pool || "").toUpperCase(), w: 0, l: 0, t: 0, rf: 0, ra: 0 };
+      else if (!T[k].pool && pool) T[k].pool = String(pool).toUpperCase();
+      return T[k];
+    };
+    done.forEach((g) => {
+      const a = get(g.away, g.apool), h = get(g.home, g.hpool);
+      const sA = Number(g.sA || 0), sH = Number(g.sH || 0);
+      a.rf += sA; a.ra += sH; h.rf += sH; h.ra += sA;
+      if (sA > sH) { a.w++; h.l++; }
+      else if (sH > sA) { h.w++; a.l++; }
+      else { a.t++; h.t++; }
+    });
+    const rows = Object.keys(T).map((k) => T[k]);
+    const pools = {};
+    rows.forEach((r) => { const p = r.pool || ""; (pools[p] = pools[p] || []).push(r); });
+    Object.keys(pools).forEach((p) => pools[p].sort((x, y) => {
+      const px = x.w + x.l + x.t ? x.w / (x.w + x.l + x.t) : 0;
+      const py = y.w + y.l + y.t ? y.w / (y.w + y.l + y.t) : 0;
+      if (px !== py) return py - px;
+      return (y.rf - y.ra) - (x.rf - x.ra);   // then run differential
+    }));
+    return pools;
+  }
+  function renderStandings(list){
+    const pools = standings(list);
+    const keys = Object.keys(pools).sort();
+    if (!keys.length || !keys.some((k) => pools[k].length)){
+      $("content").innerHTML = '<div class="msg">No completed games yet.</div>';
+      return;
+    }
+    let html = "";
+    keys.forEach((p) => {
+      if (keys.length > 1 || p) html += `<div class="sec">${p ? "Pool " + esc(p) : "Standings"}</div>`;
+      html += '<table class="stand"><thead><tr><th class="l">Team</th><th>W</th><th>L</th><th>RF</th><th>RA</th><th>DIFF</th></tr></thead><tbody>';
+      pools[p].forEach((r) => {
+        const d = r.rf - r.ra;
+        html += `<tr><td class="l">${esc(r.name)}</td><td>${r.w}</td><td>${r.l}${r.t ? "-" + r.t : ""}</td>`
+          + `<td>${r.rf}</td><td>${r.ra}</td><td>${d > 0 ? "+" + d : d}</td></tr>`;
+      });
+      html += "</tbody></table>";
+    });
+    html += '<div class="msg" style="padding:14px 20px;font-size:11.5px">Sorted by win percentage, then run differential. '
+      + 'Your tournament&rsquo;s own tiebreakers may differ.</div>';
+    $("content").innerHTML = html;
+  }
   function render(games){
     // ?event=NAME pins the hub to one tournament; matches the event the scorer
     // tagged the game with, not the team names
@@ -161,6 +229,24 @@
     });
     $("content").innerHTML = html;
   }
+  function drawTabs(){
+    const bar = document.getElementById("tabs");
+    if (!bar) return;
+    Array.prototype.forEach.call(bar.children, (b) => {
+      b.classList.toggle("on", b.getAttribute("data-v") === view);
+      b.onclick = () => { view = b.getAttribute("data-v"); if (lastGames) route(lastGames); };
+    });
+  }
+  let lastGames = null;
+  function route(games){
+    lastGames = games;
+    const list = evName
+      ? games.filter((g) => String(g.ev || "").toLowerCase().includes(evName.toLowerCase()))
+      : games;
+    drawTabs();
+    if (view === "stand") renderStandings(list);
+    else render(games);
+  }
 
   async function poll(){
     try{
@@ -168,7 +254,7 @@
       const d = await r.json();
       if (d && d.ok && Array.isArray(d.games)){
         lastUpdated = Date.now();
-        render(d.games);
+        route(d.games);
         const shown = evName
           ? d.games.filter((g) => String(g.ev || "").toLowerCase().includes(evName.toLowerCase()))
           : d.games;
