@@ -457,7 +457,7 @@ const locFromResult = (txt) => {
     const air = txt.match(/\b(?:IF|F|P|L)(\d)\b/);
     if (air)
         return Number(air[1]);
-    const err = txt.match(/\bE(\d)\b/); // E5
+    const err = txt.match(/\bE(\d)(?:th|f)?\b/); // E5, E5th (throwing), E5f (fielding)
     if (err)
         return Number(err[1]);
     const seq = txt.match(/\b(\d)(?:-\d)+\b/); // 6-3, 5-4-3
@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "207"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "209"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1562,6 +1562,31 @@ function DugoutScorecard() {
             persistGames(next);
             return next;
         });
+        // Publish it to the hub so the parent-facing schedule has no holes.
+        // Its own short code; the payload is team names and score only, matching
+        // what a scored game exposes — never any player names.
+        if (f.share) {
+            const code = "R" + Math.random().toString(36).slice(2, 7).toUpperCase();
+            const line = [];
+            const total = Math.max(Number(f.awayRuns) || 0, Number(f.homeRuns) || 0);
+            fetch(LIVE_ENDPOINT, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    code,
+                    list: true,
+                    snap: {
+                        v: APP_VERSION, over: true,
+                        away: { name: rec.away.name, runs: rec.awayRuns, color: "" },
+                        home: { name: rec.home.name, runs: rec.homeRuns, color: "" },
+                        inning: 1, half: "top", linescore: line,
+                        ev: rec.eventName, gdate: rec.date, gtime: rec.gameTime, gfield: rec.fieldName,
+                        // no log and no lineup — there is nothing to replay
+                        log: [], manual: true,
+                    },
+                }),
+            }).catch(() => { });
+        }
         setResultForm(null);
     };
     // Re-scoring an old game stamps it with today's date; this corrects it.
@@ -2345,13 +2370,21 @@ function DugoutScorecard() {
         return pl ? pl.name : "";
     };
     // charge an error to the fielding team, attributed to a fielder when known
-    const logError = (g, pos) => {
+    // `kind`: "t" = throwing error, "f" = fielding error, "" = unspecified.
+    // Both are one error against the fielder; the distinction is what the book
+    // says happened, and it's what tells you why runners took extra bases.
+    // Ask fielding-or-throwing first, then who. Skipping the kind still works —
+    // it just records a plain E, exactly as before.
+    const askError = (title, onPick) => setErrKind({ title, onPick });
+    const logError = (g, pos, kind) => {
         g.errors[fieldingSide] += 1;
         if (!g.errLog)
             g.errLog = [];
         const n = Number(pos);
-        g.errLog.push({ side: fieldingSide, pos: n || null, name: n ? fielderAt(g, fieldingSide, n) : "", inning: g.inning });
-        return n ? `E${n}` : "E";
+        g.errLog.push({ side: fieldingSide, pos: n || null, kind: kind || "",
+            name: n ? fielderAt(g, fieldingSide, n) : "", inning: g.inning });
+        const tag = kind === "t" ? "th" : kind === "f" ? "f" : "";
+        return n ? `E${n}${tag}` : "E";
     };
     const curPIdx = (g, side) => g.pitchers[side].length - 1;
     // Runners remember which pitcher put them on base ("rp"), so an inherited
@@ -2897,7 +2930,7 @@ function DugoutScorecard() {
             g.openPlay = g.log.length - 1;
         nextBatter(g);
     });
-    const playError = (pos) => mutate((g) => {
+    const playError = (pos, ek) => mutate((g) => {
         addPitch(g);
         g.openK = null;
         g.openHit = null;
@@ -2905,7 +2938,7 @@ function DugoutScorecard() {
         const st = g.stats[battingSide][g.batter[battingSide]];
         const name = currentBatterName();
         st.ab += 1;
-        const enote = logError(g, pos);
+        const enote = logError(g, pos, ek);
         cardMark(g, g.batter[battingSide], enote, 1);
         // a run forced home by the error is unearned — flag the runner so the
         // charge lands on whichever pitcher put him on base
@@ -3170,7 +3203,7 @@ function DugoutScorecard() {
     //     error didn't cause it.
     //  2. The ERROR: every other runner takes one extra base, the batter reaches
     //     first, and any run that scores ONLY because of the error is unearned.
-    const playSacError = (kind, pos) => {
+    const playSacError = (kind, pos, ek) => {
         mutate((g) => {
             addPitch(g);
             g.openK = null;
@@ -3180,7 +3213,7 @@ function DugoutScorecard() {
             const st = g.stats[battingSide][bIdx];
             const name = currentBatterName();
             st.sac = (st.sac || 0) + 1; // sacrifice credited, no at-bat
-            const enote = logError(g, pos);
+            const enote = logError(g, pos, ek);
             cardMark(g, bIdx, (kind === "fly" ? "SF" : "SAC") + " " + enote, 1);
             let sacRuns = 0; // scored on the sacrifice (earned, RBI)
             let errRuns = 0; // scored on the error (unearned, no RBI)
@@ -4115,6 +4148,7 @@ function DugoutScorecard() {
     const [tourneyOpen, setTourneyOpen] = useState(false); // tournament pitcher availability board
     const [resultForm, setResultForm] = useState(null); // manual result entry (games you didn't score)
     const [editDate, setEditDate] = useState(null); // {id, date} while correcting a saved game's date
+    const [errKind, setErrKind] = useState(null); // {title, onPick} — fielding or throwing
     const replayTimer = useRef(null);
     const demoTimer = useRef(null);
     const demoMode = (() => { try { return /[?&]demo\b/.test(window.location.search); } catch (_a) { return false; } })();
@@ -4480,7 +4514,7 @@ function DugoutScorecard() {
     };
     // Overthrow / errant pickoff: the runner advances a base and the fielding
     // team is charged an error (shows in the E column).
-    const advanceOnError = (base, pos) => {
+    const advanceOnError = (base, pos, ek) => {
         const who = runnerLabel(base);
         if (base === "third") {
             mutate((g) => {
@@ -4489,7 +4523,7 @@ function DugoutScorecard() {
                 creditRun(g, g.bases.third);
                 g.bases.third = false;
                 addRuns(g, 1, "error");
-                const enote = logError(g, pos);
+                const enote = logError(g, pos, ek);
                 foldOrLog(g, `${who} scores (${enote})`, `${who} scores from 3rd on the error`, `Throwing error \u2014 ${who} scores from 3rd (${enote})`);
             });
             setBaseMenu(null);
@@ -4505,7 +4539,7 @@ function DugoutScorecard() {
             g.bases[target] = g.bases[base];
             g.bases[base] = false;
             cardAdvance(g, g.bases[target], target === "second" ? 2 : 3);
-            const enote = logError(g, pos);
+            const enote = logError(g, pos, ek);
             foldOrLog(g, `${who} takes ${baseLabel(target)} (${enote})`, `${who} takes ${baseLabel(target)} on the error`, `Throw gets away \u2014 ${who} takes ${baseLabel(target)} (${enote})`);
         });
         setBaseMenu(null);
@@ -4883,6 +4917,11 @@ function DugoutScorecard() {
             pitches: fp ? fp.pitches || 0 : 0,
             pitcher: fp ? fp.name : "",
             lastPlay: g.lastPlay || "",
+            // tournament context for the hub — team-level only, no player names
+            ev: (game && game.eventName) || eventName || "",
+            gdate: (game && game.date) || gameDate || "",
+            gtime: (game && game.gameTime) || gameTime || "",
+            gfield: (game && game.fieldName) || fieldName || "",
             linescore: g.linescore.map((r) => ({ away: r.away, home: r.home })),
             // Full game so spectators can scroll to the first inning. Capped
             // high only as a runaway guard — a 9-inning game is ~150 entries,
@@ -7180,7 +7219,7 @@ function DugoutScorecard() {
                                 (!game.bases.first && !game.bases.second && !game.bases.third) }, "DP"),
                         React.createElement("button", { className: "dg outb", onClick: () => setFcMenu(true), disabled: !game.bases.first && !game.bases.second && !game.bases.third }, "FC"),
                         React.createElement("button", { className: "dg outb", onClick: () => setSacMenu(true), disabled: !game.bases.first && !game.bases.second && !game.bases.third }, "Sac"),
-                        React.createElement("button", { className: "dg", onClick: () => openFieldOne("Error", "Tap the fielder who made the error.", (pos) => playError(pos)) }, "Error"),
+                        React.createElement("button", { className: "dg", onClick: () => askError("Error", (ek) => openFieldOne(ek === "t" ? "Throwing error" : ek === "f" ? "Fielding error" : "Error", "Tap the fielder charged with it.", (pos) => playError(pos, ek))) }, "Error"),
                         React.createElement("button", { className: "dg ghost", onClick: () => setMoreMenu(true), disabled: game.over }, "More")),
                     React.createElement("div", { className: "btnrow r5" },
                         React.createElement("button", { className: "dg ghost", onClick: () => adjustRun(1) }, "+ Run"),
@@ -7314,6 +7353,7 @@ function DugoutScorecard() {
                             gameType: gameType || "season", eventName: (eventName || "").trim(),
                             division: division || "",
                             pitchers: [{ side: "away", name: "", pitches: "" }, { side: "home", name: "", pitches: "" }],
+                            share: !!(eventName || "").trim(),
                         }) }, "\u002B Add a result (game you didn\u2019t score)"),
                     React.createElement("div", { className: "plog", style: { textAlign: "left" } },
                         games.length === 0 && (React.createElement("div", { className: "plog-row", style: { opacity: 0.7, padding: "8px 4px" } }, "No saved games yet.")),
@@ -8064,6 +8104,15 @@ function DugoutScorecard() {
                                 setConfirmNew(false);
                             } }, "New game \u2014 fresh lineups"),
                         React.createElement("button", { className: "dg ghost", onClick: () => setConfirmNew(false) }, "Keep current game"))))),
+            errKind && (React.createElement("div", { className: "modal-back", onClick: () => setErrKind(null) },
+                React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
+                    React.createElement("h3", null, errKind.title),
+                    React.createElement("p", null, "What kind of error?"),
+                    React.createElement("div", { className: "btnrow" },
+                        React.createElement("button", { className: "dg", onClick: () => { const f = errKind.onPick; setErrKind(null); f("f"); } }, "Fielding \u2014 misplayed the ball"),
+                        React.createElement("button", { className: "dg", onClick: () => { const f = errKind.onPick; setErrKind(null); f("t"); } }, "Throwing \u2014 bad throw"),
+                        React.createElement("button", { className: "dg ghost", onClick: () => { const f = errKind.onPick; setErrKind(null); f(""); } }, "Skip \u2014 just E"),
+                        React.createElement("button", { className: "dg ghost", onClick: () => setErrKind(null) }, "Cancel"))))),
             resultForm && (() => {
                 const f = resultForm;
                 const set = (k, v) => setResultForm(Object.assign({}, f, { [k]: v }));
@@ -8085,6 +8134,9 @@ function DugoutScorecard() {
                         React.createElement("div", { className: "limitrow" },
                             React.createElement("input", { className: "dg-in", placeholder: "Field", value: f.field, onChange: (e) => set("field", e.target.value), "aria-label": "Field" }),
                             React.createElement("input", { className: "dg-in", placeholder: "Event", value: f.eventName, onChange: (e) => set("eventName", e.target.value), "aria-label": "Event" })),
+                        React.createElement("label", { className: "togglerow", style: { marginTop: 4 } },
+                            React.createElement("input", { type: "checkbox", checked: !!f.share, onChange: (e) => set("share", e.target.checked), "aria-label": "Show on the public games hub" }),
+                            React.createElement("span", null, "Show on the games hub (score only)")),
                         React.createElement("div", { className: "sit-sec", style: { marginTop: 12 } }, "Pitchers used \u00b7 from the field board"),
                         React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--powder)", fontSize: 11, margin: "0 0 6px" } }, "Keeps the tournament arms board complete. Leave blank to skip."),
                         f.pitchers.map((p, i) => React.createElement("div", { className: "limitrow", key: i, style: { gridTemplateColumns: "78px 1fr 62px" } },
@@ -8171,7 +8223,7 @@ function DugoutScorecard() {
                         React.createElement("button", { className: "dg", onClick: () => stealBase(baseMenu) }, baseMenu === "third" ? "Steals home" : `Steals ${baseMenu === "first" ? "2nd" : "3rd"}`),
                         React.createElement("button", { className: "dg", onClick: () => runnerAdvanceOn(baseMenu, "wp") }, baseMenu === "third" ? "Scores on wild pitch" : `Takes ${baseMenu === "first" ? "2nd" : "3rd"} on wild pitch`),
                         React.createElement("button", { className: "dg", onClick: () => runnerAdvanceOn(baseMenu, "pb") }, baseMenu === "third" ? "Scores on passed ball" : `Takes ${baseMenu === "first" ? "2nd" : "3rd"} on passed ball`),
-                        React.createElement("button", { className: "dg", onClick: () => { const b = baseMenu; closeBaseMenu(); openFieldOne("Error", "Tap the fielder who made the error.", (pos) => advanceOnError(b, pos)); } }, baseMenu === "third" ? "Scores on error (E)" : `Takes ${baseMenu === "first" ? "2nd" : "3rd"} on error (E)`),
+                        React.createElement("button", { className: "dg", onClick: () => { const b = baseMenu; closeBaseMenu(); askError("Error", (ek) => openFieldOne(ek === "t" ? "Throwing error" : ek === "f" ? "Fielding error" : "Error", "Tap the fielder charged with it.", (pos) => advanceOnError(b, pos, ek))); } }, baseMenu === "third" ? "Scores on error (E)" : `Takes ${baseMenu === "first" ? "2nd" : "3rd"} on error (E)`),
                         React.createElement("button", { className: "dg", onClick: () => obstruction(baseMenu) }, baseMenu === "third" ? "Obstruction \u2014 awarded home" : `Obstruction \u2014 awarded ${baseMenu === "first" ? "2nd" : "3rd"}`),
                         React.createElement("button", { className: "dg", onClick: () => stealBase(baseMenu, true) }, "Defensive indifference"),
                         React.createElement("button", { className: "dg", onClick: () => runnerScores(baseMenu) }, "Scores \u2014 no RBI"),

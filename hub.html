@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>DugoutIQ — Games</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700;800&display=swap">
+<style>
+  :root{
+    --navy:#0E1A3A; --navy-deep:#0A1430; --card:#16244F; --line:rgba(169,197,232,.22);
+    --powder:#A9C5E8; --white:#fff; --gold:#F5C518; --live:#E5484D;
+  }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body{ margin:0; background:var(--navy); color:var(--white);
+    font-family:'Saira Condensed',system-ui,-apple-system,sans-serif;
+    padding-bottom:env(safe-area-inset-bottom); }
+  a{ color:inherit; text-decoration:none; }
+
+  .top{ position:sticky; top:0; z-index:10; background:var(--navy-deep);
+    border-bottom:1px solid var(--line); padding:14px 16px; }
+  .top h1{ margin:0; font-size:19px; font-weight:800; letter-spacing:.02em; }
+  .top .sub{ color:var(--powder); font-size:11.5px; letter-spacing:.14em;
+    text-transform:uppercase; margin-top:3px; display:flex; align-items:center; gap:7px; }
+  .dot{ width:7px; height:7px; border-radius:50%; background:var(--live); flex:none;
+    animation:p 1.6s infinite; }
+  .dot.stale{ background:var(--powder); animation:none; }
+  @keyframes p{ 0%,100%{opacity:1} 50%{opacity:.3} }
+
+  .sec{ padding:16px 16px 6px; color:var(--powder); font-size:11.5px;
+    letter-spacing:.18em; text-transform:uppercase; }
+
+  .g{ display:flex; align-items:stretch; gap:12px; margin:0 12px 10px;
+    background:var(--card); border:1px solid var(--line); border-radius:14px;
+    padding:12px 14px; }
+  .g:active{ border-color:var(--gold); }
+  .g.manual{ cursor:default; opacity:.92; }
+  .teams{ flex:1; min-width:0; }
+  .row{ display:flex; align-items:center; gap:10px; padding:3px 0; }
+  .chip{ width:9px; height:22px; border-radius:3px; flex:none; background:#22345f; }
+  .nm{ flex:1; min-width:0; font-size:16px; font-weight:700;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .row.lose .nm,.row.lose .sc{ color:var(--powder); font-weight:600; }
+  .sc{ font-size:19px; font-weight:800; font-variant-numeric:tabular-nums; }
+  .win{ width:0;height:0;border-top:5px solid transparent;border-bottom:5px solid transparent;
+    border-right:6px solid var(--gold); flex:none; }
+  .state{ width:76px; flex:none; border-left:1px solid var(--line); padding-left:12px;
+    display:flex; flex-direction:column; justify-content:center; gap:3px; }
+  .state .s{ font-size:12px; font-weight:800; letter-spacing:.09em; text-transform:uppercase; }
+  .state .s.final{ color:var(--powder); }
+  .state .s.live{ color:var(--live); }
+  .state .meta{ font-size:11px; color:var(--powder); }
+
+  .msg{ margin:32px 20px; padding:18px; border:1px dashed var(--line); border-radius:14px;
+    color:var(--powder); font-size:14px; line-height:1.55; text-align:center; }
+  .foot{ margin:22px 16px 30px; color:var(--powder); font-size:11px; letter-spacing:.1em;
+    text-transform:uppercase; text-align:center; opacity:.75; }
+</style>
+</head>
+<body>
+
+<div class="top">
+  <h1 id="title">Games</h1>
+  <div class="sub"><span class="dot" id="dot"></span><span id="status">Loading…</span></div>
+</div>
+
+<div id="content"><div class="msg">Loading games…</div></div>
+<div class="foot">DugoutIQ &middot; Manage the Game</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const esc = (t) => String(t == null ? "" : t).replace(/[&<>"']/g, (c) =>
+    ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+  const ORD = (n) => { const v = n % 100; if (v >= 11 && v <= 13) return n + "th";
+    return n + (["th","st","nd","rd"][n % 10] || "th"); };
+
+  // Optional ?e=NAME filters the board to one event by title text only —
+  // the public index carries team names and scores, never player names.
+  const params = new URLSearchParams(location.search);
+  const evName = (params.get("e") || "").trim();
+  if (evName) $("title").textContent = evName;
+
+  let lastUpdated = 0;
+
+  function card(g){
+    const live = !g.over;
+    const aWin = g.over && g.sA > g.sH, hWin = g.over && g.sH > g.sA;
+    const half = g.half === "bottom" ? "Bot" : "Top";
+    const team = (name, color, runs, winner, loser) => `
+      <div class="row ${loser ? "lose" : ""}">
+        <div class="chip" ${color ? `style="background:${esc(color)}"` : ""}></div>
+        <div class="nm">${esc(name)}</div>
+        <div class="sc">${Number(runs) || 0}</div>
+        ${winner ? '<div class="win"></div>' : ""}
+      </div>`;
+    // manual results have no play-by-play, so they don't open anything
+    const tag = g.manual ? "div" : "a";
+    const href = g.manual ? "" : ` href="spectate.html?g=${encodeURIComponent(g.code)}"`;
+    return `
+      <${tag} class="g${g.manual ? " manual" : ""}"${href}>
+        <div class="teams">
+          ${team(g.away, g.ac, g.sA, aWin, g.over && !aWin)}
+          ${team(g.home, g.hc, g.sH, hWin, g.over && !hWin)}
+        </div>
+        <div class="state">
+          ${live
+            ? `<div class="s live">Live</div><div class="meta">${half} ${ORD(g.inning || 1)}</div>`
+            : `<div class="s final">Final</div>${g.manual ? "" : `<div class="meta">${(g.linescore || []).length} inn</div>`}`}
+          ${g.manual ? `<div class="meta">score only</div>` : ""}
+          ${[timeLabel(g.gtime), g.gfield].filter(Boolean).length
+            ? `<div class="meta">${esc([timeLabel(g.gtime), g.gfield].filter(Boolean).join(" \u00b7 "))}</div>` : ""}
+        </div>
+      </${tag}>`;
+  }
+
+  function dayLabel(d){
+    if (!d) return "Other games";
+    const t = Date.parse(d + "T00:00:00");
+    if (isNaN(t)) return "Other games";
+    const today = new Date(); today.setHours(0,0,0,0);
+    const diff = Math.round((t - today.getTime()) / 86400000);
+    const s = new Date(t).toLocaleDateString(undefined, { weekday:"long", month:"long", day:"numeric" });
+    if (diff === 0) return "Today \u00b7 " + s;
+    if (diff === -1) return "Yesterday \u00b7 " + s;
+    return s;
+  }
+  function timeLabel(t){
+    if (!t) return "";
+    const p = String(t).split(":"); if (p.length < 2) return t;
+    let h = parseInt(p[0], 10); const m = p[1];
+    const ap = h >= 12 ? "PM" : "AM"; h = h % 12; if (!h) h = 12;
+    return h + ":" + m + " " + ap;
+  }
+  function render(games){
+    // ?event=NAME pins the hub to one tournament; matches the event the scorer
+    // tagged the game with, not the team names
+    const list = evName
+      ? games.filter((g) => String(g.ev || "").toLowerCase().includes(evName.toLowerCase()))
+      : games;
+    if (!list.length){
+      $("content").innerHTML = '<div class="msg">No games are being shared right now.<br>' +
+        'They appear here while a scorer has the live link switched on.</div>';
+      return;
+    }
+    // group by the day the game was played, newest first; live games lead each day
+    const byDay = {};
+    list.forEach((g) => { const k = g.gdate || ""; (byDay[k] = byDay[k] || []).push(g); });
+    const days = Object.keys(byDay).sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
+    let html = "";
+    days.forEach((d) => {
+      html += `<div class="sec">${esc(dayLabel(d))}</div>`;
+      byDay[d].sort((a, b) => {
+        if (!!a.over !== !!b.over) return a.over ? 1 : -1;
+        return String(a.gtime || "").localeCompare(String(b.gtime || ""));
+      }).forEach((g) => { html += card(g); });
+    });
+    $("content").innerHTML = html;
+  }
+
+  async function poll(){
+    try{
+      const r = await fetch("/.netlify/functions/game?list=1", { cache:"no-store" });
+      const d = await r.json();
+      if (d && d.ok && Array.isArray(d.games)){
+        lastUpdated = Date.now();
+        render(d.games);
+        const shown = evName
+          ? d.games.filter((g) => String(g.ev || "").toLowerCase().includes(evName.toLowerCase()))
+          : d.games;
+        const liveN = shown.filter((g) => !g.over).length;
+        $("status").textContent = `${shown.length} game${shown.length===1?"":"s"}`
+          + (liveN ? ` \u00b7 ${liveN} live` : "") + " \u00b7 updating";
+        if (evName) { const h = document.querySelector("h1"); if (h) h.textContent = evName; }
+        $("dot").classList.remove("stale");
+      }
+    }catch(e){ /* keep the last view */ }
+    if (lastUpdated && Date.now() - lastUpdated > 30000){
+      $("dot").classList.add("stale");
+      $("status").textContent = "Paused — reopen to refresh";
+    }
+  }
+
+  poll();
+  setInterval(poll, 8000);
+</script>
+</body>
+</html>
