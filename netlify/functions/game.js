@@ -44,6 +44,9 @@ const publicEntry = (code, snap) => ({
   manual: !!snap.manual,
   // a fixture published before it's played — no score yet
   sched: !!snap.sched,
+  // pool letters, so the hub can build standings without a second lookup
+  apool: String(snap.apool || "").slice(0, 2),
+  hpool: String(snap.hpool || "").slice(0, 2),
   updated: Date.now(),
 });
 
