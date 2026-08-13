@@ -15,7 +15,10 @@ const json = (statusCode, body) => ({
   body: JSON.stringify(body),
 });
 
-const PUBLIC_TTL = 6 * 60 * 60 * 1000; // drop entries we haven't heard from in 6h
+const PUBLIC_TTL = 6 * 60 * 60 * 1000; // drop untagged entries after 6h
+// Games tagged to an event stay listed for the length of a tournament, so a
+// Friday game is still on the schedule when someone opens the hub on Sunday.
+const EVENT_TTL = 5 * 24 * 60 * 60 * 1000;
 
 // Only ever expose team-level info — never batter/pitcher/lineup names.
 const publicEntry = (code, snap) => ({
@@ -32,6 +35,13 @@ const publicEntry = (code, snap) => ({
   linescore: Array.isArray(snap.linescore)
     ? snap.linescore.slice(0, 30).map((r) => ({ away: r.away, home: r.home }))
     : [],
+  // tournament context for the hub — still team-level only
+  ev: String(snap.ev || "").slice(0, 60),
+  gdate: String(snap.gdate || "").slice(0, 10),
+  gtime: String(snap.gtime || "").slice(0, 5),
+  gfield: String(snap.gfield || "").slice(0, 24),
+  // a score entered by hand — there is no play-by-play behind it
+  manual: !!snap.manual,
   updated: Date.now(),
 });
 
@@ -89,7 +99,7 @@ exports.handler = async (event) => {
           let e;
           try { e = await pub.get(k, { type: "json" }); } catch { e = null; }
           if (!e) continue;
-          if (now - (e.updated || 0) > PUBLIC_TTL) {
+          if (now - (e.updated || 0) > (e.ev ? EVENT_TTL : PUBLIC_TTL)) {
             try { await pub.delete(k); } catch {}
             continue;
           }
