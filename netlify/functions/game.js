@@ -15,10 +15,24 @@ const json = (statusCode, body) => ({
   body: JSON.stringify(body),
 });
 
-const PUBLIC_TTL = 6 * 60 * 60 * 1000; // drop untagged entries after 6h
-// Games tagged to an event stay listed for the length of a tournament, so a
-// Friday game is still on the schedule when someone opens the hub on Sunday.
-const EVENT_TTL = 5 * 24 * 60 * 60 * 1000;
+const PUBLIC_TTL = 6 * 60 * 60 * 1000;            // undated entries: 6h since last push
+const EVENT_TTL = 5 * 24 * 60 * 60 * 1000;        // dated entries: 5 days AFTER the game date
+const FUTURE_CAP = 60 * 24 * 60 * 60 * 1000;      // ignore dates more than ~2 months out
+
+// When does an entry stop being listed?
+//   Dated (a fixture or a played game): 5 days after the DATE OF THE GAME, so a
+//   schedule published a week early still shows on opening day, and a Friday
+//   game is still there on Sunday.
+//   Undated: 6 hours since we last heard from it, as before.
+const expiresAt = (e) => {
+  const t = Date.parse(String(e.gdate || "") + "T23:59:59");
+  if (!isNaN(t)) {
+    // a wildly future date is almost certainly a typo — fall back to the push clock
+    if (t - Date.now() < FUTURE_CAP)
+      return t + EVENT_TTL;
+  }
+  return (e.updated || 0) + (e.ev ? EVENT_TTL : PUBLIC_TTL);
+};
 
 // Only ever expose team-level info — never batter/pitcher/lineup names.
 const publicEntry = (code, snap) => ({
@@ -104,7 +118,7 @@ exports.handler = async (event) => {
           let e;
           try { e = await pub.get(k, { type: "json" }); } catch { e = null; }
           if (!e) continue;
-          if (now - (e.updated || 0) > (e.ev ? EVENT_TTL : PUBLIC_TTL)) {
+          if (now > expiresAt(e)) {
             try { await pub.delete(k); } catch {}
             continue;
           }
