@@ -61,6 +61,7 @@ const publicEntry = (code, snap) => ({
   // pool letters, so the hub can build standings without a second lookup
   // round robin / semi-final / championship, for the schedule grouping
   stage: String(snap.stage || "").slice(0, 20),
+  gnum: String(snap.gnum || "").slice(0, 6),
   apool: String(snap.apool || "").slice(0, 2),
   hpool: String(snap.hpool || "").slice(0, 2),
   updated: Date.now(),
