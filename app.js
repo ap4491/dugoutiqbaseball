@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "214"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "215"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1641,6 +1641,7 @@ function DugoutScorecard() {
                         home: { name: (row.home || "TBD").trim(), runs: 0, color: "" },
                         inning: 0, half: "top", linescore: [], log: [],
                         ev: (row.event || "").trim(), stage: (row.stage || "").trim(),
+                        gnum: String(row.gnum || "").trim(),
                         apool: poolOf(row.away || ""), hpool: poolOf(row.home || ""),
                         gdate: row.date || "",
                         gtime: row.time || "", gfield: (row.field || "").trim(),
@@ -1670,6 +1671,7 @@ function DugoutScorecard() {
         setEventName(row.event || schedEvent.trim() || eventName);
         setLiveCode(row.code);
         setStage(row.stage || "");
+        setGameNum(String(row.gnum || ""));
         setLiveOn(true);
         setLiveList(true);
         saveSchedule(schedule.map((r) => (r.id === row.id ? Object.assign({}, r, { played: true }) : r)));
@@ -4306,6 +4308,7 @@ function DugoutScorecard() {
     const [schedOpen, setSchedOpen] = useState(false);
     const [pools, setPools] = useState(() => loadPools()); // { "team name": "A" }
     const [stage, setStage] = useState(""); // round robin / semi / championship
+    const [gameNum, setGameNum] = useState(""); // "Game 5" on the tournament sheet
     const [schedEvent, setSchedEvent] = useState(() => {
         const l = loadSchedule();
         return (l.length && l[0].event) || "";
@@ -5084,6 +5087,7 @@ function DugoutScorecard() {
             // tournament context for the hub — team-level only, no player names
             ev: (game && game.eventName) || eventName || "",
             stage: stage || "",
+            gnum: gameNum || "",
             apool: poolOf(nm("away")),
             hpool: poolOf(nm("home")),
             gdate: (game && game.date) || gameDate || "",
@@ -8313,8 +8317,12 @@ function DugoutScorecard() {
                             "Parent link: ", React.createElement("b", null, `${location.origin}/hub.html?event=${encodeURIComponent(schedEvent.trim())}`)),
                         rows.length === 0 && React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--powder)" } }, "No games yet \u2014 add the first below."),
                         rows.map((r) => React.createElement("div", { key: r.id, style: { border: "1px solid var(--line)", borderRadius: 12, padding: 10, marginBottom: 8, opacity: r.played ? .6 : 1 } },
-                            React.createElement("div", { className: "limitrow" },
+                            React.createElement("div", { className: "limitrow", style: { gridTemplateColumns: "56px 1fr 40px 1fr" } },
+                                React.createElement("input", { className: "dg-in", placeholder: "Gm #", value: r.gnum || "", onChange: (e) => upd(r.id, "gnum", e.target.value), "aria-label": "Game number" }),
                                 React.createElement("input", { className: "dg-in", placeholder: "Visitor", value: r.away || "", onChange: (e) => upd(r.id, "away", e.target.value), "aria-label": "Visiting team" }),
+                                // home/away is a coin flip at game time — swap them
+                                // once it's decided, then republish
+                                React.createElement("button", { className: "dg ghost", style: { padding: 0, fontSize: 14 }, onClick: () => saveSchedule(schedule.map((x) => (x.id === r.id ? Object.assign({}, x, { away: x.home || "", home: x.away || "" }) : x))), title: "Swap home / away", "aria-label": "Swap home and away" }, "\u21C5"),
                                 React.createElement("input", { className: "dg-in", placeholder: "Home", value: r.home || "", onChange: (e) => upd(r.id, "home", e.target.value), "aria-label": "Home team" })),
                             React.createElement("div", { className: "limitrow" },
                                 React.createElement("input", { className: "dg-in", type: "date", value: r.date || "", onChange: (e) => upd(r.id, "date", e.target.value), "aria-label": "Date" }),

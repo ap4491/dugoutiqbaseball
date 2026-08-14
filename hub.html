@@ -127,6 +127,7 @@
             : live
               ? `<div class="s live">Live</div><div class="meta">${half} ${ORD(g.inning || 1)}</div>`
               : `<div class="s final">Final</div>${g.manual ? "" : `<div class="meta">${(g.linescore || []).length} inn</div>`}`}
+          ${g.gnum ? `<div class="meta">Game ${esc(g.gnum)}</div>` : ""}
           ${g.stage ? `<div class="meta stage">${esc(g.stage)}</div>` : ""}
           ${g.manual ? `<div class="meta">score only</div>` : ""}
           ${[timeLabel(g.gtime), g.gfield].filter(Boolean).length
@@ -227,6 +228,8 @@
       byDay[d].sort((a, b) => {
         const rank = (x) => (x.sched ? 2 : x.over ? 1 : 0); // live, final, then upcoming
         if (rank(a) !== rank(b)) return rank(a) - rank(b);
+        const na = parseInt(a.gnum, 10), nb = parseInt(b.gnum, 10);
+        if (!isNaN(na) && !isNaN(nb) && na !== nb) return na - nb;
         return String(a.gtime || "").localeCompare(String(b.gtime || ""));
       }).forEach((g) => { html += card(g); });
     });
