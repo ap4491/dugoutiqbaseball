@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "213"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "214"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1649,7 +1649,15 @@ function DugoutScorecard() {
         }).catch(() => { });
     };
     const publishAllFixtures = () => {
-        schedule.forEach((r) => { if (!r.played) publishFixture(r, false); });
+        const named = schedule.filter((r) => !r.played && (r.event || "").trim());
+        named.forEach((r) => publishFixture(r, false));
+        const skipped = schedule.filter((r) => !r.played && !(r.event || "").trim()).length;
+        try {
+            alert(skipped
+                ? `Posted ${named.length}. Skipped ${skipped} with no tournament name.`
+                : `Posted ${named.length} game${named.length === 1 ? "" : "s"} to the hub.`);
+        }
+        catch (_a) { }
     };
     // Start scoring a fixture: pre-fill the setup and adopt its code, so the
     // hub card becomes this live game instead of a second entry appearing.
@@ -1659,8 +1667,7 @@ function DugoutScorecard() {
         setGameDate(row.date || gameDate);
         setGameTime(row.time || "");
         setFieldName(row.field || "");
-        if (row.event)
-            setEventName(row.event);
+        setEventName(row.event || schedEvent.trim() || eventName);
         setLiveCode(row.code);
         setStage(row.stage || "");
         setLiveOn(true);
@@ -4299,6 +4306,10 @@ function DugoutScorecard() {
     const [schedOpen, setSchedOpen] = useState(false);
     const [pools, setPools] = useState(() => loadPools()); // { "team name": "A" }
     const [stage, setStage] = useState(""); // round robin / semi / championship
+    const [schedEvent, setSchedEvent] = useState(() => {
+        const l = loadSchedule();
+        return (l.length && l[0].event) || "";
+    });
     const [errKind, setErrKind] = useState(null); // {title, onPick} — fielding or throwing
     const replayTimer = useRef(null);
     const demoTimer = useRef(null);
@@ -8287,6 +8298,19 @@ function DugoutScorecard() {
                     React.createElement("div", { className: "modal set-modal", onClick: (e) => e.stopPropagation() },
                         React.createElement("h3", null, "Tournament schedule"),
                         React.createElement("p", { style: { textTransform: "none", letterSpacing: 0 } }, "Fixtures show on the games hub as upcoming, then turn live and final as you score them."),
+                        // The event name is what groups these games on the hub and
+                        // what parents filter by, so it belongs to the schedule as a
+                        // whole rather than being inherited silently per fixture.
+                        React.createElement("div", { className: "limitrow", style: { marginBottom: 4 } },
+                            React.createElement("input", { className: "dg-in", placeholder: "Tournament name", value: schedEvent, onChange: (e) => {
+                                    const v = e.target.value;
+                                    setSchedEvent(v);
+                                    saveSchedule(schedule.map((r) => Object.assign({}, r, { event: v.trim() })));
+                                }, "aria-label": "Tournament name" }),
+                            React.createElement("span", { className: "limithint" }, "groups these games on the hub")),
+                        !schedEvent.trim() && rows.length > 0 && React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--red)", fontSize: 12, margin: "0 0 8px" } }, "Name the tournament \u2014 without it these games can\u2019t be filtered on the hub."),
+                        schedEvent.trim() && React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--powder)", fontSize: 11, margin: "0 0 8px", wordBreak: "break-all" } },
+                            "Parent link: ", React.createElement("b", null, `${location.origin}/hub.html?event=${encodeURIComponent(schedEvent.trim())}`)),
                         rows.length === 0 && React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--powder)" } }, "No games yet \u2014 add the first below."),
                         rows.map((r) => React.createElement("div", { key: r.id, style: { border: "1px solid var(--line)", borderRadius: 12, padding: 10, marginBottom: 8, opacity: r.played ? .6 : 1 } },
                             React.createElement("div", { className: "limitrow" },
@@ -8328,7 +8352,7 @@ function DugoutScorecard() {
                                 id: Date.now() + Math.floor(Math.random() * 999),
                                 code: "S" + Math.random().toString(36).slice(2, 7).toUpperCase(),
                                 away: "", home: "", date: gameDate, time: "", field: "",
-                                event: (eventName || "").trim(), played: false,
+                                event: schedEvent.trim() || (eventName || "").trim(), played: false,
                             }])) }, "+ Add a game"),
                         React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr", marginTop: 10 } },
                             React.createElement("button", { className: "dg hit", onClick: publishAllFixtures }, "Publish all to hub"),
