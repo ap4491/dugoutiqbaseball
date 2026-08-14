@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "212"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "213"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1640,7 +1640,7 @@ function DugoutScorecard() {
                         away: { name: (row.away || "TBD").trim(), runs: 0, color: "" },
                         home: { name: (row.home || "TBD").trim(), runs: 0, color: "" },
                         inning: 0, half: "top", linescore: [], log: [],
-                        ev: (row.event || "").trim(),
+                        ev: (row.event || "").trim(), stage: (row.stage || "").trim(),
                         apool: poolOf(row.away || ""), hpool: poolOf(row.home || ""),
                         gdate: row.date || "",
                         gtime: row.time || "", gfield: (row.field || "").trim(),
@@ -1662,6 +1662,7 @@ function DugoutScorecard() {
         if (row.event)
             setEventName(row.event);
         setLiveCode(row.code);
+        setStage(row.stage || "");
         setLiveOn(true);
         setLiveList(true);
         saveSchedule(schedule.map((r) => (r.id === row.id ? Object.assign({}, r, { played: true }) : r)));
@@ -4297,6 +4298,7 @@ function DugoutScorecard() {
     const [schedule, setSchedule] = useState(() => loadSchedule()); // tournament fixtures
     const [schedOpen, setSchedOpen] = useState(false);
     const [pools, setPools] = useState(() => loadPools()); // { "team name": "A" }
+    const [stage, setStage] = useState(""); // round robin / semi / championship
     const [errKind, setErrKind] = useState(null); // {title, onPick} — fielding or throwing
     const replayTimer = useRef(null);
     const demoTimer = useRef(null);
@@ -4628,12 +4630,14 @@ function DugoutScorecard() {
             cardOut(g, g.bases[base], g.outs + 1);
             g.bases[base] = false;
             chargeP(g, "outs");
-            if (g.openHit != null) {
+            // An out on the bases belongs to whatever play is still open — a
+            // runner who reached on an error and is then thrown out advancing
+            // is one play, not two. openHit only exists on RBI-eligible plays,
+            // so checking it alone missed errors and dropped third strikes.
+            if (g.openHit != null)
                 amendOpenHit(g, txt, `${txt} on the play`);
-            }
-            else {
-                logPlay(g, txt);
-            }
+            else
+                foldOrLog(g, txt, `${txt} on the play`, txt);
             recordOut(g);
         });
         setBaseMenu(null);
@@ -5068,6 +5072,7 @@ function DugoutScorecard() {
             lastPlay: g.lastPlay || "",
             // tournament context for the hub — team-level only, no player names
             ev: (game && game.eventName) || eventName || "",
+            stage: stage || "",
             apool: poolOf(nm("away")),
             hpool: poolOf(nm("home")),
             gdate: (game && game.date) || gameDate || "",
@@ -8292,7 +8297,13 @@ function DugoutScorecard() {
                                 React.createElement("input", { className: "dg-in", type: "time", value: r.time || "", onChange: (e) => upd(r.id, "time", e.target.value), "aria-label": "Time" })),
                             React.createElement("div", { className: "limitrow" },
                                 React.createElement("input", { className: "dg-in", placeholder: "Field", value: r.field || "", onChange: (e) => upd(r.id, "field", e.target.value), "aria-label": "Field" }),
-                                React.createElement("span", { className: "limithint" }, r.played ? "scored" : "upcoming")),
+                                React.createElement("select", { className: "dg-sel", value: r.stage || "", onChange: (e) => upd(r.id, "stage", e.target.value), "aria-label": "Stage" },
+                                    React.createElement("option", { value: "" }, "Round robin"),
+                                    React.createElement("option", { value: "Tiebreaker" }, "Tiebreaker"),
+                                    React.createElement("option", { value: "Quarter-final" }, "Quarter"),
+                                    React.createElement("option", { value: "Semi-final" }, "Semi"),
+                                    React.createElement("option", { value: "Bronze" }, "Bronze"),
+                                    React.createElement("option", { value: "Championship" }, "Final"))),
                             React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr 44px", marginTop: 6 } },
                                 React.createElement("button", { className: "dg hit", disabled: !!game && !game.over, onClick: () => scoreFixture(r), title: game && !game.over ? "Finish the current game first" : "" }, "Score this"),
                                 React.createElement("button", { className: "dg ghost", onClick: () => publishFixture(r, false) }, "Publish"),

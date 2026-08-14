@@ -68,6 +68,7 @@
     color:var(--muted); border-bottom:1px solid var(--line); }
   table.stand td.l, table.stand th.l{ text-align:left; }
   table.stand tbody tr:nth-child(odd){ background:rgba(255,255,255,.03); }
+  .meta.stage{ color:var(--gold,#F5C518); font-weight:700; }
 </style>
 </head>
 <body>
@@ -126,6 +127,7 @@
             : live
               ? `<div class="s live">Live</div><div class="meta">${half} ${ORD(g.inning || 1)}</div>`
               : `<div class="s final">Final</div>${g.manual ? "" : `<div class="meta">${(g.linescore || []).length} inn</div>`}`}
+          ${g.stage ? `<div class="meta stage">${esc(g.stage)}</div>` : ""}
           ${g.manual ? `<div class="meta">score only</div>` : ""}
           ${[timeLabel(g.gtime), g.gfield].filter(Boolean).length
             ? `<div class="meta">${esc([timeLabel(g.gtime), g.gfield].filter(Boolean).join(" \u00b7 "))}</div>` : ""}
@@ -154,7 +156,8 @@
   let view = "sched";
   function standings(list){
     // only completed games count; a game in progress has no result yet
-    const done = list.filter((g) => g.over && !g.sched);
+    // Playoff games don't move the round-robin table, so they're excluded.
+    const done = list.filter((g) => g.over && !g.sched && !String(g.stage || "").trim());
     const T = {};
     const get = (name, pool) => {
       const k = String(name || "").toLowerCase();
@@ -199,7 +202,7 @@
       });
       html += "</tbody></table>";
     });
-    html += '<div class="msg" style="padding:14px 20px;font-size:11.5px">Sorted by win percentage, then run differential. '
+    html += '<div class="msg" style="padding:14px 20px;font-size:11.5px">Round robin only \u2014 playoff games are excluded. Sorted by win percentage, then run differential. '
       + 'Your tournament&rsquo;s own tiebreakers may differ.</div>';
     $("content").innerHTML = html;
   }
