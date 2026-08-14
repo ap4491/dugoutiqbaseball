@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "215"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "216"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1659,6 +1659,65 @@ function DugoutScorecard() {
                 : `Posted ${named.length} game${named.length === 1 ? "" : "s"} to the hub.`);
         }
         catch (_a) { }
+    };
+    // Pull a published schedule back down, so you can build it on one device and
+    // score on another. The fixtures already carry their codes in the public
+    // index, so adopting them means the hub cards upgrade in place rather than
+    // a second card appearing beside each one.
+    const loadScheduleFromHub = () => {
+        const ev = schedEvent.trim();
+        if (!ev) {
+            try {
+                alert("Name the tournament first, then load.");
+            }
+            catch (_a) { }
+            return;
+        }
+        fetch(LIVE_ENDPOINT + "?list=1", { cache: "no-store" })
+            .then((r) => r.json())
+            .then((d) => {
+                if (!d || !d.ok || !Array.isArray(d.games))
+                    throw new Error("no list");
+                const mine = d.games.filter((g) => lc(g.ev || "") === lc(ev));
+                if (!mine.length) {
+                    try {
+                        alert(`No games found on the hub for \u201C${ev}\u201D.`);
+                    }
+                    catch (_a) { }
+                    return;
+                }
+                const have = {};
+                schedule.forEach((r) => { have[r.code] = true; });
+                const added = mine.filter((g) => !have[g.code]).map((g) => ({
+                    id: Date.now() + Math.floor(Math.random() * 99999),
+                    code: g.code,
+                    gnum: g.gnum || "", away: g.away || "", home: g.home || "",
+                    date: g.gdate || "", time: g.gtime || "", field: g.gfield || "",
+                    stage: g.stage || "", event: ev,
+                    // anything already under way or finished isn't a fixture to score
+                    played: !g.sched,
+                }));
+                if (added.length)
+                    saveSchedule(schedule.concat(added));
+                // pools travel with the games, so rebuild those too
+                const pm = Object.assign({}, pools);
+                mine.forEach((g) => {
+                    if (g.apool && g.away)
+                        pm[lc(g.away)] = String(g.apool).toUpperCase();
+                    if (g.hpool && g.home)
+                        pm[lc(g.home)] = String(g.hpool).toUpperCase();
+                });
+                setPools(pm);
+                persistPools(pm);
+                try {
+                    alert(`Loaded ${added.length} new fixture${added.length === 1 ? "" : "s"} (${mine.length} on the hub).`);
+                }
+                catch (_a) { }
+            })
+            .catch(() => { try {
+                alert("Couldn't reach the hub.");
+            }
+            catch (_a) { } });
     };
     // Start scoring a fixture: pre-fill the setup and adopt its code, so the
     // hub card becomes this live game instead of a second entry appearing.
@@ -8364,7 +8423,9 @@ function DugoutScorecard() {
                             }])) }, "+ Add a game"),
                         React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr", marginTop: 10 } },
                             React.createElement("button", { className: "dg hit", onClick: publishAllFixtures }, "Publish all to hub"),
-                            React.createElement("button", { className: "dg ghost", onClick: () => setSchedOpen(false) }, "Close"))))); })(),
+                            React.createElement("button", { className: "dg ghost", onClick: loadScheduleFromHub }, "Load from hub")),
+                        React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--powder)", fontSize: 11, margin: "8px 0 0" } }, "\u201CLoad from hub\u201D pulls a schedule published from another device, so you can build it on one and score on another."),
+                        React.createElement("button", { className: "dg ghost", style: { width: "100%", marginTop: 8 }, onClick: () => setSchedOpen(false) }, "Close")))); })(),
             resultForm && (() => {
                 const f = resultForm;
                 const set = (k, v) => setResultForm(Object.assign({}, f, { [k]: v }));
