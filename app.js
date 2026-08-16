@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "216"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "217"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1548,6 +1548,24 @@ function DugoutScorecard() {
     // live push sends, from the record rather than the in-progress game — so a
     // tournament that's already over can be put up, and finished games stay
     // openable with their full play-by-play rather than just a score.
+    // A fixture is just two names, so borrow the colour/logo from the current
+    // teams or any saved game with that club in it.
+    const teamCrest = (name) => {
+        const k = lc(name);
+        if (!k)
+            return { color: "", logo: "" };
+        for (const sd of ["away", "home"]) {
+            if (lc(teams[sd].name) === k)
+                return { color: teams[sd].color || "", logo: teams[sd].logo || "" };
+        }
+        for (const rec of games) {
+            for (const sd of ["away", "home"]) {
+                if (rec[sd] && lc(rec[sd].name) === k && (rec[sd].logo || rec[sd].color))
+                    return { color: rec[sd].color || "", logo: rec[sd].logo || "" };
+            }
+        }
+        return { color: "", logo: "" };
+    };
     const poolOf = (name) => (pools[lc(name)] || "").trim().toUpperCase();
     const setPoolFor = (name, val) => {
         const next = Object.assign({}, pools);
@@ -1637,8 +1655,8 @@ function DugoutScorecard() {
                     code: row.code, list: true,
                     snap: {
                         v: APP_VERSION, over: false, sched: true,
-                        away: { name: (row.away || "TBD").trim(), runs: 0, color: "" },
-                        home: { name: (row.home || "TBD").trim(), runs: 0, color: "" },
+                        away: { name: (row.away || "TBD").trim(), runs: 0, color: teamCrest(row.away).color, logo: teamCrest(row.away).logo },
+                        home: { name: (row.home || "TBD").trim(), runs: 0, color: teamCrest(row.home).color, logo: teamCrest(row.home).logo },
                         inning: 0, half: "top", linescore: [], log: [],
                         ev: (row.event || "").trim(), stage: (row.stage || "").trim(),
                         gnum: String(row.gnum || "").trim(),

@@ -69,6 +69,7 @@
   table.stand td.l, table.stand th.l{ text-align:left; }
   table.stand tbody tr:nth-child(odd){ background:rgba(255,255,255,.03); }
   .meta.stage{ color:var(--gold,#F5C518); font-weight:700; }
+  .chip.logo{ object-fit:contain; background:rgba(255,255,255,.06); border-radius:50%; }
 </style>
 </head>
 <body>
@@ -95,7 +96,8 @@
   // Optional ?e=NAME filters the board to one event by title text only —
   // the public index carries team names and scores, never player names.
   const params = new URLSearchParams(location.search);
-  const evName = (params.get("e") || "").trim();
+  // accept ?event=, ?ev= or the older ?e=
+  const evName = (params.get("event") || params.get("ev") || params.get("e") || "").trim();
   if (evName) $("title").textContent = evName;
 
   let lastUpdated = 0;
@@ -104,9 +106,11 @@
     const live = !g.over;
     const aWin = g.over && g.sA > g.sH, hWin = g.over && g.sH > g.sA;
     const half = g.half === "bottom" ? "Bot" : "Top";
-    const team = (name, color, runs, winner, loser) => `
+    const team = (name, color, runs, winner, loser, logo) => `
       <div class="row ${loser ? "lose" : ""}">
-        <div class="chip" ${color ? `style="background:${esc(color)}"` : ""}></div>
+        ${logo
+          ? `<img class="chip logo" src="${esc(logo)}" alt="">`
+          : `<div class="chip" ${color ? `style="background:${esc(color)}"` : ""}></div>`}
         <div class="nm">${esc(name)}</div>
         <div class="sc">${Number(runs) || 0}</div>
         ${winner ? '<div class="win"></div>' : ""}
@@ -118,8 +122,8 @@
     return `
       <${tag} class="g${inert ? " manual" : ""}"${href}>
         <div class="teams">
-          ${team(g.away, g.ac, g.sched ? "\u2014" : g.sA, aWin, g.over && !aWin)}
-          ${team(g.home, g.hc, g.sched ? "\u2014" : g.sH, hWin, g.over && !hWin)}
+          ${team(g.away, g.ac, g.sched ? "\u2014" : g.sA, aWin, g.over && !aWin, g.al)}
+          ${team(g.home, g.hc, g.sched ? "\u2014" : g.sH, hWin, g.over && !hWin, g.hl)}
         </div>
         <div class="state">
           ${g.sched
@@ -221,7 +225,11 @@
     // group by the day the game was played, newest first; live games lead each day
     const byDay = {};
     list.forEach((g) => { const k = g.gdate || ""; (byDay[k] = byDay[k] || []).push(g); });
-    const days = Object.keys(byDay).sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
+    // A tournament reads forwards (Friday first). A general hub of recent games
+    // reads backwards, newest first.
+    const days = Object.keys(byDay).sort((a, b) => (evName
+        ? (a < b ? -1 : a > b ? 1 : 0)
+        : (a < b ? 1 : a > b ? -1 : 0)));
     let html = "";
     days.forEach((d) => {
       html += `<div class="sec">${esc(dayLabel(d))}</div>`;
