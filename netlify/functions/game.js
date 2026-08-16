@@ -41,6 +41,9 @@ const publicEntry = (code, snap) => ({
   home: String(snap.home && snap.home.name || "Home").slice(0, 28),
   ac: (snap.away && snap.away.color) || "",
   hc: (snap.home && snap.home.color) || "",
+  // team crests (already resized to 96px by the app) — still team-level only
+  al: String((snap.away && snap.away.logo) || "").slice(0, 40000),
+  hl: String((snap.home && snap.home.logo) || "").slice(0, 40000),
   sA: Number(snap.away && snap.away.runs || 0),
   sH: Number(snap.home && snap.home.runs || 0),
   inning: Number(snap.inning || 1),
