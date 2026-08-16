@@ -41,9 +41,8 @@
   .nm{ flex:1; min-width:0; font-size:16px; font-weight:700;
     white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .row.lose .nm,.row.lose .sc{ color:var(--powder); font-weight:600; }
-  .sc{ font-size:19px; font-weight:800; font-variant-numeric:tabular-nums; }
-  .win{ width:0;height:0;border-top:5px solid transparent;border-bottom:5px solid transparent;
-    border-right:6px solid var(--gold); flex:none; }
+  .sc{ font-size:19px; font-weight:800; font-variant-numeric:tabular-nums;
+    min-width:30px; text-align:right; flex:none; }
   .state{ width:76px; flex:none; border-left:1px solid var(--line); padding-left:12px;
     display:flex; flex-direction:column; justify-content:center; gap:3px; }
   .state .s{ font-size:12px; font-weight:800; letter-spacing:.09em; text-transform:uppercase; }
@@ -119,7 +118,7 @@
           : `<div class="chip" ${color ? `style="background:${esc(color)}"` : ""}></div>`}
         <div class="nm">${esc(name)}</div>
         <div class="sc">${Number(runs) || 0}</div>
-        ${winner ? '<div class="win"></div>' : ""}
+
       </div>`;
     // manual results and unplayed fixtures open nothing
     const inert = g.manual || g.sched;
