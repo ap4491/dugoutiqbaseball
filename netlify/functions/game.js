@@ -54,6 +54,9 @@ const publicEntry = (code, snap) => ({
     : [],
   // tournament context for the hub — still team-level only
   ev: String(snap.ev || "").slice(0, 60),
+  // event branding for the hub header
+  evtitle: String(snap.evtitle || "").slice(0, 80),
+  evlogo: String(snap.evlogo || "").slice(0, 60000),
   gdate: String(snap.gdate || "").slice(0, 10),
   gtime: String(snap.gtime || "").slice(0, 5),
   gfield: String(snap.gfield || "").slice(0, 24),
