@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "218"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "219"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1604,6 +1604,7 @@ function DugoutScorecard() {
             batter: "", onDeck: "", pitches: 0, pitcher: "",
             lastPlay: "Final",
             ev: rec.eventName || (g.eventName || ""),
+            evlogo: evLogo || "", evtitle: evTitle || "",
             apool: poolOf(nm("away")),
             hpool: poolOf(nm("home")),
             gdate: rec.date || g.date || "",
@@ -1663,6 +1664,7 @@ function DugoutScorecard() {
                         home: { name: (row.home || "TBD").trim(), runs: 0, color: teamCrest(row.home).color, logo: teamCrest(row.home).logo },
                         inning: 0, half: "top", linescore: [], log: [],
                         ev: (row.event || "").trim(), stage: (row.stage || "").trim(),
+                        evlogo: evLogo || "", evtitle: evTitle || "",
                         gnum: String(row.gnum || "").trim(),
                         apool: poolOf(row.away || ""), hpool: poolOf(row.home || ""),
                         gdate: row.date || "",
@@ -1816,7 +1818,8 @@ function DugoutScorecard() {
                         away: { name: rec.away.name, runs: rec.awayRuns, color: "" },
                         home: { name: rec.home.name, runs: rec.homeRuns, color: "" },
                         inning: 1, half: "top", linescore: line,
-                        ev: rec.eventName, apool: poolOf(rec.away.name), hpool: poolOf(rec.home.name),
+                        ev: rec.eventName, evlogo: evLogo || "", evtitle: evTitle || "",
+                        apool: poolOf(rec.away.name), hpool: poolOf(rec.home.name),
                         gdate: rec.date, gtime: rec.gameTime, gfield: rec.fieldName,
                         // no log and no lineup — there is nothing to replay
                         log: [], manual: true,
@@ -4397,6 +4400,58 @@ function DugoutScorecard() {
     const [pools, setPools] = useState(() => loadPools()); // { "team name": "A" }
     const [stage, setStage] = useState(""); // round robin / semi / championship
     const [gameNum, setGameNum] = useState(""); // "Game 5" on the tournament sheet
+    const [evLogo, setEvLogo] = useState(() => { try {
+        return localStorage.getItem("dugoutiq-evlogo-v1") || "";
+    }
+    catch (_e) {
+        return "";
+    } });
+    const [evTitle, setEvTitle] = useState(() => { try {
+        return localStorage.getItem("dugoutiq-evtitle-v1") || "";
+    }
+    catch (_e) {
+        return "";
+    } });
+    const saveEvBrand = (logo, title) => {
+        try {
+            if (logo != null) {
+                setEvLogo(logo);
+                localStorage.setItem("dugoutiq-evlogo-v1", logo);
+            }
+            if (title != null) {
+                setEvTitle(title);
+                localStorage.setItem("dugoutiq-evtitle-v1", title);
+            }
+        }
+        catch (_e) { }
+    };
+    // same resize path as team crests, so the index stays small
+    const onEventLogoPick = (e) => {
+        const file = e.target.files && e.target.files[0];
+        e.target.value = "";
+        if (!file)
+            return;
+        const reader = new FileReader();
+        reader.onload = () => {
+            const img = new Image();
+            img.onload = () => {
+                const max = 128;
+                const scale = Math.min(max / img.width, max / img.height, 1);
+                const w = Math.max(1, Math.round(img.width * scale));
+                const h = Math.max(1, Math.round(img.height * scale));
+                const cv = document.createElement("canvas");
+                cv.width = w;
+                cv.height = h;
+                cv.getContext("2d").drawImage(img, 0, 0, w, h);
+                try {
+                    saveEvBrand(cv.toDataURL("image/png"), null);
+                }
+                catch (_a) { }
+            };
+            img.src = reader.result;
+        };
+        reader.readAsDataURL(file);
+    };
     const [schedEvent, setSchedEvent] = useState(() => {
         const l = loadSchedule();
         return (l.length && l[0].event) || "";
@@ -5174,6 +5229,7 @@ function DugoutScorecard() {
             lastPlay: g.lastPlay || "",
             // tournament context for the hub — team-level only, no player names
             ev: (game && game.eventName) || eventName || "",
+            evlogo: evLogo || "", evtitle: evTitle || "",
             stage: stage || "",
             gnum: gameNum || "",
             apool: poolOf(nm("away")),
@@ -8401,6 +8457,18 @@ function DugoutScorecard() {
                                 }, "aria-label": "Tournament name" }),
                             React.createElement("span", { className: "limithint" }, "groups these games on the hub")),
                         !schedEvent.trim() && rows.length > 0 && React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--red)", fontSize: 12, margin: "0 0 8px" } }, "Name the tournament \u2014 without it these games can\u2019t be filtered on the hub."),
+                        React.createElement("div", { className: "limitrow", style: { marginBottom: 4 } },
+                            React.createElement("input", { className: "dg-in", placeholder: "Display title (optional)", value: evTitle, onChange: (e) => saveEvBrand(null, e.target.value), "aria-label": "Event display title" }),
+                            React.createElement("span", { className: "limithint" }, "shown on the hub")),
+                        React.createElement("div", { className: "limitrow", style: { marginBottom: 8 } },
+                            React.createElement("label", { className: "dg ghost", style: { cursor: "pointer", textAlign: "center", padding: "8px 0" } },
+                                evLogo ? "Change event logo" : "+ Event logo",
+                                React.createElement("input", { type: "file", accept: "image/*", style: { display: "none" }, onChange: onEventLogoPick })),
+                            evLogo
+                                ? React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 8 } },
+                                    React.createElement("img", { src: evLogo, alt: "", style: { width: 34, height: 34, objectFit: "contain", borderRadius: 8 } }),
+                                    React.createElement("button", { className: "rm", onClick: () => saveEvBrand("", null), "aria-label": "Remove event logo" }, "\u00D7"))
+                                : React.createElement("span", { className: "limithint" }, "optional")),
                         schedEvent.trim() && React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--powder)", fontSize: 11, margin: "0 0 8px", wordBreak: "break-all" } },
                             "Parent link: ", React.createElement("b", null, `${location.origin}/hub.html?event=${encodeURIComponent(schedEvent.trim())}`)),
                         rows.length === 0 && React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--powder)" } }, "No games yet \u2014 add the first below."),

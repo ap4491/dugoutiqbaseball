@@ -73,12 +73,15 @@
      so it overrides both dimensions rather than inheriting the bar shape */
   .chip.logo{ width:34px; height:34px; border-radius:50%; object-fit:contain;
     background:rgba(255,255,255,.08); padding:2px; }
+  .brand{ display:flex; align-items:center; gap:11px; }
+  .brand img{ width:42px; height:42px; object-fit:contain; flex:none; }
+  .brand h1{ margin:0; }
 </style>
 </head>
 <body>
 
 <div class="top">
-  <h1 id="title">Games</h1>
+  <div class="brand"><img id="evlogo" alt="" hidden><h1 id="title">Games</h1></div>
   <div class="sub"><span class="dot" id="dot"></span><span id="status">Loading…</span></div>
   <div class="tabs" id="tabs">
     <button data-v="sched" class="on">Schedule</button>
@@ -278,7 +281,22 @@
         const liveN = shown.filter((g) => !g.over).length;
         $("status").textContent = `${shown.length} game${shown.length===1?"":"s"}`
           + (liveN ? ` \u00b7 ${liveN} live` : "") + " \u00b7 updating";
-        if (evName) { const h = document.querySelector("h1"); if (h) h.textContent = evName; }
+        // prefer the display title the scorer set; fall back to the URL name with
+        // runTogetherWords split back out so "12UGirlsTier2" reads properly
+        const brand = shown.find((g) => g.evtitle || g.evlogo) || {};
+        const pretty = (s) => String(s || "")
+          .replace(/([a-z])([A-Z])/g, "$1 $2")        // GirlsTier -> Girls Tier
+          .replace(/([A-Za-z])([0-9])/g, "$1 $2")     // Tier2 -> Tier 2
+          .replace(/([0-9]+[Uu])([A-Z])/g, "$1 $2")   // 12UGirls -> 12U Girls
+          .replace(/\s+/g, " ")
+          .trim();
+        const t = document.getElementById("title");
+        if (t) t.textContent = brand.evtitle || (evName ? pretty(evName) : "Games");
+        const el = document.getElementById("evlogo");
+        if (el) {
+          if (brand.evlogo) { el.src = brand.evlogo; el.hidden = false; }
+          else el.hidden = true;
+        }
         $("dot").classList.remove("stale");
       }
     }catch(e){ /* keep the last view */ }
