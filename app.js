@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "217"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "218"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1558,6 +1558,10 @@ function DugoutScorecard() {
             if (lc(teams[sd].name) === k)
                 return { color: teams[sd].color || "", logo: teams[sd].logo || "" };
         }
+        for (const r of rosters) {
+            if (lc(r.name) === k && (r.logo || r.color))
+                return { color: r.color || "", logo: r.logo || "" };
+        }
         for (const rec of games) {
             for (const sd of ["away", "home"]) {
                 if (rec[sd] && lc(rec[sd].name) === k && (rec[sd].logo || rec[sd].color))
@@ -2109,7 +2113,8 @@ function DugoutScorecard() {
         setConfirmRosterDel(null); }, [teamPickSide]);
     const saveRoster = (side) => {
         const name = teams[side].name.trim() || "My Team";
-        const entry = { name, lineup: snapshot(teams[side].lineup) };
+        const entry = { name, color: teams[side].color || "", logo: teams[side].logo || "",
+            lineup: snapshot(teams[side].lineup) };
         const next = [entry, ...rosters.filter((r) => r.name !== name)].slice(0, 12);
         setRosters(next);
         persistRosters(next);
@@ -2119,7 +2124,13 @@ function DugoutScorecard() {
         const r = rosters[idx];
         if (!r)
             return;
-        setTeams((t) => (Object.assign(Object.assign({}, t), { [side]: { name: r.name, lineup: snapshot(r.lineup) } })));
+        setTeams((t) => (Object.assign(Object.assign({}, t), { [side]: {
+            name: r.name,
+            // keep the crest with the roster — loading one used to wipe it
+            color: r.color || t[side].color || "",
+            logo: r.logo || t[side].logo || "",
+            lineup: snapshot(r.lineup),
+        } })));
         setTeamPickSide(null);
         setSetupMsg(`Loaded "${r.name}" into the ${side === "away" ? "visiting" : "home"} lineup`);
     };
@@ -8406,6 +8417,9 @@ function DugoutScorecard() {
                                 React.createElement("input", { className: "dg-in", type: "time", value: r.time || "", onChange: (e) => upd(r.id, "time", e.target.value), "aria-label": "Time" })),
                             React.createElement("div", { className: "limitrow" },
                                 React.createElement("input", { className: "dg-in", placeholder: "Field", value: r.field || "", onChange: (e) => upd(r.id, "field", e.target.value), "aria-label": "Field" }),
+                                React.createElement("span", { className: "limithint", title: "Crest found for both teams?" },
+                                    (teamCrest(r.away).logo ? "\u25CF" : "\u25CB"), " ",
+                                    (teamCrest(r.home).logo ? "\u25CF" : "\u25CB")),
                                 React.createElement("select", { className: "dg-sel", value: r.stage || "", onChange: (e) => upd(r.id, "stage", e.target.value), "aria-label": "Stage" },
                                     React.createElement("option", { value: "" }, "Round robin"),
                                     React.createElement("option", { value: "Tiebreaker" }, "Tiebreaker"),
