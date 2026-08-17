@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "219"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "220"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1471,6 +1471,8 @@ function DugoutScorecard() {
         setDivision(snap.division || "");
         setRunCap(snap.runCap == null ? 0 : snap.runCap);
         setCapLastOpen(snap.capLastOpen == null ? true : !!snap.capLastOpen);
+        if (snap.noWalk)
+            setNoWalk({ away: !!snap.noWalk.away, home: !!snap.noWalk.home });
         setExtraRunner(!!snap.extraRunner);
         setGameType(snap.gameType || "season");
         setEventName(snap.eventName || "");
@@ -2331,6 +2333,7 @@ function DugoutScorecard() {
             division: division || "",
             runCap: runCap || 0,
             capLastOpen: !!capLastOpen,
+            noWalk: { away: !!noWalk.away, home: !!noWalk.home },
             extraRunner: !!extraRunner,
             inning: 1,
             half: "top",
@@ -3006,7 +3009,7 @@ function DugoutScorecard() {
         // batter gets (3 - strikes) attempts to put it in play, or she's out. The
         // four balls still count on the pitcher's count; the coach's don't count
         // for anyone. Gated to the division so nothing else in the app changes.
-        if (g.balls === 3 && division === "12U Girls") {
+        if (g.balls === 3 && noWalk[battingSide]) {
             g.balls = 4;
             g.coachPitch = { b: g.batter[battingSide], left: Math.max(1, 3 - g.strikes) };
             logPitch(g, "ball", `Ball 4 \u2014 coach pitch, ${g.coachPitch.left} attempt${g.coachPitch.left === 1 ? "" : "s"}`);
@@ -4399,6 +4402,15 @@ function DugoutScorecard() {
     const [schedOpen, setSchedOpen] = useState(false);
     const [pools, setPools] = useState(() => loadPools()); // { "team name": "A" }
     const [stage, setStage] = useState(""); // round robin / semi / championship
+    // No-walk / coach pitch is a 12U Girls rule, but an exhibition can pit a
+    // coach-pitch team against one that walks, so it's tracked per side.
+    const [noWalk, setNoWalk] = useState(() => {
+        const sv = saved0 && saved0.noWalk;
+        if (sv)
+            return { away: !!sv.away, home: !!sv.home };
+        const on = (saved0 && saved0.division) === "12U Girls";
+        return { away: on, home: on };
+    });
     const [gameNum, setGameNum] = useState(""); // "Game 5" on the tournament sheet
     const [evLogo, setEvLogo] = useState(() => { try {
         return localStorage.getItem("dugoutiq-evlogo-v1") || "";
@@ -7310,6 +7322,7 @@ function DugoutScorecard() {
                         React.createElement("select", { className: "dg-sel", value: division, onChange: (e) => {
                                 const dv = e.target.value;
                                 setDivision(dv);
+                                setNoWalk({ away: dv === "12U Girls", home: dv === "12U Girls" });
                                 if (dv && PITCH_DIVISIONS[dv])
                                     setPitchLimit(PITCH_DIVISIONS[dv][4]); // daily max
                             }, "aria-label": "Age division for pitch count rules" },
@@ -7342,6 +7355,11 @@ function DugoutScorecard() {
                     React.createElement("label", { className: "togglerow" },
                         React.createElement("input", { type: "checkbox", checked: extraRunner, onChange: (e) => setExtraRunner(e.target.checked), "aria-label": "Extra innings start with a runner on second" }),
                         React.createElement("span", null, "Extra innings start with a runner on 2nd")),
+                    // Set by the division, but overridable per team so an exhibition
+                    // can run a coach-pitch club against one that walks.
+                    ["away", "home"].map((sd) => React.createElement("label", { className: "togglerow", key: sd },
+                        React.createElement("input", { type: "checkbox", checked: !!noWalk[sd], onChange: (e) => setNoWalk(Object.assign({}, noWalk, { [sd]: e.target.checked })), "aria-label": `${sd} team coach pitch on ball four` }),
+                        React.createElement("span", null, `${(teams[sd].name || (sd === "away" ? "Visitors" : "Home")).slice(0, 18)}: no walks \u2014 coach pitch on ball 4`))),
                     React.createElement("div", { className: "limitrow" },
                         React.createElement("input", { className: "dg-in", type: "number", min: "0", max: "200", value: pitchLimit, onChange: (e) => setPitchLimit(Math.max(0, parseInt(e.target.value || "0", 10))), "aria-label": "Pitch limit per pitcher" }),
                         React.createElement("span", { className: "limithint" },
