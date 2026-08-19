@@ -71,7 +71,8 @@
   .crow{ display:flex; align-items:center; gap:7px; }
   .crow span{ font-family:"Saira Condensed",sans-serif; font-size:13px; color:var(--muted); width:14px; }
   .crow i{ width:13px; height:13px; border-radius:50%; background:rgba(255,255,255,.07); }
-  .crow i.on{ background:var(--amber); box-shadow:0 0 12px rgba(245,197,24,.75); }
+  /* balls and strikes are white in the scoring app; outs stay red */
+  .crow i.on{ background:#fff; box-shadow:0 0 12px rgba(255,255,255,.7); }
   .crow.o i.on{ background:var(--red); box-shadow:0 0 12px rgba(232,41,28,.7); }
   .dia{ width:198px; height:138px; flex:0 0 auto; filter:drop-shadow(0 10px 22px rgba(0,0,0,.45)); }
   .dia .rn{ font-family:"Saira Condensed",sans-serif; font-weight:700; font-size:13px; letter-spacing:.03em;

@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "224"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "226"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -3343,7 +3343,7 @@ function DugoutScorecard() {
         // If runners are still on and the inning continues, a manual drag right
         // after this out folds onto this out's line ("groundout 3; X takes 3rd")
         // rather than spawning a separate play-by-play event.
-        if (!flipped && (g.bases.first || g.bases.second || g.bases.third)) {
+        if (g.bases.first || g.bases.second || g.bases.third) {
             g.openPlay = lastPAIdx(g);
             // 9.04(a)(2) — a run scoring on an infield out is an RBI. Not on a
             // strikeout: a runner coming home there did it on his own.
@@ -3753,11 +3753,11 @@ function DugoutScorecard() {
             const forName = r.b != null && g.lineup[battingSide][r.b] ? g.lineup[battingSide][r.b].name : "runner";
             if (!player) {
                 delete r.cr;
-                logPlay(g, `Courtesy runner removed at ${baseLabel(base)} — ${forName} back in`, "info");
+                logDuringPA(g, `Courtesy runner removed at ${baseLabel(base)} \u2014 ${forName} back in`, "info");
                 return;
             }
             r.cr = { name: player.name, num: player.num || "" };
-            logPlay(g, `Courtesy runner: ${player.name} runs for ${forName} at ${baseLabel(base)}`, "info");
+            logDuringPA(g, `Courtesy runner: ${player.name} runs for ${forName} at ${baseLabel(base)}`, "info");
         });
         setCrMenu(null);
         setBaseMenu(null);
@@ -6731,12 +6731,14 @@ function DugoutScorecard() {
           height: 20px; display: flex; align-items: center; justify-content: center;
         }
         .team-cell .tname .fit-name { display: inline-block; transform-origin: center; white-space: nowrap; }
-        .team-cell .tname.logo-only { overflow: visible; }
-        .team-cell .tlogo-lg { height: 34px; width: 34px; object-fit: contain; border-radius: 5px; }
+        .team-cell .tname.logo-only { overflow: visible; height: 40px; margin-bottom: 6px; }
+        .team-cell .tlogo-lg { height: 34px; width: 34px; object-fit: contain; border-radius: 5px;
+          margin-bottom: 2px; }
         .team-cell .tscore {
           font-family: 'Saira Condensed', sans-serif; font-weight: 700;
           font-size: 44px; line-height: 1; color: var(--white);
           text-shadow: 0 0 18px rgba(169,197,232,.45);
+          margin-top: 4px;
         }
         .team-cell.atbat { border-color: var(--white); }
         .team-custom { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-bottom:10px; }
