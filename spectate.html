@@ -129,6 +129,9 @@
 
   .msg{ text-align:center; color:var(--powder); padding:48px 10px; }
   .foot{ text-align:center; font-size:11px; color:var(--muted); margin-top:26px; letter-spacing:.04em; }
+  .vidhide{ display:block; width:100%; margin-top:6px; padding:7px 0; background:none;
+    border:0; color:var(--muted); font-family:inherit; font-size:11.5px; letter-spacing:.12em;
+    text-transform:uppercase; cursor:pointer; }
 </style>
 </head>
 <body>
@@ -177,7 +180,8 @@
   function videoBlock(v){
     if(!v) return "";
     if(v.mode==="embed")
-      return `<div class="card vidcard"><div class="vidwrap"><iframe src="${v.src}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen frameborder="0"></iframe></div></div>`;
+      return `<div class="card vidcard" id="vidcard"><div class="vidwrap"><iframe src="${v.src}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen frameborder="0" onerror="this.closest('.vidcard').remove()"></iframe></div>`
+        + `<button class="vidhide" onclick="this.closest('.vidcard').remove()" aria-label="Hide the video">Hide video</button></div>`;
     const names={youtube:"YouTube",facebook:"Facebook",streamyard:"StreamYard",instagram:"Instagram",tiktok:"TikTok"};
     return `<a class="card watchlink" href="${v.src}" target="_blank" rel="noopener">▶&nbsp; Watch live on ${names[v.type]||"the stream"} ↗</a>`;
   }
@@ -238,7 +242,7 @@
           mids.filter(m=>m.at>=seq.length).forEach(m=>parts.push(`<i class="mid">${esc(m.t)}</i>`));
           line=`<div class="q">${parts.join(" &middot; ")}</div>`;
         }
-        items.push(`<div class="pl ${scored?'scored':''}"><div class="b">${esc(e.b||"")}</div>${line}<div class="r">${esc(e.r)}</div></div>`);
+        items.push(`<div class="pl ${scored?'scored':''}"><div class="b">${esc(e.b||"")}</div><div class="r">${esc(e.r)}</div>${line}</div>`);
       } else if(e.t){
         items.push(`<div class="pl ev ${e.k==="half"?"half":""}"><div class="r">${esc(e.t)}</div></div>`);
       }

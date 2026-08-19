@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "222"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "224"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1677,7 +1677,8 @@ function DugoutScorecard() {
         }).catch(() => { });
     };
     const publishAllFixtures = () => {
-        const named = schedule.filter((r) => !r.played && (r.event || "").trim());
+        const named = schedule.filter((r) => !r.played && (r.event || "").trim()
+            && (!schedEvent.trim() || lc(r.event) === lc(schedEvent)));
         named.forEach((r) => publishFixture(r, false));
         const skipped = schedule.filter((r) => !r.played && !(r.event || "").trim()).length;
         try {
@@ -8420,6 +8421,7 @@ function DugoutScorecard() {
                         React.createElement("label", { style: { display: "block", fontSize: "14px", marginBottom: "5px", color: "#fff" } },
                             "\uD83D\uDCFA Live video link ",
                             React.createElement("span", { style: { color: "#A9C5E8", fontWeight: 400 } }, "(optional)")),
+                        liveVideo && React.createElement("button", { className: "dg ghost", style: { width: "100%", marginBottom: 6 }, onClick: () => setLiveVideo("") }, "\u00D7 Remove the stream (hides the video window)"),
                         React.createElement("input", { type: "url", value: liveVideo, placeholder: "Paste a YouTube, Facebook, Instagram, TikTok, or StreamYard link", onChange: (e) => setLiveVideo(e.target.value), style: {
                                 width: "100%",
                                 padding: "10px",
@@ -8527,6 +8529,7 @@ function DugoutScorecard() {
                     React.createElement("div", { className: "btnrow" },
                         React.createElement("button", { className: "dg hit", onClick: () => {
                                 setHistory([]);
+                                setLiveVideo(""); // last game's stream is over
                                 setConfirmNew(false);
                                 playBall();
                             } }, "Rematch \u2014 same lineups (double-header)"),
@@ -8538,6 +8541,7 @@ function DugoutScorecard() {
                                 setPhase("setup");
                                 setGame(null);
                                 setHistory([]);
+                                setLiveVideo("");
                                 setConfirmNew(false);
                             } }, "New game \u2014 fresh lineups"),
                         React.createElement("button", { className: "dg ghost", onClick: () => setConfirmNew(false) }, "Keep current game"))))),
@@ -8551,7 +8555,9 @@ function DugoutScorecard() {
                         React.createElement("button", { className: "dg ghost", onClick: () => { const f = errKind.onPick; setErrKind(null); f(""); } }, "Skip \u2014 just E"),
                         React.createElement("button", { className: "dg ghost", onClick: () => setErrKind(null) }, "Cancel"))))),
             schedOpen && (() => {
-                const rows = schedule.slice().sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
+                const rows = schedule
+                    .filter((r) => !schedEvent.trim() || lc(r.event) === lc(schedEvent))
+                    .slice().sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
                 const upd = (id, k, v) => saveSchedule(schedule.map((r) => (r.id === id ? Object.assign({}, r, { [k]: v }) : r)));
                 return (React.createElement("div", { className: "modal-back", onClick: () => setSchedOpen(false) },
                     React.createElement("div", { className: "modal set-modal", onClick: (e) => e.stopPropagation() },
@@ -8563,10 +8569,26 @@ function DugoutScorecard() {
                         React.createElement("div", { className: "limitrow", style: { marginBottom: 4 } },
                             React.createElement("input", { className: "dg-in", placeholder: "Tournament name", value: schedEvent, onChange: (e) => {
                                     const v = e.target.value;
+                                    const was = schedEvent.trim();
                                     setSchedEvent(v);
-                                    saveSchedule(schedule.map((r) => Object.assign({}, r, { event: v.trim() })));
+                                    // rename only THIS tournament's fixtures — renaming
+                                    // everything would merge a second event into it
+                                    if (was)
+                                        saveSchedule(schedule.map((r) => (lc(r.event) === lc(was) ? Object.assign({}, r, { event: v.trim() }) : r)));
                                 }, "aria-label": "Tournament name" }),
                             React.createElement("span", { className: "limithint" }, "groups these games on the hub")),
+                        // more than one tournament in the schedule -> switch between them
+                        (() => {
+                            const evs = [];
+                            schedule.forEach((r) => { const e = (r.event || "").trim(); if (e && !evs.some((x) => lc(x) === lc(e))) evs.push(e); });
+                            if (evs.length < 2 && (!evs.length || lc(evs[0]) === lc(schedEvent)))
+                                return null;
+                            return React.createElement("div", { className: "limitrow", style: { marginBottom: 6 } },
+                                React.createElement("select", { className: "dg-sel", value: evs.some((x) => lc(x) === lc(schedEvent)) ? evs.find((x) => lc(x) === lc(schedEvent)) : "", onChange: (e) => setSchedEvent(e.target.value), "aria-label": "Switch tournament" },
+                                    React.createElement("option", { value: schedEvent }, schedEvent.trim() || "(new)"),
+                                    evs.filter((x) => lc(x) !== lc(schedEvent)).map((n) => React.createElement("option", { key: n, value: n }, n))),
+                                React.createElement("span", { className: "limithint" }, `${evs.length} tournaments saved`));
+                        })(),
                         !schedEvent.trim() && rows.length > 0 && React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--red)", fontSize: 12, margin: "0 0 8px" } }, "Name the tournament \u2014 without it these games can\u2019t be filtered on the hub."),
                         React.createElement("div", { className: "limitrow", style: { marginBottom: 4 } },
                             React.createElement("input", { className: "dg-in", placeholder: "Display title (optional)", value: evTitle, onChange: (e) => saveEvBrand(null, e.target.value), "aria-label": "Event display title" }),
@@ -8612,7 +8634,7 @@ function DugoutScorecard() {
                                 React.createElement("button", { className: "rm", onClick: () => { publishFixture(r, true); saveSchedule(schedule.filter((x) => x.id !== r.id)); }, "aria-label": "Remove fixture" }, "\u00D7")))),
                         (() => {
                             const teams2 = [];
-                            schedule.forEach((r) => ["away", "home"].forEach((k) => {
+                            rows.forEach((r) => ["away", "home"].forEach((k) => {
                                 const n = (r[k] || "").trim();
                                 if (n && !teams2.some((t) => lc(t) === lc(n)))
                                     teams2.push(n);
