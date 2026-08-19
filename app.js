@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "220"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "222"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1473,7 +1473,8 @@ function DugoutScorecard() {
         setCapLastOpen(snap.capLastOpen == null ? true : !!snap.capLastOpen);
         if (snap.noWalk)
             setNoWalk({ away: !!snap.noWalk.away, home: !!snap.noWalk.home });
-        setExtraRunner(!!snap.extraRunner);
+        setExtraRunner(snap.extraRunner === true ? "second" : (snap.extraRunner || "off"));
+        setMercy(snap.mercy || "");
         setGameType(snap.gameType || "season");
         setEventName(snap.eventName || "");
         setGameTime(snap.gameTime || "");
@@ -2334,7 +2335,8 @@ function DugoutScorecard() {
             runCap: runCap || 0,
             capLastOpen: !!capLastOpen,
             noWalk: { away: !!noWalk.away, home: !!noWalk.home },
-            extraRunner: !!extraRunner,
+            extraRunner: extraRunner || "off",
+            mercy: mercy || "",
             inning: 1,
             half: "top",
             balls: 0,
@@ -2506,6 +2508,36 @@ function DugoutScorecard() {
             if (g.half === "bottom" && a !== h)
                 g.autoOver = true;
         })();
+        // Mercy rule (Provincials 1.10): "12 runs after 4 innings (3.5 with the
+        // home team ahead)". A completed top half counts as the half-inning
+        // variant, but ONLY when the home team is the one ahead — the visitors
+        // leading after the top means the home team still bats.
+        (() => {
+            if (g.autoOver || g.over || !mercy)
+                return;
+            const rules = String(mercy).split(",").map((p) => {
+                const m = p.trim().match(/^(\d+)\s*@\s*([\d.]+)$/);
+                return m ? { runs: Number(m[1]), inn: Number(m[2]) } : null;
+            }).filter(Boolean);
+            if (!rules.length)
+                return;
+            const sum = (side) => g.linescore.reduce((t, r) => t + (r[side] || 0), 0);
+            const a = sum("away"), h = sum("home");
+            const lead = Math.abs(a - h);
+            const homeAhead = h > a;
+            // innings completed by the trailing side
+            const done = g.half === "bottom" ? g.inning : g.inning - 1;
+            const halfDone = g.half === "top" ? g.inning - 0.5 : g.inning;
+            rules.forEach((r) => {
+                if (lead < r.runs)
+                    return;
+                if (done >= r.inn)
+                    g.autoOver = true;
+                // the half-inning form only applies with the home team ahead
+                else if (homeAhead && halfDone >= r.inn - 0.5)
+                    g.autoOver = true;
+            });
+        })();
         // Half-inning summary line: what the side that just batted did, and who's
         // due up next. Gives the play-by-play natural breaks and the replay
         // chapter markers. Computed BEFORE the flip, while inning/half still
@@ -2541,6 +2573,7 @@ function DugoutScorecard() {
         // or the next half-inning's first pitch lands on the previous batter's row.
         g.openPA = null;
         g.coachPitch = null;
+        g.wpMark = null;
         g.pendRuns = 0;
         g.openK = null;
         g.openTag = null;
@@ -2574,15 +2607,31 @@ function DugoutScorecard() {
             // hitter. He's flagged `placed` (no plate appearance, so his scorebook
             // cell is left alone) and `ue`, because the pitcher didn't put him on:
             // a run he scores is unearned.
-            if (extraRunner && g.inning > scheduledInnings()) {
+            // Provincials 1.13: round-robin extras start with runners on 1st AND
+            // 2nd (the previous two batters). Elimination games are played under
+            // normal rules, so the stage switches this off.
+            // "Championship" contains no "final", so it must be matched explicitly —
+            // missing it would put runners on in the game that decides the title.
+            const elim = /final|champ|semi|quarter|bronze|elim/i.test(stage || "");
+            if (extraRunner !== "off" && !elim && g.inning > scheduledInnings()) {
                 const lu = (g.lineup && g.lineup[nbs]) || [];
                 if (lu.length) {
                     const nextIdx = (g.batter && g.batter[nbs]) || 0;
-                    const bIdx = (nextIdx - 1 + lu.length) % lu.length;
-                    g.bases.second = { b: bIdx, rp: curPIdx(g, nfs), ue: true, placed: true };
-                    const who = lu[bIdx] ? lu[bIdx].name : "Runner";
-                    g.log.push({ type: "ev", i: g.inning, h: g.half, k: "half",
-                        t: `Extra innings \u2014 ${who} starts at 2nd` });
+                    const prev1 = (nextIdx - 1 + lu.length) % lu.length; // last batter
+                    const prev2 = (nextIdx - 2 + lu.length) % lu.length; // the one before
+                    const mk = (b) => ({ b, rp: curPIdx(g, nfs), ue: true, placed: true });
+                    const nm = (b) => (lu[b] ? lu[b].name : "Runner");
+                    if (extraRunner === "both") {
+                        g.bases.second = mk(prev1);
+                        g.bases.first = mk(prev2);
+                        g.log.push({ type: "ev", i: g.inning, h: g.half, k: "half",
+                            t: `Extra innings \u2014 ${nm(prev2)} at 1st, ${nm(prev1)} at 2nd` });
+                    }
+                    else {
+                        g.bases.second = mk(prev1);
+                        g.log.push({ type: "ev", i: g.inning, h: g.half, k: "half",
+                            t: `Extra innings \u2014 ${nm(prev1)} starts at 2nd` });
+                    }
                 }
             }
         }
@@ -2745,6 +2794,7 @@ function DugoutScorecard() {
         g.openPA = g.log.length - 1;
     };
     const logPitch = (g, label, ticker) => {
+        g.wpMark = null; // a new pitch means any further advance is a new WP/PB
         ensurePA(g);
         g.log[g.openPA].seq.push(label);
         g.lastPlay = ticker;
@@ -4385,7 +4435,13 @@ function DugoutScorecard() {
     const [hrMenu, setHrMenu] = useState(false); // HR: over the fence or inside the park
     const [runCap, setRunCap] = useState(() => { const v = saved0 && saved0.runCap; return v == null ? 0 : v; }); // 0 = no limit
     const [capLastOpen, setCapLastOpen] = useState(() => (saved0 && saved0.capLastOpen != null) ? !!saved0.capLastOpen : true);
-    const [extraRunner, setExtraRunner] = useState(() => !!(saved0 && saved0.extraRunner)); // runner on 2nd in extras
+    // "off" | "second" (one runner) | "both" (1st and 2nd — BNS Provincials 1.13)
+    const [extraRunner, setExtraRunner] = useState(() => {
+        const v = saved0 && saved0.extraRunner;
+        if (v === true)
+            return "second"; // older saves stored a boolean
+        return v || "off";
+    });
     const [baseMode, setBaseMode] = useState(null); // base menu: null | "adv" | "out"
     const [gameType, setGameType] = useState(() => (saved0 && saved0.gameType) || "season"); // season | playoff | tournament | exhibition
     const [eventName, setEventName] = useState(() => (saved0 && saved0.eventName) || ""); // e.g. "Bridgewater Invitational"
@@ -4412,6 +4468,9 @@ function DugoutScorecard() {
         return { away: on, home: on };
     });
     const [gameNum, setGameNum] = useState(""); // "Game 5" on the tournament sheet
+    // Mercy rule as run/inning pairs, e.g. "12@4,10@5" — BNS Provincials 1.10.
+    // Blank = no mercy rule.
+    const [mercy, setMercy] = useState(() => (saved0 && saved0.mercy) || "");
     const [evLogo, setEvLogo] = useState(() => { try {
         return localStorage.getItem("dugoutiq-evlogo-v1") || "";
     }
@@ -4698,14 +4757,37 @@ function DugoutScorecard() {
             return;
         }
         mutate((g) => {
-            if (cause === "wp")
-                curP(g, fieldingSide).wp = (curP(g, fieldingSide).wp || 0) + 1;
-            else
-                g.pb[fieldingSide] = (g.pb[fieldingSide] || 0) + 1;
+            const label = cause === "wp" ? "wild pitch" : "passed ball";
+            const pitchIdx = (g.openPA != null && g.log[g.openPA]) ? (g.log[g.openPA].seq || []).length : -1;
+            // One wild pitch can move several runners, or one runner two bases.
+            // Charge the pitcher ONCE per pitch and keep it on a single line —
+            // each call used to charge a fresh WP and write another event.
+            const same = !!(g.wpMark && g.wpMark.cause === cause && g.wpMark.pa === g.openPA && g.wpMark.pitch === pitchIdx);
+            if (!same) {
+                if (cause === "wp")
+                    curP(g, fieldingSide).wp = (curP(g, fieldingSide).wp || 0) + 1;
+                else
+                    g.pb[fieldingSide] = (g.pb[fieldingSide] || 0) + 1;
+                g.wpMark = { cause, pa: g.openPA, pitch: pitchIdx, idx: null };
+            }
             g.bases[target] = g.bases[base];
             g.bases[base] = false;
             cardAdvance(g, g.bases[target], target === "second" ? 2 : 3);
-            logDuringPA(g, `${who} takes ${baseLabel(target)} on a ${cause === "wp" ? "wild pitch" : "passed ball"}`);
+            const moved = `${who} to ${baseLabel(target)}`;
+            const row = g.openPA != null ? g.log[g.openPA] : null;
+            const prior = same && g.wpMark && g.wpMark.idx != null && row && row.mid ? row.mid[g.wpMark.idx] : null;
+            if (prior) {
+                if (typeof prior === "string")
+                    row.mid[g.wpMark.idx] = `${prior}, ${moved}`;
+                else
+                    prior.t = `${prior.t}, ${moved}`;
+                g.lastPlay = typeof row.mid[g.wpMark.idx] === "string" ? row.mid[g.wpMark.idx] : row.mid[g.wpMark.idx].t;
+            }
+            else {
+                logDuringPA(g, `${label} \u2014 ${moved}`);
+                if (g.wpMark && row && row.mid && row.mid.length)
+                    g.wpMark.idx = row.mid.length - 1;
+            }
         });
         setBaseMenu(null);
     };
@@ -7352,9 +7434,20 @@ function DugoutScorecard() {
                     runCap > 0 && React.createElement("label", { className: "togglerow" },
                         React.createElement("input", { type: "checkbox", checked: capLastOpen, onChange: (e) => setCapLastOpen(e.target.checked), "aria-label": "Last inning has no run limit" }),
                         React.createElement("span", null, "Last inning open (no run limit)")),
-                    React.createElement("label", { className: "togglerow" },
-                        React.createElement("input", { type: "checkbox", checked: extraRunner, onChange: (e) => setExtraRunner(e.target.checked), "aria-label": "Extra innings start with a runner on second" }),
-                        React.createElement("span", null, "Extra innings start with a runner on 2nd")),
+                    React.createElement("div", { className: "limitrow" },
+                        React.createElement("select", { className: "dg-sel", value: mercy, onChange: (e) => setMercy(e.target.value), "aria-label": "Mercy rule" },
+                            React.createElement("option", { value: "" }, "No mercy"),
+                            React.createElement("option", { value: "12@4,10@5" }, "12@4, 10@5"),
+                            React.createElement("option", { value: "15@3,10@4,8@5" }, "15@3, 10@4, 8@5"),
+                            React.createElement("option", { value: "10@4" }, "10@4"),
+                            React.createElement("option", { value: "15@4" }, "15@4")),
+                        React.createElement("span", { className: "limithint" }, "mercy rule \u00b7 runs @ innings")),
+                    React.createElement("div", { className: "limitrow" },
+                        React.createElement("select", { className: "dg-sel", value: extraRunner, onChange: (e) => setExtraRunner(e.target.value), "aria-label": "Extra innings baserunners" },
+                            React.createElement("option", { value: "off" }, "None"),
+                            React.createElement("option", { value: "second" }, "On 2nd"),
+                            React.createElement("option", { value: "both" }, "1st + 2nd")),
+                        React.createElement("span", { className: "limithint" }, "extra-inning runners \u00b7 off in elimination games")),
                     // Set by the division, but overridable per team so an exhibition
                     // can run a coach-pitch club against one that walks.
                     ["away", "home"].map((sd) => React.createElement("label", { className: "togglerow", key: sd },
