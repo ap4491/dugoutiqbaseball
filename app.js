@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "231"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "232"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1465,6 +1465,14 @@ function DugoutScorecard() {
     const reopenGame = (record) => {
         if (record && record.snapshot && record.snapshot.game)
             healFinishedGame(record.snapshot.game);
+        // Opening an old game is review, not a broadcast. Leaving the live push
+        // running meant the reopened game was published under whatever code was
+        // last active — overwriting a different game's card on the hub.
+        const g0 = record && record.snapshot && record.snapshot.game;
+        if (g0 && g0.over) {
+            setLiveOn(false);
+            setLiveCode(record.liveCode || null);
+        }
         const snap = record.snapshot || {};
         if (snap.teams)
             setTeams(snapshot(snap.teams));
@@ -1639,11 +1647,45 @@ function DugoutScorecard() {
             return next;
         });
     };
+    // Stable per-game hub code: same record, same code, every time.
+    const codeForRecord = (rec) => {
+        const seed = String((rec && rec.id) || 0) + "|" + String((rec && rec.date) || "");
+        let h = 5381;
+        for (let i = 0; i < seed.length; i++)
+            h = ((h * 33) ^ seed.charCodeAt(i)) >>> 0;
+        const A = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        let out = "G";
+        for (let i = 0; i < 5; i++) {
+            out += A[h % A.length];
+            h = Math.floor(h / A.length) + 7;
+        }
+        return out;
+    };
+    // Post a saved game, reusing whatever code it is ALREADY listed under. Games
+    // posted before the app recorded codes would otherwise get a fresh code and
+    // leave their old card behind as a duplicate.
+    const publishSavedGameSmart = (rec, done) => {
+        if (rec && rec.liveCode) {
+            done(publishSavedGame(rec));
+            return;
+        }
+        fetch(LIVE_ENDPOINT + "?list=1", { cache: "no-store" })
+            .then((r) => r.json())
+            .then((d) => {
+                const mine = ((d && d.games) || []).find((g) => lc(g.away) === lc(rec.away.name)
+                    && lc(g.home) === lc(rec.home.name)
+                    && String(g.gdate || "") === String(rec.date || ""));
+                done(publishSavedGame(mine ? Object.assign({}, rec, { liveCode: mine.code }) : rec));
+            })
+            .catch(() => done(publishSavedGame(rec)));
+    };
     const publishSavedGame = (rec) => {
         const g = rec && rec.snapshot && rec.snapshot.game;
         if (!g)
             return null;
-        const code = rec.liveCode || ("G" + Math.random().toString(36).slice(2, 7).toUpperCase());
+        // Derive the code from the record id so re-posting always lands on the
+        // same card. A random code meant every ↻ on an older save made a new one.
+        const code = rec.liveCode || codeForRecord(rec);
         const nm = (side) => ((rec[side] && rec[side].name) || "").trim() || (side === "away" ? "Visitors" : "Home");
         const sum = (side) => (g.linescore || []).reduce((t, r) => t + (r[side] || 0), 0);
         // current crest wins, so re-posting refreshes a logo you've since changed
@@ -2185,7 +2227,9 @@ function DugoutScorecard() {
         const name = teams[side].name.trim() || "My Team";
         const entry = { name, color: teams[side].color || "", logo: teams[side].logo || "",
             lineup: snapshot(teams[side].lineup) };
-        const next = [entry, ...rosters.filter((r) => r.name !== name)].slice(0, 12);
+        // A tournament can involve a dozen-plus clubs; the old cap of 12 silently
+        // dropped the oldest each time a new one was saved.
+        const next = [entry, ...rosters.filter((r) => r.name !== name)].slice(0, 60);
         setRosters(next);
         persistRosters(next);
         setSetupMsg(`Saved "${name}" (${entry.lineup.length} batters) to My Teams`);
@@ -7874,7 +7918,7 @@ function DugoutScorecard() {
                             eventList().map((n) => React.createElement("option", { key: n, value: n }, n))),
                         React.createElement("button", { className: "dg ghost", disabled: seasonEvent === "all", onClick: () => {
                                 const list = games.filter((r) => lc(recEvent(r)) === lc(seasonEvent) && !r.resultOnly);
-                                list.forEach((r) => publishSavedGame(r));
+                                list.forEach((r) => publishSavedGameSmart(r, () => { }));
                                 alert(`Posted ${list.length} game${list.length === 1 ? "" : "s"} to the hub.`);
                             } }, "Post event to hub")),
                     React.createElement("div", { className: "plog", style: { textAlign: "left" } },
@@ -7913,7 +7957,7 @@ function DugoutScorecard() {
                                         React.createElement("button", { className: "replay-btn", onClick: () => setGameDateFor(gm.id, editDate.date), title: "Save date" }, "\u2713"),
                                         React.createElement("button", { className: "rm", onClick: () => setEditDate(null), "aria-label": "Cancel" }, "\u00D7"))
                                     : React.createElement("button", { className: "replay-btn", onClick: () => setEditDate({ id: gm.id, date: (gm.date || new Date(gm.savedAt).toISOString().slice(0, 10)) }), title: "Correct the date", "aria-label": "Edit date" }, "\u270E"),
-                                !gm.resultOnly && React.createElement("button", { className: "replay-btn", onClick: () => { const c = publishSavedGame(gm); if (c) { const a = teamCrest(gm.away.name, true), h = teamCrest(gm.home.name, true); alert(`Posted to the games hub.\n\n${gm.away.name}: ${a.logo ? "crest sent" : "no crest found"}\n${gm.home.name}: ${h.logo ? "crest sent" : "no crest found"}\n\nCode ${c}`); } }, title: gm.liveCode ? "Update on the games hub" : "Post to the games hub", "aria-label": "Post to hub" }, gm.liveCode ? "\u21BB" : "\u2191"),
+                                !gm.resultOnly && React.createElement("button", { className: "replay-btn", onClick: () => publishSavedGameSmart(gm, (c) => { if (c) { const a = teamCrest(gm.away.name, true), h = teamCrest(gm.home.name, true); alert(`Posted to the games hub.\n\n${gm.away.name}: ${a.logo ? "crest sent" : "no crest found"}\n${gm.home.name}: ${h.logo ? "crest sent" : "no crest found"}\n\nCode ${c}`); } }), title: gm.liveCode ? "Update on the games hub" : "Post to the games hub", "aria-label": "Post to hub" }, gm.liveCode ? "\u21BB" : "\u2191"),
                                 !gm.resultOnly && gm.liveCode && React.createElement("button", { className: "rm", onClick: () => { if (unlistSavedGame(gm)) alert("Removed from the games hub."); }, title: "Remove from the games hub", "aria-label": "Remove from hub" }, "\u2298"),
                                 confirmGameDel === gm.id ? (React.createElement("span", { style: { display: "inline-flex", gap: 6, alignItems: "center" } },
                                     React.createElement("button", { onClick: () => { deleteGame(gm.id); setConfirmGameDel(null); }, style: { background: "#B91C1C", color: "#fff", border: "none", borderRadius: 6, padding: "5px 10px", fontSize: 13, fontWeight: 700, cursor: "pointer" } }, "Delete"),
