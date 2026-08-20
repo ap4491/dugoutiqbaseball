@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "226"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "228"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1591,15 +1591,21 @@ function DugoutScorecard() {
         const code = rec.liveCode || ("G" + Math.random().toString(36).slice(2, 7).toUpperCase());
         const nm = (side) => ((rec[side] && rec[side].name) || "").trim() || (side === "away" ? "Visitors" : "Home");
         const sum = (side) => (g.linescore || []).reduce((t, r) => t + (r[side] || 0), 0);
+        // current crest wins, so re-posting refreshes a logo you've since changed
+        const crest = (side) => {
+            const live = teamCrest(nm(side));
+            const old = rec[side] || {};
+            return { color: live.color || old.color || "", logo: live.logo || old.logo || "" };
+        };
         const lastHalf = g.half === "bottom" ? "home" : "away";
         const snap = {
             v: 1, av: APP_VERSION, over: true,
             away: { name: nm("away"), abbr: autoAbbr(nm("away")), runs: rec.awayRuns != null ? rec.awayRuns : sum("away"),
                 hits: (g.hits && g.hits.away) || 0, errors: (g.errors && g.errors.away) || 0,
-                color: (rec.away && rec.away.color) || "", logo: (rec.away && rec.away.logo) || "" },
+                color: crest("away").color, logo: crest("away").logo },
             home: { name: nm("home"), abbr: autoAbbr(nm("home")), runs: rec.homeRuns != null ? rec.homeRuns : sum("home"),
                 hits: (g.hits && g.hits.home) || 0, errors: (g.errors && g.errors.home) || 0,
-                color: (rec.home && rec.home.color) || "", logo: (rec.home && rec.home.logo) || "" },
+                color: crest("home").color, logo: crest("home").logo },
             inning: g.inning || (g.linescore || []).length || 1,
             half: g.half || "bottom",
             balls: 0, strikes: 0, outs: 3,
@@ -4457,6 +4463,7 @@ function DugoutScorecard() {
     const [editDate, setEditDate] = useState(null); // {id, date} while correcting a saved game's date
     const [schedule, setSchedule] = useState(() => loadSchedule()); // tournament fixtures
     const [schedOpen, setSchedOpen] = useState(false);
+    const [schedRename, setSchedRename] = useState(false);
     const [pools, setPools] = useState(() => loadPools()); // { "team name": "A" }
     const [stage, setStage] = useState(""); // round robin / semi / championship
     // No-walk / coach pitch is a 12U Girls rule, but an exhibition can pit a
@@ -8568,28 +8575,35 @@ function DugoutScorecard() {
                         // The event name is what groups these games on the hub and
                         // what parents filter by, so it belongs to the schedule as a
                         // whole rather than being inherited silently per fixture.
-                        React.createElement("div", { className: "limitrow", style: { marginBottom: 4 } },
-                            React.createElement("input", { className: "dg-in", placeholder: "Tournament name", value: schedEvent, onChange: (e) => {
-                                    const v = e.target.value;
-                                    const was = schedEvent.trim();
-                                    setSchedEvent(v);
-                                    // rename only THIS tournament's fixtures — renaming
-                                    // everything would merge a second event into it
-                                    if (was)
-                                        saveSchedule(schedule.map((r) => (lc(r.event) === lc(was) ? Object.assign({}, r, { event: v.trim() }) : r)));
-                                }, "aria-label": "Tournament name" }),
-                            React.createElement("span", { className: "limithint" }, "groups these games on the hub")),
-                        // more than one tournament in the schedule -> switch between them
+                        // Pick which tournament you're working on — a real dropdown, so two
+                        // schedules never share the screen.
                         (() => {
                             const evs = [];
                             schedule.forEach((r) => { const e = (r.event || "").trim(); if (e && !evs.some((x) => lc(x) === lc(e))) evs.push(e); });
-                            if (evs.length < 2 && (!evs.length || lc(evs[0]) === lc(schedEvent)))
-                                return null;
-                            return React.createElement("div", { className: "limitrow", style: { marginBottom: 6 } },
-                                React.createElement("select", { className: "dg-sel", value: evs.some((x) => lc(x) === lc(schedEvent)) ? evs.find((x) => lc(x) === lc(schedEvent)) : "", onChange: (e) => setSchedEvent(e.target.value), "aria-label": "Switch tournament" },
-                                    React.createElement("option", { value: schedEvent }, schedEvent.trim() || "(new)"),
-                                    evs.filter((x) => lc(x) !== lc(schedEvent)).map((n) => React.createElement("option", { key: n, value: n }, n))),
-                                React.createElement("span", { className: "limithint" }, `${evs.length} tournaments saved`));
+                            evs.sort((a, b) => a.localeCompare(b));
+                            const known = evs.find((x) => lc(x) === lc(schedEvent));
+                            return React.createElement(React.Fragment, null,
+                                evs.length > 0 && React.createElement("div", { className: "limitrow", style: { marginBottom: 4 } },
+                                    React.createElement("select", { className: "dg-sel", value: known || "__new", onChange: (e) => {
+                                            const v = e.target.value;
+                                            if (v === "__new") { setSchedEvent(""); setSchedRename(true); }
+                                            else { setSchedEvent(v); setSchedRename(false); }
+                                        }, "aria-label": "Which tournament" },
+                                        evs.map((n) => React.createElement("option", { key: n, value: n }, n)),
+                                        React.createElement("option", { value: "__new" }, "+ New tournament\u2026")),
+                                    React.createElement("span", { className: "limithint" }, evs.length === 1 ? "1 tournament" : `${evs.length} tournaments`)),
+                                // naming box: shown for a new tournament, or when renaming
+                                (!evs.length || !known || schedRename) && React.createElement("div", { className: "limitrow", style: { marginBottom: 4 } },
+                                    React.createElement("input", { className: "dg-in", placeholder: "Tournament name", value: schedEvent, onChange: (e) => {
+                                            const v = e.target.value;
+                                            const was = schedEvent.trim();
+                                            setSchedEvent(v);
+                                            // rename only THIS tournament's fixtures
+                                            if (was)
+                                                saveSchedule(schedule.map((r) => (lc(r.event) === lc(was) ? Object.assign({}, r, { event: v.trim() }) : r)));
+                                        }, "aria-label": "Tournament name" }),
+                                    React.createElement("span", { className: "limithint" }, "groups these games on the hub")),
+                                evs.length > 0 && known && !schedRename && React.createElement("button", { className: "dg ghost", style: { width: "100%", marginBottom: 6, fontSize: 12, padding: "6px 0" }, onClick: () => setSchedRename(true) }, "Rename this tournament"));
                         })(),
                         !schedEvent.trim() && rows.length > 0 && React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--red)", fontSize: 12, margin: "0 0 8px" } }, "Name the tournament \u2014 without it these games can\u2019t be filtered on the hub."),
                         React.createElement("div", { className: "limitrow", style: { marginBottom: 4 } },
