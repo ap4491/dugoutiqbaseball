@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "228"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "229"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1439,6 +1439,13 @@ function DugoutScorecard() {
             home: { name: teams.home.name, color: teams.home.color || "", logo: teams.home.logo || "" },
             awayRuns: sumRuns("away"),
             homeRuns: sumRuns("home"),
+            // the hub code this game was broadcast under (often a fixture's) —
+            // without it, re-posting mints a new code and duplicates the card
+            liveCode: liveCode || null,
+            gameTime: gameTime || "",
+            fieldName: (fieldName || "").trim(),
+            gnum: gameNum || "",
+            stage: stage || "",
             snapshot: { teams: snapshot(teams), game: snapshot(g), pitchLimit, division },
         };
         setGames((list) => {
@@ -1584,6 +1591,23 @@ function DugoutScorecard() {
         setPools(next);
         persistPools(next);
     };
+    // Take a game off the hub (a duplicate, or one posted by mistake).
+    const unlistSavedGame = (rec) => {
+        const code = rec && rec.liveCode;
+        if (!code)
+            return false;
+        fetch(LIVE_ENDPOINT, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ code, list: false, snap: { v: APP_VERSION, unlisted: true } }),
+        }).catch(() => { });
+        setGames((list) => {
+            const next = list.map((r) => (r.id === rec.id ? Object.assign({}, r, { liveCode: null }) : r));
+            persistGames(next);
+            return next;
+        });
+        return true;
+    };
     const publishSavedGame = (rec) => {
         const g = rec && rec.snapshot && rec.snapshot.game;
         if (!g)
@@ -1619,6 +1643,8 @@ function DugoutScorecard() {
             gdate: rec.date || g.date || "",
             gtime: rec.gameTime || "",
             gfield: rec.fieldName || "",
+            gnum: rec.gnum || "",
+            stage: rec.stage || "",
             linescore: (g.linescore || []).map((r) => ({ away: r.away, home: r.home })),
             log: (g.log || []).slice(-600).map((e) => e.type === "pa"
                 ? {
@@ -7838,6 +7864,7 @@ function DugoutScorecard() {
                                         React.createElement("button", { className: "rm", onClick: () => setEditDate(null), "aria-label": "Cancel" }, "\u00D7"))
                                     : React.createElement("button", { className: "replay-btn", onClick: () => setEditDate({ id: gm.id, date: (gm.date || new Date(gm.savedAt).toISOString().slice(0, 10)) }), title: "Correct the date", "aria-label": "Edit date" }, "\u270E"),
                                 !gm.resultOnly && React.createElement("button", { className: "replay-btn", onClick: () => { const c = publishSavedGame(gm); if (c) alert(`Posted to the games hub.\n\nDirect link:\n${location.origin}/spectate.html?g=${c}`); }, title: gm.liveCode ? "Update on the games hub" : "Post to the games hub", "aria-label": "Post to hub" }, gm.liveCode ? "\u21BB" : "\u2191"),
+                                !gm.resultOnly && gm.liveCode && React.createElement("button", { className: "rm", onClick: () => { if (unlistSavedGame(gm)) alert("Removed from the games hub."); }, title: "Remove from the games hub", "aria-label": "Remove from hub" }, "\u2298"),
                                 confirmGameDel === gm.id ? (React.createElement("span", { style: { display: "inline-flex", gap: 6, alignItems: "center" } },
                                     React.createElement("button", { onClick: () => { deleteGame(gm.id); setConfirmGameDel(null); }, style: { background: "#B91C1C", color: "#fff", border: "none", borderRadius: 6, padding: "5px 10px", fontSize: 13, fontWeight: 700, cursor: "pointer" } }, "Delete"),
                                     React.createElement("button", { onClick: () => setConfirmGameDel(null), style: { background: "transparent", color: "var(--powder)", border: "1px solid var(--line)", borderRadius: 6, padding: "5px 10px", fontSize: 13, cursor: "pointer" } }, "Keep"))) : (React.createElement("span", { style: { display: "inline-flex", gap: 6, alignItems: "center" } },
