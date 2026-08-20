@@ -164,6 +164,23 @@
     return h + ":" + m + " " + ap;
   }
   let view = "sched";
+  // Same teams, same day, same score = the same game published twice. Keep the
+  // richer entry (the one carrying a game number / time / field) and drop the
+  // bare copy, so the schedule shows it once and the standings count it once.
+  function dedupe(list){
+    const seen = {};
+    const score = (g) => (g.gnum ? 4 : 0) + (g.gtime ? 2 : 0) + (g.gfield ? 1 : 0);
+    (list || []).forEach((g) => {
+      const k = [String(g.gdate || ""), String(g.away || "").toLowerCase(),
+        String(g.home || "").toLowerCase(), g.sA, g.sH, g.over ? 1 : 0].join("|");
+      const cur = seen[k];
+      if (!cur) { seen[k] = g; return; }
+      // a live entry always beats a stale one; otherwise richer metadata wins
+      if (!g.over && cur.over) { seen[k] = g; return; }
+      if (g.over === cur.over && score(g) > score(cur)) seen[k] = g;
+    });
+    return Object.keys(seen).map((k) => seen[k]);
+  }
   function standings(list){
     // only completed games count; a game in progress has no result yet
     // Playoff games don't move the round-robin table, so they're excluded.
@@ -258,6 +275,7 @@
   }
   let lastGames = null;
   function route(games){
+    games = dedupe(games);
     lastGames = games;
     const list = evName
       ? games.filter((g) => String(g.ev || "").toLowerCase().includes(evName.toLowerCase()))
