@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "230"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "231"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1560,10 +1560,16 @@ function DugoutScorecard() {
     // openable with their full play-by-play rather than just a score.
     // A fixture is just two names, so borrow the colour/logo from the current
     // teams or any saved game with that club in it.
-    const teamCrest = (name) => {
+    const teamCrest = (name, rosterFirst) => {
         const k = lc(name);
         if (!k)
             return { color: "", logo: "" };
+        if (rosterFirst) {
+            for (const r of rosters) {
+                if (lc(r.name) === k && (r.logo || r.color))
+                    return { color: r.color || "", logo: r.logo || "" };
+            }
+        }
         for (const sd of ["away", "home"]) {
             if (lc(teams[sd].name) === k)
                 return { color: teams[sd].color || "", logo: teams[sd].logo || "" };
@@ -1642,7 +1648,7 @@ function DugoutScorecard() {
         const sum = (side) => (g.linescore || []).reduce((t, r) => t + (r[side] || 0), 0);
         // current crest wins, so re-posting refreshes a logo you've since changed
         const crest = (side) => {
-            const live = teamCrest(nm(side));
+            const live = teamCrest(nm(side), true); // saved roster wins
             const old = rec[side] || {};
             return { color: live.color || old.color || "", logo: live.logo || old.logo || "" };
         };
@@ -7907,7 +7913,7 @@ function DugoutScorecard() {
                                         React.createElement("button", { className: "replay-btn", onClick: () => setGameDateFor(gm.id, editDate.date), title: "Save date" }, "\u2713"),
                                         React.createElement("button", { className: "rm", onClick: () => setEditDate(null), "aria-label": "Cancel" }, "\u00D7"))
                                     : React.createElement("button", { className: "replay-btn", onClick: () => setEditDate({ id: gm.id, date: (gm.date || new Date(gm.savedAt).toISOString().slice(0, 10)) }), title: "Correct the date", "aria-label": "Edit date" }, "\u270E"),
-                                !gm.resultOnly && React.createElement("button", { className: "replay-btn", onClick: () => { const c = publishSavedGame(gm); if (c) alert(`Posted to the games hub.\n\nDirect link:\n${location.origin}/spectate.html?g=${c}`); }, title: gm.liveCode ? "Update on the games hub" : "Post to the games hub", "aria-label": "Post to hub" }, gm.liveCode ? "\u21BB" : "\u2191"),
+                                !gm.resultOnly && React.createElement("button", { className: "replay-btn", onClick: () => { const c = publishSavedGame(gm); if (c) { const a = teamCrest(gm.away.name, true), h = teamCrest(gm.home.name, true); alert(`Posted to the games hub.\n\n${gm.away.name}: ${a.logo ? "crest sent" : "no crest found"}\n${gm.home.name}: ${h.logo ? "crest sent" : "no crest found"}\n\nCode ${c}`); } }, title: gm.liveCode ? "Update on the games hub" : "Post to the games hub", "aria-label": "Post to hub" }, gm.liveCode ? "\u21BB" : "\u2191"),
                                 !gm.resultOnly && gm.liveCode && React.createElement("button", { className: "rm", onClick: () => { if (unlistSavedGame(gm)) alert("Removed from the games hub."); }, title: "Remove from the games hub", "aria-label": "Remove from hub" }, "\u2298"),
                                 confirmGameDel === gm.id ? (React.createElement("span", { style: { display: "inline-flex", gap: 6, alignItems: "center" } },
                                     React.createElement("button", { onClick: () => { deleteGame(gm.id); setConfirmGameDel(null); }, style: { background: "#B91C1C", color: "#fff", border: "none", borderRadius: 6, padding: "5px 10px", fontSize: 13, fontWeight: 700, cursor: "pointer" } }, "Delete"),
