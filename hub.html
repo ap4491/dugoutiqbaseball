@@ -164,26 +164,9 @@
     return h + ":" + m + " " + ap;
   }
   let view = "sched";
-  // Same teams, same day, same score = the same game published twice. Keep the
-  // richer entry (the one carrying a game number / time / field) and drop the
-  // bare copy, so the schedule shows it once and the standings count it once.
-  function dedupe(list){
-    const seen = {};
-    const score = (g) => (g.gnum ? 4 : 0) + (g.gtime ? 2 : 0) + (g.gfield ? 1 : 0);
-    (list || []).forEach((g) => {
-      const k = [String(g.gdate || ""), String(g.away || "").toLowerCase(),
-        String(g.home || "").toLowerCase(), g.sA, g.sH, g.over ? 1 : 0].join("|");
-      const cur = seen[k];
-      if (!cur) { seen[k] = g; return; }
-      // a live entry always beats a stale one; otherwise richer metadata wins
-      if (!g.over && cur.over) { seen[k] = g; return; }
-      if (g.over === cur.over && score(g) > score(cur)) seen[k] = g;
-    });
-    return Object.keys(seen).map((k) => seen[k]);
-  }
   function standings(list){
-    // only completed games count; a game in progress has no result yet
-    // Playoff games don't move the round-robin table, so they're excluded.
+    // Only completed round-robin games count — a game in progress has no result,
+    // and a playoff result doesn't move the round-robin table.
     const done = list.filter((g) => g.over && !g.sched && !String(g.stage || "").trim());
     const T = {};
     const get = (name, pool) => {
@@ -200,14 +183,13 @@
       else if (sH > sA) { h.w++; a.l++; }
       else { a.t++; h.t++; }
     });
-    const rows = Object.keys(T).map((k) => T[k]);
     const pools = {};
-    rows.forEach((r) => { const p = r.pool || ""; (pools[p] = pools[p] || []).push(r); });
+    Object.keys(T).map((k) => T[k]).forEach((r) => { const p = r.pool || ""; (pools[p] = pools[p] || []).push(r); });
     Object.keys(pools).forEach((p) => pools[p].sort((x, y) => {
       const px = x.w + x.l + x.t ? x.w / (x.w + x.l + x.t) : 0;
       const py = y.w + y.l + y.t ? y.w / (y.w + y.l + y.t) : 0;
       if (px !== py) return py - px;
-      return (y.rf - y.ra) - (x.rf - x.ra);   // then run differential
+      return (y.rf - y.ra) - (x.rf - x.ra);
     }));
     return pools;
   }
@@ -229,8 +211,8 @@
       });
       html += "</tbody></table>";
     });
-    html += '<div class="msg" style="padding:14px 20px;font-size:11.5px">Round robin only \u2014 playoff games are excluded. Sorted by win percentage, then run differential. '
-      + 'Your tournament&rsquo;s own tiebreakers may differ.</div>';
+    html += '<div class="msg" style="padding:14px 20px;font-size:11.5px">Round robin only \u2014 playoff games are excluded. '
+      + 'Sorted by win percentage, then run differential. Your tournament\u2019s own tiebreakers may differ.</div>';
     $("content").innerHTML = html;
   }
   function render(games){
@@ -275,7 +257,6 @@
   }
   let lastGames = null;
   function route(games){
-    games = dedupe(games);
     lastGames = games;
     const list = evName
       ? games.filter((g) => String(g.ev || "").toLowerCase().includes(evName.toLowerCase()))

@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "229"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "230"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1607,6 +1607,31 @@ function DugoutScorecard() {
             return next;
         });
         return true;
+    };
+    // Everything currently listed on the hub, straight from the index — the only
+    // reliable way to clear a stray, since the app can't know about entries it
+    // didn't publish (or published before it started recording codes).
+    const loadHubList = () => {
+        setHubList({ loading: true, games: [] });
+        fetch(LIVE_ENDPOINT + "?list=1", { cache: "no-store" })
+            .then((r) => r.json())
+            .then((d) => setHubList({ loading: false, games: (d && d.games) || [] }))
+            .catch(() => setHubList({ loading: false, games: [], error: true }));
+    };
+    const unlistCode = (code) => {
+        if (!code)
+            return;
+        fetch(LIVE_ENDPOINT, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ code, list: false, snap: { v: APP_VERSION, unlisted: true } }),
+        }).catch(() => { });
+        setHubList((h) => ({ loading: false, games: (h.games || []).filter((g) => g.code !== code) }));
+        setGames((list) => {
+            const next = list.map((r) => (r.liveCode === code ? Object.assign({}, r, { liveCode: null }) : r));
+            persistGames(next);
+            return next;
+        });
     };
     const publishSavedGame = (rec) => {
         const g = rec && rec.snapshot && rec.snapshot.game;
@@ -4490,6 +4515,7 @@ function DugoutScorecard() {
     const [schedule, setSchedule] = useState(() => loadSchedule()); // tournament fixtures
     const [schedOpen, setSchedOpen] = useState(false);
     const [schedRename, setSchedRename] = useState(false);
+    const [hubList, setHubList] = useState(null); // {loading, games} while managing hub listings
     const [pools, setPools] = useState(() => loadPools()); // { "team name": "A" }
     const [stage, setStage] = useState(""); // round robin / semi / championship
     // No-walk / coach pitch is a 12U Girls rule, but an exhibition can pit a
@@ -7818,6 +7844,24 @@ function DugoutScorecard() {
                             share: !!(eventName || "").trim(),
                         }) }, "\u002B Add a result (game you didn\u2019t score)"),
                     React.createElement("button", { className: "dg ghost", style: { width: "100%", marginBottom: 10 }, onClick: () => setSchedOpen(true) }, "\uD83D\uDCC5 Tournament schedule"),
+                    React.createElement("button", { className: "dg ghost", style: { width: "100%", marginBottom: 10 }, onClick: loadHubList }, "\uD83D\uDCE1 What\u2019s on the games hub"),
+                    hubList && React.createElement("div", { style: { border: "1px solid var(--line)", borderRadius: 12, padding: 10, marginBottom: 10 } },
+                        React.createElement("div", { className: "sit-sec" }, "Listed on the hub"),
+                        hubList.loading
+                            ? React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--powder)" } }, "Loading\u2026")
+                            : hubList.error
+                                ? React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--red)" } }, "Couldn\u2019t reach the hub.")
+                                : hubList.games.length === 0
+                                    ? React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--powder)" } }, "Nothing listed.")
+                                    : React.createElement(React.Fragment, null,
+                                        React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--powder)", fontSize: 11, margin: "0 0 8px" } }, "Every card parents can see. Remove any duplicate \u2014 this does not touch your saved game."),
+                                        hubList.games.map((g) => React.createElement("div", { className: "limitrow", key: g.code, style: { gridTemplateColumns: "1fr 44px", marginBottom: 6 } },
+                                            React.createElement("span", { style: { fontSize: 13, lineHeight: 1.3 } },
+                                                `${g.away} ${g.sched ? "" : g.sA} \u2014 ${g.sched ? "" : g.sH} ${g.home}`,
+                                                React.createElement("span", { style: { display: "block", color: "var(--powder)", fontSize: 11 } },
+                                                    [g.gdate, g.gnum ? `Game ${g.gnum}` : "", g.gfield, g.ev, g.sched ? "upcoming" : (g.over ? "final" : "live"), g.code].filter(Boolean).join(" \u00b7 "))),
+                                            React.createElement("button", { className: "rm", onClick: () => unlistCode(g.code), title: "Remove from the hub", "aria-label": "Remove" }, "\u2298")))),
+                        React.createElement("button", { className: "dg ghost", style: { width: "100%", marginTop: 4 }, onClick: () => setHubList(null) }, "Close")),
                     eventList().length > 0 && React.createElement("div", { className: "limitrow", style: { marginBottom: 10 } },
                         React.createElement("select", { className: "dg-sel", value: seasonEvent, onChange: (e) => setSeasonEvent(e.target.value), "aria-label": "Event to post" },
                             React.createElement("option", { value: "all" }, "Pick an event\u2026"),
