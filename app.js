@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "232"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "233"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1484,6 +1484,12 @@ function DugoutScorecard() {
         if (typeof snap.pitchLimit !== "undefined")
             setPitchLimit(snap.pitchLimit);
         setDivision(snap.division || "");
+        // These feed the hub card. Leaving them stale meant a later push blanked
+        // the card's date, number and stage.
+        if (record.date)
+            setGameDate(record.date);
+        setGameNum(String(record.gnum || ""));
+        setStage(record.stage || "");
         setRunCap(snap.runCap == null ? 0 : snap.runCap);
         setCapLastOpen(snap.capLastOpen == null ? true : !!snap.capLastOpen);
         if (snap.noWalk)
@@ -1664,20 +1670,44 @@ function DugoutScorecard() {
     // Post a saved game, reusing whatever code it is ALREADY listed under. Games
     // posted before the app recorded codes would otherwise get a fresh code and
     // leave their old card behind as a duplicate.
+    // Anything the record is missing comes from the schedule fixture — a game
+    // saved before the app stored game numbers would otherwise publish blanks
+    // over details the card already had.
+    const enrichFromSchedule = (rec) => {
+        const f = schedule.find((r) => lc(r.away) === lc(rec.away && rec.away.name)
+            && lc(r.home) === lc(rec.home && rec.home.name)
+            && String(r.date || "") === String(rec.date || ""));
+        if (!f)
+            return rec;
+        return Object.assign({}, rec, {
+            gnum: rec.gnum || f.gnum || "",
+            gameTime: rec.gameTime || f.time || "",
+            fieldName: rec.fieldName || f.field || "",
+            stage: rec.stage || f.stage || "",
+            eventName: rec.eventName || f.event || "",
+            liveCode: rec.liveCode || f.code || null,
+        });
+    };
     const publishSavedGameSmart = (rec, done) => {
-        if (rec && rec.liveCode) {
-            done(publishSavedGame(rec));
-            return;
-        }
+        const base = enrichFromSchedule(rec);
         fetch(LIVE_ENDPOINT + "?list=1", { cache: "no-store" })
             .then((r) => r.json())
             .then((d) => {
-                const mine = ((d && d.games) || []).find((g) => lc(g.away) === lc(rec.away.name)
-                    && lc(g.home) === lc(rec.home.name)
-                    && String(g.gdate || "") === String(rec.date || ""));
-                done(publishSavedGame(mine ? Object.assign({}, rec, { liveCode: mine.code }) : rec));
+                const mine = ((d && d.games) || []).find((g) => (base.liveCode && g.code === base.liveCode)
+                    || (lc(g.away) === lc(base.away.name) && lc(g.home) === lc(base.home.name)
+                        && String(g.gdate || "") === String(base.date || "")));
+                // never blank a detail the existing card already shows
+                const merged = mine ? Object.assign({}, base, {
+                    liveCode: base.liveCode || mine.code,
+                    gnum: base.gnum || mine.gnum || "",
+                    gameTime: base.gameTime || mine.gtime || "",
+                    fieldName: base.fieldName || mine.gfield || "",
+                    stage: base.stage || mine.stage || "",
+                    eventName: base.eventName || mine.ev || "",
+                }) : base;
+                done(publishSavedGame(merged));
             })
-            .catch(() => done(publishSavedGame(rec)));
+            .catch(() => done(publishSavedGame(base)));
     };
     const publishSavedGame = (rec) => {
         const g = rec && rec.snapshot && rec.snapshot.game;
