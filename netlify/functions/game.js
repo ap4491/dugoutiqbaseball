@@ -107,7 +107,18 @@ exports.handler = async (event) => {
       await store.setJSON(code, snap);
       // Public index: opt-in only.
       if (data.list === true) {
-        try { await pub.setJSON(code, publicEntry(code, snap)); } catch (e) {}
+        try {
+          const entry = publicEntry(code, snap);
+          // Don't let a push that omits the tournament details erase them —
+          // keep whatever a previous push established for this same game.
+          let prev = null;
+          try { prev = await pub.get(code, { type: "json" }); } catch (e) { prev = null; }
+          if (prev) {
+            ["ev", "gdate", "gtime", "gfield", "gnum", "stage", "apool", "hpool", "evtitle", "evlogo", "al", "hl"]
+              .forEach((k) => { if (!entry[k] && prev[k]) entry[k] = prev[k]; });
+          }
+          await pub.setJSON(code, entry);
+        } catch (e) {}
       } else if (data.list === false) {
         try { await pub.delete(code); } catch (e) {}
       }
