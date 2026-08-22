@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "233"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "234"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1909,7 +1909,7 @@ function DugoutScorecard() {
             .filter((p) => p.side === side && (p.name || "").trim() && Number(p.pitches) > 0)
             .map((p) => ({ name: p.name.trim(), pitches: Number(p.pitches) || 0, outs: 0, bf: 0 }));
         const rec = {
-            id: Date.now(),
+            id: f.id || Date.now(),
             savedAt: Date.now(),
             date: f.date || gameDate,
             gameTime: f.time || "",
@@ -1921,6 +1921,7 @@ function DugoutScorecard() {
             awayRuns: Number(f.awayRuns) || 0,
             homeRuns: Number(f.homeRuns) || 0,
             resultOnly: true,
+            liveCode: f.share ? (f.code || null) : null,
             snapshot: {
                 division: f.division || "",
                 // only pitchers — no lineup or stats, so nothing downstream can
@@ -1935,7 +1936,8 @@ function DugoutScorecard() {
             },
         };
         setGames((list) => {
-            const next = [rec].concat(list);
+            const without = list.filter((r) => r.id !== rec.id);
+            const next = [rec].concat(without);
             persistGames(next);
             return next;
         });
@@ -1943,7 +1945,7 @@ function DugoutScorecard() {
         // Its own short code; the payload is team names and score only, matching
         // what a scored game exposes — never any player names.
         if (f.share) {
-            const code = "R" + Math.random().toString(36).slice(2, 7).toUpperCase();
+            const code = f.code || ("R" + Math.random().toString(36).slice(2, 7).toUpperCase());
             const line = [];
             const total = Math.max(Number(f.awayRuns) || 0, Number(f.homeRuns) || 0);
             fetch(LIVE_ENDPOINT, {
@@ -1954,8 +1956,10 @@ function DugoutScorecard() {
                     list: true,
                     snap: {
                         v: APP_VERSION, over: true,
-                        away: { name: rec.away.name, runs: rec.awayRuns, color: "" },
-                        home: { name: rec.home.name, runs: rec.homeRuns, color: "" },
+                        away: { name: rec.away.name, runs: rec.awayRuns,
+                            color: teamCrest(rec.away.name, true).color, logo: teamCrest(rec.away.name, true).logo },
+                        home: { name: rec.home.name, runs: rec.homeRuns,
+                            color: teamCrest(rec.home.name, true).color, logo: teamCrest(rec.home.name, true).logo },
                         inning: 1, half: "top", linescore: line,
                         ev: rec.eventName, evlogo: evLogo || "", evtitle: evTitle || "",
                         apool: poolOf(rec.away.name), hpool: poolOf(rec.home.name),
@@ -7988,6 +7992,22 @@ function DugoutScorecard() {
                                         React.createElement("button", { className: "rm", onClick: () => setEditDate(null), "aria-label": "Cancel" }, "\u00D7"))
                                     : React.createElement("button", { className: "replay-btn", onClick: () => setEditDate({ id: gm.id, date: (gm.date || new Date(gm.savedAt).toISOString().slice(0, 10)) }), title: "Correct the date", "aria-label": "Edit date" }, "\u270E"),
                                 !gm.resultOnly && React.createElement("button", { className: "replay-btn", onClick: () => publishSavedGameSmart(gm, (c) => { if (c) { const a = teamCrest(gm.away.name, true), h = teamCrest(gm.home.name, true); alert(`Posted to the games hub.\n\n${gm.away.name}: ${a.logo ? "crest sent" : "no crest found"}\n${gm.home.name}: ${h.logo ? "crest sent" : "no crest found"}\n\nCode ${c}`); } }), title: gm.liveCode ? "Update on the games hub" : "Post to the games hub", "aria-label": "Post to hub" }, gm.liveCode ? "\u21BB" : "\u2191"),
+                                gm.resultOnly && React.createElement("button", { className: "replay-btn", onClick: () => setResultForm({
+                                        id: gm.id, code: gm.liveCode || "",
+                                        awayName: gm.away.name, homeName: gm.home.name,
+                                        awayRuns: String(gm.awayRuns), homeRuns: String(gm.homeRuns),
+                                        date: gm.date || gameDate, time: gm.gameTime || "", field: gm.fieldName || "",
+                                        gameType: gm.gameType || "season", eventName: gm.eventName || "",
+                                        division: (gm.snapshot && gm.snapshot.division) || division || "",
+                                        pitchers: (() => {
+                                            const g2 = gm.snapshot && gm.snapshot.game;
+                                            const out = [];
+                                            ["away", "home"].forEach((sd) => ((g2 && g2.pitchers && g2.pitchers[sd]) || [])
+                                                .forEach((p) => out.push({ side: sd, name: p.name || "", pitches: String(p.pitches || "") })));
+                                            return out.length ? out : [{ side: "away", name: "", pitches: "" }, { side: "home", name: "", pitches: "" }];
+                                        })(),
+                                        share: !!gm.liveCode,
+                                    }), title: "Edit this result", "aria-label": "Edit result" }, "\u270E"),
                                 !gm.resultOnly && gm.liveCode && React.createElement("button", { className: "rm", onClick: () => { if (unlistSavedGame(gm)) alert("Removed from the games hub."); }, title: "Remove from the games hub", "aria-label": "Remove from hub" }, "\u2298"),
                                 confirmGameDel === gm.id ? (React.createElement("span", { style: { display: "inline-flex", gap: 6, alignItems: "center" } },
                                     React.createElement("button", { onClick: () => { deleteGame(gm.id); setConfirmGameDel(null); }, style: { background: "#B91C1C", color: "#fff", border: "none", borderRadius: 6, padding: "5px 10px", fontSize: 13, fontWeight: 700, cursor: "pointer" } }, "Delete"),
@@ -8833,7 +8853,7 @@ function DugoutScorecard() {
                 const teamOf = (side) => ((side === "away" ? f.awayName : f.homeName) || "").trim() || (side === "away" ? "Visitors" : "Home");
                 return (React.createElement("div", { className: "modal-back", onClick: () => setResultForm(null) },
                     React.createElement("div", { className: "modal set-modal", onClick: (e) => e.stopPropagation() },
-                        React.createElement("h3", null, "Add a result"),
+                        React.createElement("h3", null, f.id ? "Edit result" : "Add a result"),
                         React.createElement("p", { style: { textTransform: "none", letterSpacing: 0 } }, "For a game on another field. Counts in standings; no box score is created."),
                         React.createElement("div", { className: "limitrow" },
                             React.createElement("input", { className: "dg-in", placeholder: "Visiting team", value: f.awayName, onChange: (e) => set("awayName", e.target.value), "aria-label": "Visiting team" }),
@@ -8860,7 +8880,7 @@ function DugoutScorecard() {
                             React.createElement("input", { className: "dg-in", type: "number", inputMode: "numeric", placeholder: "P", value: p.pitches, onChange: (e) => setP(i, "pitches", e.target.value), "aria-label": "Pitches" }))),
                         React.createElement("button", { className: "dg ghost", style: { width: "100%", marginTop: 4 }, onClick: () => set("pitchers", f.pitchers.concat([{ side: "away", name: "", pitches: "" }])) }, "+ Another pitcher"),
                         React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr", marginTop: 12 } },
-                            React.createElement("button", { className: "dg hit", onClick: () => saveManualResult(f) }, "Save result"),
+                            React.createElement("button", { className: "dg hit", onClick: () => saveManualResult(f) }, f.id ? "Save changes" : "Save result"),
                             React.createElement("button", { className: "dg ghost", onClick: () => setResultForm(null) }, "Cancel"))))); })(),
             tourneyOpen && game && (() => {
                 const ev = (eventName || "").trim();
