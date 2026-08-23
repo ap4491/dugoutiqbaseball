@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "234"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "235"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1921,6 +1921,9 @@ function DugoutScorecard() {
             awayRuns: Number(f.awayRuns) || 0,
             homeRuns: Number(f.homeRuns) || 0,
             resultOnly: true,
+            gnum: String(f.gnum || "").trim(),
+            stage: (f.stage || "").trim(),
+            inn: Number(f.inn) || 0,
             liveCode: f.share ? (f.code || null) : null,
             snapshot: {
                 division: f.division || "",
@@ -1946,8 +1949,12 @@ function DugoutScorecard() {
         // what a scored game exposes — never any player names.
         if (f.share) {
             const code = f.code || ("R" + Math.random().toString(36).slice(2, 7).toUpperCase());
+            // a linescore of the right LENGTH so the card can say "6 inn";
+            // the per-inning cells are unknown, hence nulls
+            const innN = Number(f.inn) || 0;
             const line = [];
-            const total = Math.max(Number(f.awayRuns) || 0, Number(f.homeRuns) || 0);
+            for (let i = 0; i < innN; i++)
+                line.push({ away: null, home: null });
             fetch(LIVE_ENDPOINT, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -1964,6 +1971,7 @@ function DugoutScorecard() {
                         ev: rec.eventName, evlogo: evLogo || "", evtitle: evTitle || "",
                         apool: poolOf(rec.away.name), hpool: poolOf(rec.home.name),
                         gdate: rec.date, gtime: rec.gameTime, gfield: rec.fieldName,
+                        gnum: rec.gnum || "", stage: rec.stage || "",
                         // no log and no lineup — there is nothing to replay
                         log: [], manual: true,
                     },
@@ -7923,6 +7931,7 @@ function DugoutScorecard() {
                             awayName: "", homeName: "", awayRuns: "", homeRuns: "",
                             date: gameDate, time: "", field: "",
                             gameType: gameType || "season", eventName: (eventName || "").trim(),
+                            gnum: "", stage: "", inn: "",
                             division: division || "",
                             pitchers: [{ side: "away", name: "", pitches: "" }, { side: "home", name: "", pitches: "" }],
                             share: !!(eventName || "").trim(),
@@ -7998,6 +8007,7 @@ function DugoutScorecard() {
                                         awayRuns: String(gm.awayRuns), homeRuns: String(gm.homeRuns),
                                         date: gm.date || gameDate, time: gm.gameTime || "", field: gm.fieldName || "",
                                         gameType: gm.gameType || "season", eventName: gm.eventName || "",
+                                        gnum: gm.gnum || "", stage: gm.stage || "", inn: gm.inn ? String(gm.inn) : "",
                                         division: (gm.snapshot && gm.snapshot.division) || division || "",
                                         pitchers: (() => {
                                             const g2 = gm.snapshot && gm.snapshot.game;
@@ -8867,6 +8877,18 @@ function DugoutScorecard() {
                         React.createElement("div", { className: "limitrow" },
                             React.createElement("input", { className: "dg-in", placeholder: "Field", value: f.field, onChange: (e) => set("field", e.target.value), "aria-label": "Field" }),
                             React.createElement("input", { className: "dg-in", placeholder: "Event", value: f.eventName, onChange: (e) => set("eventName", e.target.value), "aria-label": "Event" })),
+                        React.createElement("div", { className: "limitrow" },
+                            React.createElement("input", { className: "dg-in", type: "number", inputMode: "numeric", placeholder: "Innings", value: f.inn || "", onChange: (e) => set("inn", e.target.value), "aria-label": "Innings played" }),
+                            React.createElement("span", { className: "limithint" }, "innings played \u00b7 shown on the hub card")),
+                        React.createElement("div", { className: "limitrow" },
+                            React.createElement("input", { className: "dg-in", placeholder: "Gm #", value: f.gnum || "", onChange: (e) => set("gnum", e.target.value), "aria-label": "Game number" }),
+                            React.createElement("select", { className: "dg-sel", value: f.stage || "", onChange: (e) => set("stage", e.target.value), "aria-label": "Stage" },
+                                React.createElement("option", { value: "" }, "Round robin"),
+                                React.createElement("option", { value: "Tiebreaker" }, "Tiebreaker"),
+                                React.createElement("option", { value: "Quarter-final" }, "Quarter"),
+                                React.createElement("option", { value: "Semi-final" }, "Semi"),
+                                React.createElement("option", { value: "Bronze" }, "Bronze"),
+                                React.createElement("option", { value: "Championship" }, "Final"))),
                         React.createElement("label", { className: "togglerow", style: { marginTop: 4 } },
                             React.createElement("input", { type: "checkbox", checked: !!f.share, onChange: (e) => set("share", e.target.checked), "aria-label": "Show on the public games hub" }),
                             React.createElement("span", null, "Show on the games hub (score only)")),

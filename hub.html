@@ -135,10 +135,10 @@
             ? `<div class="s next">${esc(timeLabel(g.gtime) || "Upcoming")}</div>`
             : live
               ? `<div class="s live">Live</div><div class="meta">${half} ${ORD(g.inning || 1)}</div>`
-              : `<div class="s final">Final</div>${g.manual ? "" : `<div class="meta">${(g.linescore || []).length} inn</div>`}`}
+              : `<div class="s final">Final</div>${(g.linescore || []).length ? `<div class="meta">${(g.linescore || []).length} inn</div>` : ""}`}
           ${g.gnum ? `<div class="meta">Game ${esc(g.gnum)}</div>` : ""}
           ${g.stage ? `<div class="meta stage">${esc(g.stage)}</div>` : ""}
-          ${g.manual ? `<div class="meta">score only</div>` : ""}
+          ${g.manual && !(g.linescore || []).length ? `<div class="meta">score only</div>` : ""}
           ${[timeLabel(g.gtime), g.gfield].filter(Boolean).length
             ? `<div class="meta">${esc([timeLabel(g.gtime), g.gfield].filter(Boolean).join(" \u00b7 "))}</div>` : ""}
         </div>
