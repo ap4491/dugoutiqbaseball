@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "237"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "238"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1586,6 +1586,15 @@ function DugoutScorecard() {
         });
     };
     const reopenGame = (record) => {
+        // A game restored from the hub has scores and play-by-play but no box
+        // score, so there is nothing to reopen. Say so rather than crashing.
+        if (!record || !record.snapshot || !record.snapshot.game) {
+            try {
+                alert("This game was restored from the hub \u2014 it has the score and play-by-play, but no box score to reopen.");
+            }
+            catch (_a) { }
+            return;
+        }
         if (record && record.snapshot && record.snapshot.game)
             healFinishedGame(record.snapshot.game);
         // Opening an old game is review, not a broadcast. Leaving the live push
@@ -1597,9 +1606,9 @@ function DugoutScorecard() {
             setLiveCode(record.liveCode || null);
         }
         const snap = record.snapshot || {};
+        // logos are stored once, on the record — merge them back in
         if (snap.teams)
-            // logos are stored once, on the record — merge them back in
-        setTeams((() => {
+            setTeams((() => {
             const t = snapshot(snap.teams);
             ["away", "home"].forEach((sd) => {
                 if (t[sd] && !t[sd].logo && record[sd] && record[sd].logo)
@@ -9572,4 +9581,31 @@ function DugoutScorecard() {
                     React.createElement("div", { className: "btnrow" },
                         React.createElement("button", { className: "dg ghost", onClick: () => setPitchMenuSide(null) }, "Cancel"))))))));
 }
-ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(DugoutScorecard));
+// A crash anywhere below used to leave a blank screen with no way out. This
+// catches it and offers a reload, so the scorer is never stranded mid-game.
+class DGBoundary extends React.Component {
+    constructor(p) {
+        super(p);
+        this.state = { err: null };
+    }
+    static getDerivedStateFromError(err) {
+        return { err };
+    }
+    componentDidCatch(err) {
+        try {
+            console.error("DugoutIQ crashed:", err);
+        }
+        catch (_a) { }
+    }
+    render() {
+        if (!this.state.err)
+            return this.props.children;
+        return React.createElement("div", { style: { padding: "28px 20px", color: "#fff", fontFamily: "'Saira Condensed',sans-serif", textAlign: "center" } },
+            React.createElement("h2", { style: { margin: "0 0 8px" } }, "Something went wrong"),
+            React.createElement("p", { style: { color: "#A9C5E8", fontSize: 14, lineHeight: 1.5 } },
+                "Your saved games are safe. Reload to carry on \u2014 a game in progress is restored from its last autosave."),
+            React.createElement("p", { style: { color: "#A9C5E8", fontSize: 11, wordBreak: "break-word", opacity: .7 } }, String(this.state.err && this.state.err.message || this.state.err || "")),
+            React.createElement("button", { style: { marginTop: 14, padding: "12px 22px", fontFamily: "inherit", fontSize: 15, fontWeight: 700, background: "#F5C518", color: "#0A1A33", border: 0, borderRadius: 10 }, onClick: () => location.reload() }, "Reload"));
+    }
+}
+ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(DGBoundary, null, React.createElement(DugoutScorecard)));
