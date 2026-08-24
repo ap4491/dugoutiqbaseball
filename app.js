@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "238"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "240"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -924,8 +924,31 @@ const loadSaved = () => { try {
 catch (_a) {
     return null;
 } };
-const saved0 = loadSaved();
-if (saved0 && saved0.game) {
+/* --- recovery switches ---------------------------------------------------
+   ?safe=1   boot without restoring the in-progress game (saved games kept)
+   ?fresh=1  as above, and clear the in-progress autosave entirely
+   Both leave saved games, rosters and schedules untouched.
+------------------------------------------------------------------------- */
+const DG_Q = (() => { try {
+    return new URLSearchParams(location.search);
+}
+catch (_a) {
+    return { get: () => null };
+} })();
+const DG_SAFE = !!(DG_Q.get("safe") || DG_Q.get("fresh"));
+if (DG_Q.get("fresh")) {
+    try {
+        localStorage.removeItem(SAVE_KEY);
+    }
+    catch (_a) { }
+}
+const saved0 = DG_SAFE ? null : (() => { try {
+    return loadSaved();
+}
+catch (_a) {
+    return null; // a corrupt autosave must not stop the app from starting
+} })();
+if (saved0 && saved0.game) try {
     const g = saved0.game;
     healFinishedGame(g); // repair a rolled-over final saved by an older build
     if (!g.lineup && saved0.teams) {
@@ -963,6 +986,8 @@ if (saved0 && saved0.game) {
         }));
     }
 }
+catch (_a) { }
+
 const LICENSE_KEY_STORE = "dugoutiq-license-v1";
 const loadActivation = () => { try {
     return localStorage.getItem(LICENSE_KEY_STORE);
@@ -8735,6 +8760,20 @@ function DugoutScorecard() {
                 React.createElement("div", { className: "modal set-modal", onClick: (e) => e.stopPropagation() },
                     React.createElement("h3", null, "\u2699\uFE0F Settings"),
                     React.createElement("div", { className: "set-group" },
+                        React.createElement("div", { className: "set-sec" }, "If something looks wrong"),
+                        React.createElement("button", { className: "dg ghost", style: { width: "100%", marginBottom: 6 }, onClick: () => location.reload() }, "\u21BB Reload the app"),
+                        React.createElement("button", { className: "dg ghost", style: { width: "100%", marginBottom: 6 }, onClick: () => {
+                                if (!confirm("Close the game in progress and go back to setup?\n\nSaved games, rosters and schedules are NOT affected."))
+                                    return;
+                                try {
+                                    localStorage.removeItem(SAVE_KEY);
+                                }
+                                catch (_a) { }
+                                location.reload();
+                            } }, "\u2716 Close the game in progress"),
+                        React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--powder)", fontSize: 11, margin: "0 0 4px" } },
+                            "Neither touches your saved games. Use the second if the scoring screen won\u2019t load.")),
+                    React.createElement("div", { className: "set-group" },
                         React.createElement("div", { className: "set-sec" }, "App look"),
                         React.createElement("div", { className: "theme-swatches" },
                             PRESET_TEAM_COLORS.map((c) => (React.createElement("button", { key: c, type: "button", className: `swatch ${themeColor === c ? "sel" : ""}`, style: { background: c }, onClick: () => setThemeColor(c), "aria-label": "Set app theme color" }))),
@@ -9605,7 +9644,15 @@ class DGBoundary extends React.Component {
             React.createElement("p", { style: { color: "#A9C5E8", fontSize: 14, lineHeight: 1.5 } },
                 "Your saved games are safe. Reload to carry on \u2014 a game in progress is restored from its last autosave."),
             React.createElement("p", { style: { color: "#A9C5E8", fontSize: 11, wordBreak: "break-word", opacity: .7 } }, String(this.state.err && this.state.err.message || this.state.err || "")),
-            React.createElement("button", { style: { marginTop: 14, padding: "12px 22px", fontFamily: "inherit", fontSize: 15, fontWeight: 700, background: "#F5C518", color: "#0A1A33", border: 0, borderRadius: 10 }, onClick: () => location.reload() }, "Reload"));
+            React.createElement("button", { style: { marginTop: 14, padding: "12px 22px", fontFamily: "inherit", fontSize: 15, fontWeight: 700, background: "#F5C518", color: "#0A1A33", border: 0, borderRadius: 10 }, onClick: () => location.reload() }, "Reload"),
+            React.createElement("button", { style: { display: "block", margin: "10px auto 0", padding: "10px 18px", fontFamily: "inherit", fontSize: 13, background: "transparent", color: "#A9C5E8", border: "1px solid rgba(169,197,232,.35)", borderRadius: 10 }, onClick: () => {
+                    // last resort: drop the game in progress, keep everything else
+                    try {
+                        localStorage.removeItem("dugoutiq-save-v1");
+                    }
+                    catch (_a) { }
+                    location.reload();
+                } }, "Close the game in progress and reload"));
     }
 }
 ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(DGBoundary, null, React.createElement(DugoutScorecard)));
