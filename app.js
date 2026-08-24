@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "235"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "237"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1006,6 +1006,70 @@ const persistRosters = (list) => { try {
 }
 catch (_a) { } };
 const GAMES_KEY = "dugoutiq-games-v1";
+/* --- saved-game storage -------------------------------------------------
+   localStorage tops out around 5MB, which a season of games with team logos
+   will exhaust. IndexedDB has no practical ceiling. localStorage is kept as a
+   fallback and as the migration source, and is written to only while the games
+   still fit, so an older build could still read them.
+------------------------------------------------------------------------- */
+const IDB_NAME = "dugoutiq";
+const IDB_STORE = "games";
+let idbHandle = null;
+const idbOpen = () => new Promise((resolve) => {
+    if (idbHandle)
+        return resolve(idbHandle);
+    try {
+        if (!window.indexedDB)
+            return resolve(null);
+        const req = window.indexedDB.open(IDB_NAME, 1);
+        req.onupgradeneeded = () => {
+            const db = req.result;
+            if (!db.objectStoreNames.contains(IDB_STORE))
+                db.createObjectStore(IDB_STORE, { keyPath: "id" });
+        };
+        req.onsuccess = () => { idbHandle = req.result; resolve(idbHandle); };
+        req.onerror = () => resolve(null);
+    }
+    catch (_a) {
+        resolve(null);
+    }
+});
+const idbAll = () => idbOpen().then((db) => new Promise((resolve) => {
+    if (!db)
+        return resolve(null);
+    try {
+        const tx = db.transaction(IDB_STORE, "readonly");
+        const req = tx.objectStore(IDB_STORE).getAll();
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => resolve(null);
+    }
+    catch (_a) {
+        resolve(null);
+    }
+}));
+const idbWriteAll = (list) => idbOpen().then((db) => new Promise((resolve, reject) => {
+    if (!db)
+        return reject(new Error("no idb"));
+    try {
+        const tx = db.transaction(IDB_STORE, "readwrite");
+        const st = tx.objectStore(IDB_STORE);
+        st.clear();
+        (list || []).forEach((r) => { if (r && r.id != null) st.put(r); });
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => reject(tx.error || new Error("idb write failed"));
+        tx.onabort = () => reject(tx.error || new Error("idb write aborted"));
+    }
+    catch (e) {
+        reject(e);
+    }
+}));
+// Ask the browser not to evict us — matters on iOS, where a PWA's data can
+// otherwise be cleared after a period of disuse.
+try {
+    if (navigator.storage && navigator.storage.persist)
+        navigator.storage.persist().catch(() => { });
+}
+catch (_a) { }
 const loadGames = () => { try {
     return JSON.parse(localStorage.getItem(GAMES_KEY) || "[]");
 }
@@ -1034,10 +1098,40 @@ const persistSchedule = (list) => { try {
     localStorage.setItem(SCHED_KEY, JSON.stringify(list));
 }
 catch (_s) { } };
-const persistGames = (list) => { try {
-    localStorage.setItem(GAMES_KEY, JSON.stringify(list));
-}
-catch (_a) { } };
+let storageWarned = false;
+// A team snapshot without its logo data URL (stored once on the record).
+const stripLogos = (t) => {
+    if (!t)
+        return t;
+    const out = {};
+    ["away", "home"].forEach((sd) => {
+        out[sd] = Object.assign({}, t[sd] || {});
+        delete out[sd].logo;
+    });
+    return out;
+};
+const persistGames = (list) => {
+    // IndexedDB is the real store — localStorage caps at ~5MB and can't be
+    // raised. localStorage is still mirrored while the data fits, so an older
+    // build could read it; its failure alone is not an error.
+    let mirrored = false;
+    try {
+        localStorage.setItem(GAMES_KEY, JSON.stringify(list));
+        mirrored = true;
+    }
+    catch (_a) { }
+    idbWriteAll(list)
+        .then(() => { storageWarned = false; })
+        .catch(() => {
+            if (mirrored || storageWarned)
+                return; // localStorage still has it, or we've already warned
+            storageWarned = true;
+            try {
+                alert("STORAGE FULL \u2014 this game was NOT saved.\n\nDelete some old saved games to free space, then call it final again.\n\nGames already posted to the hub can be restored from there.");
+            }
+            catch (_b) { }
+        });
+};
 function DugoutScorecard() {
     const [licensed, setLicensed] = useState(() => !!loadActivation());
     const [licenseKey, setLicenseKey] = useState("");
@@ -1413,7 +1507,34 @@ function DugoutScorecard() {
     const [teamPickSide, setTeamPickSide] = useState(null); // which side to load into
     const [confirmRosterDel, setConfirmRosterDel] = useState(null);
     /* --- Saved Games: finished-game archive --- */
-    const [games, setGames] = useState(loadGames);
+    const [games, setGames] = useState(loadGames); // localStorage first (instant), IDB replaces it below
+    useEffect(() => {
+        let gone = false;
+        idbAll().then((rows) => {
+            if (gone || rows == null)
+                return; // no IndexedDB — carry on with localStorage
+            const local = loadGames();
+            if (!rows.length && local.length) {
+                // first run on this build: move what's in localStorage across
+                idbWriteAll(local).catch(() => { });
+                return;
+            }
+            // merge, preferring whichever copy of a game was saved last
+            const byId = {};
+            rows.concat(local).forEach((r) => {
+                if (!r || r.id == null)
+                    return;
+                const cur = byId[r.id];
+                if (!cur || (r.savedAt || 0) > (cur.savedAt || 0))
+                    byId[r.id] = r;
+            });
+            const merged = Object.keys(byId).map((k) => byId[k]);
+            if (merged.length !== rows.length)
+                idbWriteAll(merged).catch(() => { });
+            setGames(merged);
+        });
+        return () => { gone = true; };
+    }, []);
     const [gamesOpen, setGamesOpen] = useState(false);
     const [seasonOpen, setSeasonOpen] = useState(false);
     const [seasonTeam, setSeasonTeam] = useState("");
@@ -1446,7 +1567,9 @@ function DugoutScorecard() {
             fieldName: (fieldName || "").trim(),
             gnum: gameNum || "",
             stage: stage || "",
-            snapshot: { teams: snapshot(teams), game: snapshot(g), pitchLimit, division },
+            // Logos live on the record above; keeping a second copy inside the
+            // snapshot doubled the image data in every single saved game.
+            snapshot: { teams: stripLogos(snapshot(teams)), game: snapshot(g), pitchLimit, division },
         };
         setGames((list) => {
             const prev = list.find((x) => x.id === record.id);
@@ -1475,7 +1598,17 @@ function DugoutScorecard() {
         }
         const snap = record.snapshot || {};
         if (snap.teams)
-            setTeams(snapshot(snap.teams));
+            // logos are stored once, on the record — merge them back in
+        setTeams((() => {
+            const t = snapshot(snap.teams);
+            ["away", "home"].forEach((sd) => {
+                if (t[sd] && !t[sd].logo && record[sd] && record[sd].logo)
+                    t[sd].logo = record[sd].logo;
+                if (t[sd] && !t[sd].color && record[sd] && record[sd].color)
+                    t[sd].color = record[sd].color;
+            });
+            return t;
+        })());
         if (snap.game) {
             const g0 = snapshot(snap.game);
             repairLogNames(g0); // heal jersey-number placeholders via the lineup's # field
@@ -1687,6 +1820,71 @@ function DugoutScorecard() {
             eventName: rec.eventName || f.event || "",
             liveCode: rec.liveCode || f.code || null,
         });
+    };
+    // Rebuild saved games from the hub. The relay keeps the full snapshot per
+    // code, so anything that was posted can come back after a failed local save.
+    const restoreFromHub = () => {
+        fetch(LIVE_ENDPOINT + "?list=1", { cache: "no-store" })
+            .then((r) => r.json())
+            .then((d) => {
+                const entries = ((d && d.games) || []).filter((g) => g.over && !g.sched && !g.manual);
+                if (!entries.length) {
+                    try {
+                        alert("Nothing on the hub to restore.");
+                    }
+                    catch (_a) { }
+                    return;
+                }
+                const have = {};
+                games.forEach((r) => { if (r.liveCode) have[r.liveCode] = true; });
+                const missing = entries.filter((e) => !have[e.code]);
+                if (!missing.length) {
+                    try {
+                        alert("Every game on the hub is already saved here.");
+                    }
+                    catch (_a) { }
+                    return;
+                }
+                Promise.all(missing.map((e) => fetch(`${LIVE_ENDPOINT}?code=${encodeURIComponent(e.code)}`, { cache: "no-store" })
+                    .then((r) => r.json())
+                    .then((x) => ({ e, snap: x && x.snap }))
+                    .catch(() => null))).then((got) => {
+                    const recs = got.filter((x) => x && x.snap && Array.isArray(x.snap.log)).map(({ e, snap }) => ({
+                        id: Date.now() + Math.floor(Math.random() * 99999),
+                        savedAt: Date.now(),
+                        date: e.gdate || null,
+                        gameType: "tournament",
+                        eventName: e.ev || "",
+                        away: { name: e.away || "Visitors", color: e.ac || "", logo: e.al || "" },
+                        home: { name: e.home || "Home", color: e.hc || "", logo: e.hl || "" },
+                        awayRuns: e.sA || 0, homeRuns: e.sH || 0,
+                        liveCode: e.code, gameTime: e.gtime || "", fieldName: e.gfield || "",
+                        gnum: e.gnum || "", stage: e.stage || "",
+                        fromHub: true, // play-by-play only — no box score behind it
+                        snapshot: null,
+                    }));
+                    if (!recs.length) {
+                        try {
+                            alert("Couldn't read those games back.");
+                        }
+                        catch (_a) { }
+                        return;
+                    }
+                    setGames((list) => {
+                        const next = recs.concat(list);
+                        persistGames(next);
+                        return next;
+                    });
+                    try {
+                        alert(`Restored ${recs.length} game${recs.length === 1 ? "" : "s"} from the hub.\n\nScores and play-by-play only \u2014 the full box score can't be rebuilt.`);
+                    }
+                    catch (_a) { }
+                });
+            })
+            .catch(() => { try {
+                alert("Couldn't reach the hub.");
+            }
+            catch (_a) { } });
     };
     const publishSavedGameSmart = (rec, done) => {
         const base = enrichFromSchedule(rec);
@@ -7938,6 +8136,7 @@ function DugoutScorecard() {
                         }) }, "\u002B Add a result (game you didn\u2019t score)"),
                     React.createElement("button", { className: "dg ghost", style: { width: "100%", marginBottom: 10 }, onClick: () => setSchedOpen(true) }, "\uD83D\uDCC5 Tournament schedule"),
                     React.createElement("button", { className: "dg ghost", style: { width: "100%", marginBottom: 10 }, onClick: loadHubList }, "\uD83D\uDCE1 What\u2019s on the games hub"),
+                    React.createElement("button", { className: "dg ghost", style: { width: "100%", marginBottom: 10 }, onClick: restoreFromHub }, "\u2B07 Restore missing games from the hub"),
                     hubList && React.createElement("div", { style: { border: "1px solid var(--line)", borderRadius: 12, padding: 10, marginBottom: 10 } },
                         React.createElement("div", { className: "sit-sec" }, "Listed on the hub"),
                         hubList.loading
@@ -8001,7 +8200,7 @@ function DugoutScorecard() {
                                         React.createElement("button", { className: "rm", onClick: () => setEditDate(null), "aria-label": "Cancel" }, "\u00D7"))
                                     : React.createElement("button", { className: "replay-btn", onClick: () => setEditDate({ id: gm.id, date: (gm.date || new Date(gm.savedAt).toISOString().slice(0, 10)) }), title: "Correct the date", "aria-label": "Edit date" }, "\u270E"),
                                 !gm.resultOnly && React.createElement("button", { className: "replay-btn", onClick: () => publishSavedGameSmart(gm, (c) => { if (c) { const a = teamCrest(gm.away.name, true), h = teamCrest(gm.home.name, true); alert(`Posted to the games hub.\n\n${gm.away.name}: ${a.logo ? "crest sent" : "no crest found"}\n${gm.home.name}: ${h.logo ? "crest sent" : "no crest found"}\n\nCode ${c}`); } }), title: gm.liveCode ? "Update on the games hub" : "Post to the games hub", "aria-label": "Post to hub" }, gm.liveCode ? "\u21BB" : "\u2191"),
-                                gm.resultOnly && React.createElement("button", { className: "replay-btn", onClick: () => setResultForm({
+                                (gm.resultOnly || gm.fromHub) && React.createElement("button", { className: "replay-btn", onClick: () => setResultForm({
                                         id: gm.id, code: gm.liveCode || "",
                                         awayName: gm.away.name, homeName: gm.home.name,
                                         awayRuns: String(gm.awayRuns), homeRuns: String(gm.homeRuns),
