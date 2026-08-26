@@ -16,7 +16,7 @@ const json = (statusCode, body) => ({
 });
 
 const PUBLIC_TTL = 6 * 60 * 60 * 1000;            // undated entries: 6h since last push
-const EVENT_TTL = 5 * 24 * 60 * 60 * 1000;        // dated entries: 5 days AFTER the game date
+const EVENT_TTL = 400 * 24 * 60 * 60 * 1000;      // dated entries: a full season+ after the game date
 const FUTURE_CAP = 60 * 24 * 60 * 60 * 1000;      // ignore dates more than ~2 months out
 
 // When does an entry stop being listed?
@@ -41,9 +41,8 @@ const publicEntry = (code, snap) => ({
   home: String(snap.home && snap.home.name || "Home").slice(0, 28),
   ac: (snap.away && snap.away.color) || "",
   hc: (snap.home && snap.home.color) || "",
-  // team crests (already resized to 96px by the app) — still team-level only
-  al: String((snap.away && snap.away.logo) || "").slice(0, 40000),
-  hl: String((snap.home && snap.home.logo) || "").slice(0, 40000),
+  // crests are NOT stored per game — they live once per team in the crest
+  // store and are joined by name, so 100 games don't carry 200 copies
   sA: Number(snap.away && snap.away.runs || 0),
   sH: Number(snap.home && snap.home.runs || 0),
   inning: Number(snap.inning || 1),
@@ -86,10 +85,11 @@ exports.handler = async (event) => {
   if (!siteID || !token)
     return json(500, { ok: false, message: "Missing BLOBS_SITE_ID or BLOBS_TOKEN env var" });
 
-  let store, pub;
+  let store, pub, crests;
   try {
     store = getStore({ name: "dugoutiq-live", siteID, token });
     pub = getStore({ name: "dugoutiq-public", siteID, token });
+    crests = getStore({ name: "dugoutiq-crests", siteID, token });
   } catch (e) {
     return json(500, { ok: false, message: "Store init failed: " + e.message });
   }
@@ -108,6 +108,20 @@ exports.handler = async (event) => {
       // Public index: opt-in only.
       if (data.list === true) {
         try {
+          // upsert each team's crest once, keyed by name
+          for (const sd of ["away", "home"]) {
+            const t = snap[sd];
+            if (!t || !t.name) continue;
+            const logo = String(t.logo || "");
+            const color = String(t.color || "");
+            if (!logo && !color) continue;
+            const key = String(t.name).trim().toLowerCase().slice(0, 60);
+            try {
+              const was = await crests.get(key, { type: "json" }).catch(() => null);
+              if (!was || was.logo !== logo || was.color !== color)
+                await crests.setJSON(key, { name: t.name, color, logo: logo.slice(0, 40000), updated: Date.now() });
+            } catch (e) {}
+          }
           const entry = publicEntry(code, snap);
           // Don't let a push that omits the tournament details erase them —
           // keep whatever a previous push established for this same game.
@@ -148,7 +162,25 @@ exports.handler = async (event) => {
         games.sort((a, b) =>
           (a.over === b.over ? (b.updated || 0) - (a.updated || 0) : a.over ? 1 : -1)
         );
-        return json(200, { ok: true, games });
+        let teams = {};
+        try {
+          const cl = await crests.list();
+          const keys = (cl && cl.blobs ? cl.blobs : []).map((b) => b.key);
+          // only the teams actually appearing in the listed games
+          const wanted = new Set();
+          games.forEach((g2) => {
+            if (g2.away) wanted.add(String(g2.away).trim().toLowerCase());
+            if (g2.home) wanted.add(String(g2.home).trim().toLowerCase());
+          });
+          for (const k of keys) {
+            if (!wanted.has(k)) continue;
+            try {
+              const c = await crests.get(k, { type: "json" });
+              if (c) teams[k] = { color: c.color || "", logo: c.logo || "" };
+            } catch (e) {}
+          }
+        } catch (e) { teams = {}; }
+        return json(200, { ok: true, games, teams });
       }
 
       const code = String(q.code || "").trim().toUpperCase();
