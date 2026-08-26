@@ -102,6 +102,11 @@
   // the public index carries team names and scores, never player names.
   const params = new URLSearchParams(location.search);
   // accept ?event=, ?ev= or the older ?e=
+  let CRESTS = {}; // team name -> {color, logo}
+  const crestOf = (name, fallbackLogo, fallbackColor) => {
+    const c = CRESTS[String(name || "").trim().toLowerCase()] || {};
+    return { logo: c.logo || fallbackLogo || "", color: c.color || fallbackColor || "" };
+  };
   const evName = (params.get("event") || params.get("ev") || params.get("e") || "").trim();
   if (evName) $("title").textContent = evName;
 
@@ -127,8 +132,8 @@
     return `
       <${tag} class="g${inert ? " manual" : ""}"${href}>
         <div class="teams">
-          ${team(g.away, g.ac, g.sched ? "\u2014" : g.sA, aWin, g.over && !aWin, g.al)}
-          ${team(g.home, g.hc, g.sched ? "\u2014" : g.sH, hWin, g.over && !hWin, g.hl)}
+          ${team(g.away, crestOf(g.away, g.al, g.ac).color, g.sched ? "\u2014" : g.sA, aWin, g.over && !aWin, crestOf(g.away, g.al, g.ac).logo)}
+          ${team(g.home, crestOf(g.home, g.hl, g.hc).color, g.sched ? "\u2014" : g.sH, hWin, g.over && !hWin, crestOf(g.home, g.hl, g.hc).logo)}
         </div>
         <div class="state">
           ${g.sched
@@ -270,6 +275,7 @@
     try{
       const r = await fetch("/.netlify/functions/game?list=1", { cache:"no-store" });
       const d = await r.json();
+      if (d && d.teams) CRESTS = d.teams;   // crests sent once per listing, not per game
       if (d && d.ok && Array.isArray(d.games)){
         lastUpdated = Date.now();
         route(d.games);
