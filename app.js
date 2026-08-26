@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "240"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "241"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -4839,6 +4839,7 @@ function DugoutScorecard() {
     const [schedule, setSchedule] = useState(() => loadSchedule()); // tournament fixtures
     const [schedOpen, setSchedOpen] = useState(false);
     const [schedRename, setSchedRename] = useState(false);
+    const [showPlayed, setShowPlayed] = useState(false); // scored fixtures hidden by default
     const [hubList, setHubList] = useState(null); // {loading, games} while managing hub listings
     const [pools, setPools] = useState(() => loadPools()); // { "team name": "A" }
     const [stage, setStage] = useState(""); // round robin / semi / championship
@@ -8992,8 +8993,12 @@ function DugoutScorecard() {
                         React.createElement("button", { className: "dg ghost", onClick: () => { const f = errKind.onPick; setErrKind(null); f(""); } }, "Skip \u2014 just E"),
                         React.createElement("button", { className: "dg ghost", onClick: () => setErrKind(null) }, "Cancel"))))),
             schedOpen && (() => {
-                const rows = schedule
-                    .filter((r) => !schedEvent.trim() || lc(r.event) === lc(schedEvent))
+                const inEvent = schedule.filter((r) => !schedEvent.trim() || lc(r.event) === lc(schedEvent));
+                const doneN = inEvent.filter((r) => r.played).length;
+                // scored games drop out of the list so the next one to score is
+                // at the top, rather than buried under everything already played
+                const rows = inEvent
+                    .filter((r) => showPlayed || !r.played)
                     .slice().sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
                 const upd = (id, k, v) => saveSchedule(schedule.map((r) => (r.id === id ? Object.assign({}, r, { [k]: v }) : r)));
                 return (React.createElement("div", { className: "modal-back", onClick: () => setSchedOpen(false) },
@@ -9062,6 +9067,7 @@ function DugoutScorecard() {
                                 React.createElement("input", { className: "dg-in", type: "time", value: r.time || "", onChange: (e) => upd(r.id, "time", e.target.value), "aria-label": "Time" })),
                             React.createElement("div", { className: "limitrow" },
                                 React.createElement("input", { className: "dg-in", placeholder: "Field", value: r.field || "", onChange: (e) => upd(r.id, "field", e.target.value), "aria-label": "Field" }),
+                                r.played && React.createElement("button", { className: "dg ghost", style: { padding: "2px 6px", fontSize: 11 }, onClick: () => saveSchedule(schedule.map((x) => (x.id === r.id ? Object.assign({}, x, { played: false }) : x))), title: "Put this game back in the list to score again" }, "scored \u21BA"),
                                 React.createElement("span", { className: "limithint", title: "Crest found for both teams?" },
                                     (teamCrest(r.away).logo ? "\u25CF" : "\u25CB"), " ",
                                     (teamCrest(r.home).logo ? "\u25CF" : "\u25CB")),
@@ -9092,6 +9098,8 @@ function DugoutScorecard() {
                                     React.createElement("span", { style: { fontSize: 14, alignSelf: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, t),
                                     React.createElement("input", { className: "dg-in", placeholder: "A", maxLength: 2, value: poolOf(t), onChange: (e) => setPoolFor(t, e.target.value), "aria-label": `Pool for ${t}` }))));
                         })(),
+                        doneN > 0 && React.createElement("button", { className: "dg ghost", style: { width: "100%", marginTop: 6, fontSize: 12, padding: "7px 0" }, onClick: () => setShowPlayed(!showPlayed) },
+                            showPlayed ? `Hide the ${doneN} scored game${doneN === 1 ? "" : "s"}` : `Show ${doneN} scored game${doneN === 1 ? "" : "s"}`),
                         React.createElement("button", { className: "dg ghost", style: { width: "100%", marginTop: 4 }, onClick: () => saveSchedule(schedule.concat([{
                                 id: Date.now() + Math.floor(Math.random() * 999),
                                 code: "S" + Math.random().toString(36).slice(2, 7).toUpperCase(),
