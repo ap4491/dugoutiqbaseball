@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "241"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "242"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -4840,6 +4840,7 @@ function DugoutScorecard() {
     const [schedOpen, setSchedOpen] = useState(false);
     const [schedRename, setSchedRename] = useState(false);
     const [showPlayed, setShowPlayed] = useState(false); // scored fixtures hidden by default
+    const [setPane, setSetPane] = useState(null); // which settings panel is open
     const [hubList, setHubList] = useState(null); // {loading, games} while managing hub listings
     const [pools, setPools] = useState(() => loadPools()); // { "team name": "A" }
     const [stage, setStage] = useState(""); // round robin / semi / championship
@@ -7662,6 +7663,17 @@ function DugoutScorecard() {
         .set-modal { max-width: 520px; text-align: left; }
         .set-group { border-top: 1px solid rgba(169,197,232,.16); margin-top: 18px; padding-top: 14px; }
         .set-group:first-of-type { border-top: 0; margin-top: 10px; padding-top: 0; }
+        .set-menu { display: flex; flex-direction: column; gap: 8px; margin-bottom: 4px; }
+        .set-item { display: flex; align-items: center; gap: 12px; width: 100%;
+          padding: 13px 14px; background: rgba(255,255,255,.05);
+          border: 1px solid var(--line); border-radius: 12px; cursor: pointer;
+          font-family: 'Saira Condensed', sans-serif; text-align: left; color: var(--white); }
+        .set-item:active { border-color: var(--amberw); background: rgba(255,255,255,.09); }
+        .set-item-ic { font-size: 20px; flex: none; }
+        .set-item-tx { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+        .set-item-tx b { font-size: 15.5px; font-weight: 700; letter-spacing: .02em; }
+        .set-item-tx span { font-size: 12px; color: var(--powder); }
+        .set-item-ar { flex: none; font-size: 20px; color: var(--powder); }
         .set-sec { font-weight: 700; color: var(--powder); font-size: 12px; letter-spacing: .1em;
                    text-transform: uppercase; margin: 0 0 10px; }
         .set-hint { font-size: 12px; opacity: .68; line-height: 1.4; margin: 8px 0 0;
@@ -8757,11 +8769,8 @@ function DugoutScorecard() {
                                 React.createElement("button", { className: "dg ghost", onClick: copyText }, "Copy table"),
                                 React.createElement("button", { className: "dg ghost", onClick: () => setSeasonOpen(false) }, "Done")))));
                 })(),
-            settingsOpen && (React.createElement("div", { className: "modal-back", onClick: () => setSettingsOpen(false) },
-                React.createElement("div", { className: "modal set-modal", onClick: (e) => e.stopPropagation() },
-                    React.createElement("h3", null, "\u2699\uFE0F Settings"),
-                    React.createElement("div", { className: "set-group" },
-                        React.createElement("div", { className: "set-sec" }, "If something looks wrong"),
+            settingsOpen && (() => {
+                    const PANEL_FIX = React.createElement("div", { className: "set-group" },
                         React.createElement("button", { className: "dg ghost", style: { width: "100%", marginBottom: 6 }, onClick: () => location.reload() }, "\u21BB Reload the app"),
                         React.createElement("button", { className: "dg ghost", style: { width: "100%", marginBottom: 6 }, onClick: () => {
                                 if (!confirm("Close the game in progress and go back to setup?\n\nSaved games, rosters and schedules are NOT affected."))
@@ -8773,9 +8782,8 @@ function DugoutScorecard() {
                                 location.reload();
                             } }, "\u2716 Close the game in progress"),
                         React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--powder)", fontSize: 11, margin: "0 0 4px" } },
-                            "Neither touches your saved games. Use the second if the scoring screen won\u2019t load.")),
-                    React.createElement("div", { className: "set-group" },
-                        React.createElement("div", { className: "set-sec" }, "App look"),
+                            "Neither touches your saved games. Use the second if the scoring screen won\u2019t load."));
+                    const PANEL_LOOK = React.createElement("div", { className: "set-group" },
                         React.createElement("div", { className: "theme-swatches" },
                             PRESET_TEAM_COLORS.map((c) => (React.createElement("button", { key: c, type: "button", className: `swatch ${themeColor === c ? "sel" : ""}`, style: { background: c }, onClick: () => setThemeColor(c), "aria-label": "Set app theme color" }))),
                             React.createElement("input", { type: "color", className: "swatch-custom", value: themeColor, onChange: (e) => setThemeColor(e.target.value), "aria-label": "Custom app theme color" }),
@@ -8783,9 +8791,8 @@ function DugoutScorecard() {
                                 themeLogo ? React.createElement("img", { src: themeLogo, alt: "app logo" }) : "\uFF0B Logo",
                                 React.createElement("input", { type: "file", accept: "image/*", onChange: onThemeLogoPick, style: { display: "none" } })),
                             themeLogo && (React.createElement("button", { type: "button", className: "logo-rm", onClick: () => setThemeLogo(""), "aria-label": "Remove logo" }, "\u2715"))),
-                        React.createElement("p", { className: "set-hint" }, "Sets the accent color and the watermark in the diamond.")),
-                    React.createElement("div", { className: "set-group" },
-                        React.createElement("div", { className: "set-sec" }, "Backup & restore"),
+                        React.createElement("p", { className: "set-hint" }, "Sets the accent color and the watermark in the diamond."));
+                    const PANEL_BACKUP = React.createElement("div", { className: "set-group" },
                         bkMeta && (React.createElement("div", { className: "set-code" },
                             React.createElement("div", { style: { fontSize: 11, color: "#A9C5E8", letterSpacing: ".05em", marginBottom: 2 } }, "YOUR BACKUP CODE"),
                             React.createElement("div", { style: { fontFamily: "'Saira Condensed', sans-serif", fontSize: 17, fontWeight: 700, color: "#F5C518", letterSpacing: ".12em", userSelect: "all" } }, bkMeta.code),
@@ -8802,16 +8809,39 @@ function DugoutScorecard() {
                             React.createElement("input", { className: "dg-in", style: { flex: 1, textTransform: "uppercase" }, value: restoreIn, onChange: (e) => setRestoreIn(e.target.value), placeholder: "Backup code\u2026", "aria-label": "Backup code to restore", autoComplete: "off" }),
                             React.createElement("button", { className: "dg ghost", onClick: runRestore, disabled: bkBusy || !restoreIn.trim() }, "Restore")),
                         bkMsg && (React.createElement("p", { className: "set-hint", style: { color: bkMsg.ok ? "#3ad07a" : "#E8915A", opacity: 1 } }, bkMsg.text)),
-                        React.createElement("p", { className: "set-hint" }, "Saves your games, teams, rosters, settings and activation. Cloud backup needs internet; Export file works offline \u2014 keep one before playoffs.")),
-                    React.createElement("div", { className: "set-group" },
-                        React.createElement("div", { className: "set-sec" }, "Public games"),
+                        React.createElement("p", { className: "set-hint" }, "Saves your games, teams, rosters, settings and activation. Cloud backup needs internet; Export file works offline \u2014 keep one before playoffs."));
+                    const PANEL_PUBLIC = React.createElement("div", { className: "set-group" },
                         React.createElement("a", { href: "/games.html", target: "_blank", rel: "noopener", className: "dg", style: { display: "block", textAlign: "center", textDecoration: "none" } }, "Open the public Games page \u2192"),
-                        React.createElement("p", { className: "set-hint" }, "Games appear there only when a scorer ticks \u201Clist publicly\u201D in the live-share window.")),
+                        React.createElement("p", { className: "set-hint" }, "Games appear there only when a scorer ticks \u201Clist publicly\u201D in the live-share window."));
+                return (React.createElement("div", { className: "modal-back", onClick: () => { setSettingsOpen(false); setSetPane(null); } },
+                React.createElement("div", { className: "modal set-modal", onClick: (e) => e.stopPropagation() },
+                    React.createElement("h3", null, setPane
+                        ? React.createElement("span", null,
+                            React.createElement("button", { className: "dg ghost", style: { padding: "4px 10px", fontSize: 13, marginRight: 10, verticalAlign: "middle" }, onClick: () => setSetPane(null) }, "\u2039 Back"),
+                            setPane)
+                        : "\u2699\uFE0F Settings"),
+                    // A menu of destinations rather than one long scroll — each
+                    // opens its own panel, with Back to return here.
+                    !setPane && React.createElement("div", { className: "set-menu" },
+                        [["Fix a problem", "\uD83D\uDD27", "Reload, or close a game that won\u2019t load"],
+                            ["App look", "\uD83C\uDFA8", "Accent colour and diamond watermark"],
+                            ["Backup & restore", "\uD83D\uDCBE", "Cloud backup, export and import"],
+                            ["Public games", "\uD83D\uDCE1", "The page parents can browse"]]
+                            .map(([label, icon, hint]) => React.createElement("button", { key: label, className: "set-item", onClick: () => setSetPane(label) },
+                                React.createElement("span", { className: "set-item-ic" }, icon),
+                                React.createElement("span", { className: "set-item-tx" },
+                                    React.createElement("b", null, label),
+                                    React.createElement("span", null, hint)),
+                                React.createElement("span", { className: "set-item-ar" }, "\u203A")))),
+                    setPane === "Fix a problem" && PANEL_FIX,
+                    setPane === "App look" && PANEL_LOOK,
+                    setPane === "Backup & restore" && PANEL_BACKUP,
+                    setPane === "Public games" && PANEL_PUBLIC,
                     React.createElement("div", { className: "set-foot" },
-                        React.createElement("button", { className: "dg ghost", style: { width: "100%" }, onClick: () => setSettingsOpen(false) }, "Done"),
+                        React.createElement("button", { className: "dg ghost", style: { width: "100%" }, onClick: () => { setSettingsOpen(false); setSetPane(null); } }, "Done"),
                         React.createElement("p", { className: "set-ver" },
                             "DugoutIQ \u2014 Manage the Game \u00B7 App v",
-                            APP_VERSION))))),
+                            APP_VERSION))))); })(),
             liveOpen && (React.createElement("div", { className: "modal-back", onClick: () => setLiveOpen(false) },
                 React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
                     React.createElement("h3", null, "Live spectator link"),
