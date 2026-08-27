@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "242"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "243"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -2705,6 +2705,40 @@ function DugoutScorecard() {
         const p = teams[side].lineup.find((pl) => pl.pos === "P");
         return p && p.name.trim() ? { name: p.name, num: p.num || "" } : { name: "P1", num: "" };
     };
+    /* --- game clock ---------------------------------------------------------
+       Wall-clock length of the game, with stoppages taken out, so teams and
+       conveners can see how long games actually run.
+    ------------------------------------------------------------------------ */
+    const elapsedMs = (g, nowMs) => {
+        if (!g || !g.startedAt)
+            return 0;
+        const now = nowMs || Date.now();
+        const end = g.endedAt || now;
+        const inStoppage = g.pausedAt ? (end - g.pausedAt) : 0;
+        return Math.max(0, end - g.startedAt - (g.pausedMs || 0) - inStoppage);
+    };
+    const fmtDur = (ms) => {
+        const t = Math.max(0, Math.round(ms / 1000));
+        const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60);
+        return h ? `${h}:${String(m).padStart(2, "0")}` : `0:${String(m).padStart(2, "0")}`;
+    };
+    const pauseClock = (why) => mutate((g) => {
+        if (g.pausedAt || g.endedAt)
+            return;
+        g.pausedAt = Date.now();
+        g.pauseWhy = why || "Delay";
+        logPlay(g, `${g.pauseWhy} \u2014 clock stopped`, "info");
+    });
+    const resumeClock = () => mutate((g) => {
+        if (!g.pausedAt)
+            return;
+        const was = g.pauseWhy || "Delay";
+        const mins = Math.round((Date.now() - g.pausedAt) / 60000);
+        g.pausedMs = (g.pausedMs || 0) + (Date.now() - g.pausedAt);
+        g.pausedAt = null;
+        g.pauseWhy = "";
+        logPlay(g, `Play resumed \u2014 ${was.toLowerCase()} of ${mins} min`, "info");
+    });
     const playBall = () => {
         setGame({
             id: Date.now(),
@@ -2747,6 +2781,12 @@ function DugoutScorecard() {
             },
             subs: { away: [], home: [] },
             orderLocked: { away: false, home: false }, // locks once the order turns over once
+            // Game clock: wall time from first pitch, minus any stoppages.
+            startedAt: Date.now(),
+            pausedMs: 0,      // total time stopped
+            pausedAt: null,   // when the current stoppage began
+            pauseWhy: "",     // "Rain delay" etc, shown while stopped
+            endedAt: null,
             decisions: { w: null, l: null, s: null }, // {side, idx} pitcher of record
             linescore: [{ away: 0, home: null }],
             hits: { away: 0, home: 0 },
@@ -4841,6 +4881,12 @@ function DugoutScorecard() {
     const [schedRename, setSchedRename] = useState(false);
     const [showPlayed, setShowPlayed] = useState(false); // scored fixtures hidden by default
     const [setPane, setSetPane] = useState(null); // which settings panel is open
+    const [clockTick, setClockTick] = useState(Date.now()); // re-renders the game clock
+    const [delayMenu, setDelayMenu] = useState(false); // why is play stopped?
+    useEffect(() => {
+        const t = setInterval(() => setClockTick(Date.now()), 15000);
+        return () => clearInterval(t);
+    }, []);
     const [hubList, setHubList] = useState(null); // {loading, games} while managing hub listings
     const [pools, setPools] = useState(() => loadPools()); // { "team name": "A" }
     const [stage, setStage] = useState(""); // round robin / semi / championship
@@ -5584,6 +5630,14 @@ function DugoutScorecard() {
             }
         }
         g.over = true;
+        // stop the game clock — length is measured to the final out
+        if (g.startedAt && !g.endedAt) {
+            if (g.pausedAt) { // called during a delay: don't count the delay
+                g.pausedMs = (g.pausedMs || 0) + (Date.now() - g.pausedAt);
+                g.pausedAt = null;
+            }
+            g.endedAt = Date.now();
+        }
         g.bases = emptyBases();
         if (!g.decisions)
             g.decisions = { w: null, l: null, s: null };
@@ -7663,6 +7717,11 @@ function DugoutScorecard() {
         .set-modal { max-width: 520px; text-align: left; }
         .set-group { border-top: 1px solid rgba(169,197,232,.16); margin-top: 18px; padding-top: 14px; }
         .set-group:first-of-type { border-top: 0; margin-top: 10px; padding-top: 0; }
+        .gclock { display:block; margin:4px auto 0; padding:2px 8px; font-family:'Saira Condensed',sans-serif;
+          font-size:12px; font-weight:700; letter-spacing:.06em; color:var(--powder);
+          background:rgba(255,255,255,.06); border:1px solid var(--line); border-radius:999px;
+          cursor:pointer; font-variant-numeric:tabular-nums; }
+        .gclock.paused { color:#0A1A33; background:var(--amberw); border-color:var(--amberw); }
         .set-menu { display: flex; flex-direction: column; gap: 8px; margin-bottom: 4px; }
         .set-item { display: flex; align-items: center; gap: 12px; width: 100%;
           padding: 13px 14px; background: rgba(255,255,255,.05);
@@ -7879,7 +7938,12 @@ function DugoutScorecard() {
                     React.createElement("div", { className: "inning-cell" },
                         React.createElement("div", { className: "arrow" }, game.half === "top" ? "▲" : "▽"),
                         React.createElement("div", { className: "num" }, game.inning),
-                        React.createElement("div", { className: "lbl" }, game.half === "top" ? "TOP" : "BOT")),
+                        React.createElement("div", { className: "lbl" }, game.half === "top" ? "TOP" : "BOT"),
+                        game.startedAt && React.createElement("button", {
+                            className: `gclock ${game.pausedAt ? "paused" : ""}`,
+                            onClick: () => { if (game.over) return; if (game.pausedAt) resumeClock(); else setDelayMenu(true); },
+                            title: game.pausedAt ? `${game.pauseWhy || "Delay"} \u2014 tap to resume` : "Game time \u00b7 tap to stop the clock",
+                        }, game.pausedAt ? "\u23F8 " + fmtDur(elapsedMs(game, clockTick)) : fmtDur(elapsedMs(game, clockTick)))),
                     React.createElement("div", { className: `team-cell ${battingSide === "home" && !game.over ? "atbat" : ""}`, style: Object.assign({ cursor: "pointer" }, (battingSide === "home" && !game.over ? { borderColor: teamColor("home") } : {})), onClick: () => { setSubSide("home"); setSubSlot(null); captureNameBase(); setSubMenu(true); }, title: "Edit lineup" },
                         teams.home.logo
                             ? React.createElement("div", { className: "tname logo-only" }, React.createElement("img", { src: teams.home.logo, className: "tlogo-lg", alt: teams.home.name }))
@@ -8769,6 +8833,13 @@ function DugoutScorecard() {
                                 React.createElement("button", { className: "dg ghost", onClick: copyText }, "Copy table"),
                                 React.createElement("button", { className: "dg ghost", onClick: () => setSeasonOpen(false) }, "Done")))));
                 })(),
+            delayMenu && game && (React.createElement("div", { className: "modal-back", onClick: () => setDelayMenu(false) },
+                React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
+                    React.createElement("h3", null, "Stop the clock"),
+                    React.createElement("p", null, "Game time keeps running until you resume, but the stoppage is taken out of the game\u2019s length."),
+                    React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr" } },
+                        ["Rain delay", "Injury", "Lightning", "Field repair", "Darkness", "Other delay"].map((why) => React.createElement("button", { key: why, className: "dg ghost", onClick: () => { pauseClock(why); setDelayMenu(false); } }, why))),
+                    React.createElement("button", { className: "dg ghost", style: { width: "100%", marginTop: 10 }, onClick: () => setDelayMenu(false) }, "Cancel")))),
             settingsOpen && (() => {
                     const PANEL_FIX = React.createElement("div", { className: "set-group" },
                         React.createElement("button", { className: "dg ghost", style: { width: "100%", marginBottom: 6 }, onClick: () => location.reload() }, "\u21BB Reload the app"),
