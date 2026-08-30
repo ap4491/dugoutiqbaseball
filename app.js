@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "244"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "245"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1046,11 +1046,13 @@ const idbOpen = () => new Promise((resolve) => {
     try {
         if (!window.indexedDB)
             return resolve(null);
-        const req = window.indexedDB.open(IDB_NAME, 1);
+        const req = window.indexedDB.open(IDB_NAME, 2); // v2 adds the live-save store
         req.onupgradeneeded = () => {
             const db = req.result;
             if (!db.objectStoreNames.contains(IDB_STORE))
                 db.createObjectStore(IDB_STORE, { keyPath: "id" });
+            if (!db.objectStoreNames.contains("livesave"))
+                db.createObjectStore("livesave", { keyPath: "id" });
         };
         req.onsuccess = () => { idbHandle = req.result; resolve(idbHandle); };
         req.onerror = () => resolve(null);
@@ -1059,6 +1061,36 @@ const idbOpen = () => new Promise((resolve) => {
         resolve(null);
     }
 });
+let liveSaveWarned = false;
+// The in-progress game, kept in IndexedDB so a full localStorage can't roll it
+// back. Stored under a fixed id in its own store.
+const IDB_SAVE = "livesave";
+const idbPutSave = (payload) => idbOpen().then((db) => new Promise((resolve, reject) => {
+    if (!db)
+        return reject(new Error("no idb"));
+    try {
+        const tx = db.transaction(IDB_SAVE, "readwrite");
+        tx.objectStore(IDB_SAVE).put({ id: 1, payload, at: Date.now() });
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error);
+    }
+    catch (e) {
+        reject(e);
+    }
+}));
+const idbGetSave = () => idbOpen().then((db) => new Promise((resolve) => {
+    if (!db)
+        return resolve(null);
+    try {
+        const req = db.transaction(IDB_SAVE, "readonly").objectStore(IDB_SAVE).get(1);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => resolve(null);
+    }
+    catch (_a) {
+        resolve(null);
+    }
+}));
 const idbAll = () => idbOpen().then((db) => new Promise((resolve) => {
     if (!db)
         return resolve(null);
@@ -1200,7 +1232,23 @@ function DugoutScorecard() {
     const [incomingName, setIncomingName] = useState("");
     const [showLog, setShowLog] = useState(false);
     useEffect(() => { try {
-        localStorage.setItem(SAVE_KEY, JSON.stringify({ phase, teams, game, pitchLimit, division }));
+        const payload = { phase, teams, game, pitchLimit, division };
+        idbPutSave(payload).catch(() => { });   // primary — no practical size limit
+        try {
+            localStorage.setItem(SAVE_KEY, JSON.stringify(payload));
+            liveSaveWarned = false;
+        }
+        catch (_b) {
+            // localStorage is full. IndexedDB still has it, but say so once —
+            // a silent failure here used to roll the game back on reload.
+            if (!liveSaveWarned) {
+                liveSaveWarned = true;
+                setTimeout(() => { try {
+                    alert("Phone storage is full.\n\nThe game is still being saved, but clear space soon: Settings \u203A Backup & restore, or delete old saved games.");
+                }
+                catch (_c) { } }, 0);
+            }
+        }
     }
     catch (_a) { } }, [phase, teams, game, pitchLimit, division]);
     const [fcMenu, setFcMenu] = useState(false);
@@ -4917,6 +4965,34 @@ function DugoutScorecard() {
     const [showPlayed, setShowPlayed] = useState(false); // scored fixtures hidden by default
     const [setPane, setSetPane] = useState(null); // which settings panel is open
     const [clockTick, setClockTick] = useState(Date.now()); // re-renders the game clock
+    // The IndexedDB autosave is authoritative: if localStorage stopped being
+    // written (full), it holds innings the local copy never got.
+    useEffect(() => {
+        if (DG_SAFE)
+            return;
+        let gone = false;
+        idbGetSave().then((row) => {
+            if (gone || !row || !row.payload || !row.payload.game)
+                return;
+            const localG = saved0 && saved0.game;
+            const idbG = row.payload.game;
+            const depth = (g) => (g && Array.isArray(g.log) ? g.log.length : 0);
+            if (localG && depth(localG) >= depth(idbG))
+                return; // the copy we already loaded is at least as far along
+            const ok = !localG || confirm(`A further-along save of this game was found (${depth(idbG)} events vs ${depth(localG)}).\n\nLoad it?`);
+            if (!ok)
+                return;
+            const p = row.payload;
+            setTeams(snapshot(p.teams));
+            setGame(snapshot(p.game));
+            if (p.pitchLimit != null)
+                setPitchLimit(p.pitchLimit);
+            if (p.division != null)
+                setDivision(p.division);
+            setPhase(p.phase || "score");
+        });
+        return () => { gone = true; };
+    }, []);
     const [fixScore, setFixScore] = useState(null); // {id, a, h} while correcting a final score
     const [delayMenu, setDelayMenu] = useState(false); // why is play stopped?
     useEffect(() => {
