@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "247"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "248"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1278,22 +1278,32 @@ function DugoutScorecard() {
     const [showLog, setShowLog] = useState(false);
     useEffect(() => { try {
         const payload = { phase, teams, game, pitchLimit, division };
-        idbPutSave(payload).catch(() => { });   // primary — no practical size limit
+        let lsOk = false;
         try {
             localStorage.setItem(SAVE_KEY, JSON.stringify(payload));
+            lsOk = true;
             liveSaveWarned = false;
         }
-        catch (_b) {
-            // localStorage is full. IndexedDB still has it, but say so once —
-            // a silent failure here used to roll the game back on reload.
-            if (!liveSaveWarned) {
+        catch (_b) { }
+        // IndexedDB is the primary store. Only shout if BOTH fail — a full
+        // localStorage on its own is expected once the games have moved.
+        idbPutSave(payload)
+            .then(() => {
+                idbProven = true;
+                if (!lsOk) { try {
+                    localStorage.removeItem(GAMES_KEY); // reclaim the old duplicate
+                }
+                catch (_d) { } }
+            })
+            .catch(() => {
+                if (lsOk || liveSaveWarned)
+                    return;
                 liveSaveWarned = true;
                 setTimeout(() => { try {
-                    alert("Phone storage is full.\n\nThe game is still being saved, but clear space soon: Settings \u203A Backup & restore, or delete old saved games.");
+                    alert("This game could not be saved \u2014 storage is full.\n\nSettings \u203A Fix a problem \u203A Free up space now.");
                 }
                 catch (_c) { } }, 0);
-            }
-        }
+            });
     }
     catch (_a) { } }, [phase, teams, game, pitchLimit, division]);
     const [fcMenu, setFcMenu] = useState(false);
@@ -1633,8 +1643,15 @@ function DugoutScorecard() {
                 return; // no IndexedDB — carry on with localStorage
             const local = loadGames();
             if (!rows.length && local.length) {
-                // first run on this build: move what's in localStorage across
-                idbWriteAll(local).catch(() => { });
+                // first run on this build: move what's in localStorage across,
+                // then release the space it was using
+                idbWriteAll(local).then(() => {
+                    idbProven = true;
+                    try {
+                        localStorage.removeItem(GAMES_KEY);
+                    }
+                    catch (_b) { }
+                }).catch(() => { });
                 return;
             }
             // merge, preferring whichever copy of a game was saved last
@@ -1650,6 +1667,15 @@ function DugoutScorecard() {
             if (merged.length !== rows.length)
                 idbWriteAll(merged).catch(() => { });
             setGames(merged);
+            // IndexedDB has them — drop the localStorage duplicate now rather
+            // than waiting for the next save, so space is freed immediately.
+            if (merged.length) {
+                idbProven = true;
+                try {
+                    localStorage.removeItem(GAMES_KEY);
+                }
+                catch (_b) { }
+            }
         });
         return () => { gone = true; };
     }, []);
@@ -8158,7 +8184,7 @@ function DugoutScorecard() {
                         React.createElement("div", { className: "arrow" }, game.half === "top" ? "▲" : "▽"),
                         React.createElement("div", { className: "num" }, game.inning),
                         React.createElement("div", { className: "lbl" }, game.half === "top" ? "TOP" : "BOT"),
-                        game.startedAt && React.createElement("button", {
+                        game.startedAt && (!game.over || game.endedAt) && React.createElement("button", {
                             className: `gclock ${game.pausedAt ? "paused" : ""}`,
                             onClick: () => { if (game.over) return; if (game.pausedAt) resumeClock(); else setDelayMenu(true); },
                             title: game.pausedAt ? `${game.pauseWhy || "Delay"} \u2014 tap to resume` : "Game time \u00b7 tap to stop the clock",
