@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "245"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "246"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1939,6 +1939,68 @@ function DugoutScorecard() {
             return next;
         });
         setFixScore(null);
+    };
+    const repairFromHub = (rec) => {
+        const code = rec && rec.liveCode;
+        if (!code) {
+            try {
+                alert("This game was never shared live, so there's no copy on the relay to repair from.");
+            }
+            catch (_a) { }
+            return;
+        }
+        fetch(`${LIVE_ENDPOINT}?code=${encodeURIComponent(code)}`, { cache: "no-store" })
+            .then((r) => r.json())
+            .then((d) => {
+                const snap = d && d.snap;
+                if (!snap || !Array.isArray(snap.linescore)) {
+                    try {
+                        alert("Nothing usable came back for that game.");
+                    }
+                    catch (_a) { }
+                    return;
+                }
+                const g = rec.snapshot && rec.snapshot.game;
+                const haveL = g && Array.isArray(g.log) ? g.log.length : 0;
+                const gotL = Array.isArray(snap.log) ? snap.log.length : 0;
+                const sA = Number(snap.away && snap.away.runs) || 0;
+                const sH = Number(snap.home && snap.home.runs) || 0;
+                if (!confirm(`Relay copy: ${snap.away && snap.away.name} ${sA} \u2014 ${sH} ${snap.home && snap.home.name}, `
+                    + `${snap.linescore.length} innings, ${gotL} play-by-play entries.\n\n`
+                    + `Saved copy: ${rec.awayRuns} \u2014 ${rec.homeRuns}, ${haveL} entries.\n\n`
+                    + `Replace the linescore, score and play-by-play with the relay copy?\n\n`
+                    + `Player stats and the scorebook grid were never sent to the relay, so those stay as they are.`))
+                    return;
+                setGames((list) => {
+                    const next = list.map((r) => {
+                        if (r.id !== rec.id)
+                            return r;
+                        const c = Object.assign({}, r, { awayRuns: sA, homeRuns: sH });
+                        const base = (r.snapshot && r.snapshot.game) || {};
+                        c.snapshot = Object.assign({}, r.snapshot || {}, { game: Object.assign({}, base, {
+                                linescore: snap.linescore.map((x) => ({ away: x.away, home: x.home })),
+                                inning: snap.inning || base.inning,
+                                half: snap.half || base.half,
+                                over: true,
+                                // the relay's log is the display form; keep it so the
+                                // play-by-play reads correctly even though it isn't
+                                // the app's native shape
+                                relayLog: snap.log || [],
+                            }) });
+                        return c;
+                    });
+                    persistGames(next);
+                    return next;
+                });
+                try {
+                    alert("Repaired from the relay copy.");
+                }
+                catch (_a) { }
+            })
+            .catch(() => { try {
+                alert("Couldn't reach the relay.");
+            }
+            catch (_a) { } });
     };
     const restoreFromHub = () => {
         fetch(LIVE_ENDPOINT + "?list=1", { cache: "no-store" })
@@ -8430,6 +8492,7 @@ function DugoutScorecard() {
                                         React.createElement("button", { className: "replay-btn", onClick: () => fixSavedScore(gm, fixScore.a, fixScore.h), title: "Save score" }, "\u2713"),
                                         React.createElement("button", { className: "rm", onClick: () => setFixScore(null), "aria-label": "Cancel" }, "\u00D7"))
                                     : React.createElement("button", { className: "replay-btn", onClick: () => setFixScore({ id: gm.id, a: String(gm.awayRuns), h: String(gm.homeRuns) }), title: "Correct the final score", "aria-label": "Fix score" }, "\u00B1"),
+                                gm.liveCode && !gm.resultOnly && React.createElement("button", { className: "replay-btn", onClick: () => repairFromHub(gm), title: "Repair this game from the live relay copy", "aria-label": "Repair from relay" }, "\u2695"),
                                 (gm.resultOnly || gm.fromHub) && React.createElement("button", { className: "replay-btn", onClick: () => setResultForm({
                                         id: gm.id, code: gm.liveCode || "",
                                         awayName: gm.away.name, homeName: gm.home.name,
