@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "246"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "247"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1026,7 +1026,10 @@ const loadRosters = () => { try {
 catch (_a) {
     return [];
 } };
-const persistRosters = (list) => { try {
+const persistRosters = (list) => {
+    // rosters carry team crests, so they belong in IndexedDB too
+    idbWriteKV("rosters", list).catch(() => { });
+    try {
     localStorage.setItem(ROSTERS_KEY, JSON.stringify(list));
 }
 catch (_a) { } };
@@ -1062,6 +1065,7 @@ const idbOpen = () => new Promise((resolve) => {
     }
 });
 let liveSaveWarned = false;
+let idbProven = false; // set once a write to IndexedDB has succeeded
 // The in-progress game, kept in IndexedDB so a full localStorage can't roll it
 // back. Stored under a fixed id in its own store.
 const IDB_SAVE = "livesave";
@@ -1085,6 +1089,32 @@ const idbGetSave = () => idbOpen().then((db) => new Promise((resolve) => {
     try {
         const req = db.transaction(IDB_SAVE, "readonly").objectStore(IDB_SAVE).get(1);
         req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => resolve(null);
+    }
+    catch (_a) {
+        resolve(null);
+    }
+}));
+// small keyed blobs (rosters, schedule, pools) that used to sit in localStorage
+const idbWriteKV = (key, val) => idbOpen().then((db) => new Promise((resolve, reject) => {
+    if (!db)
+        return reject(new Error("no idb"));
+    try {
+        const tx = db.transaction(IDB_SAVE, "readwrite");
+        tx.objectStore(IDB_SAVE).put({ id: "kv:" + key, val, at: Date.now() });
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => reject(tx.error);
+    }
+    catch (e) {
+        reject(e);
+    }
+}));
+const idbReadKV = (key) => idbOpen().then((db) => new Promise((resolve) => {
+    if (!db)
+        return resolve(null);
+    try {
+        const req = db.transaction(IDB_SAVE, "readonly").objectStore(IDB_SAVE).get("kv:" + key);
+        req.onsuccess = () => resolve(req.result ? req.result.val : null);
         req.onerror = () => resolve(null);
     }
     catch (_a) {
@@ -1171,14 +1201,29 @@ const persistGames = (list) => {
     // IndexedDB is the real store — localStorage caps at ~5MB and can't be
     // raised. localStorage is still mirrored while the data fits, so an older
     // build could read it; its failure alone is not an error.
+    // Only mirror to localStorage until IndexedDB has proven itself. After that
+    // the mirror is pure cost: it fills the 5MB budget and starves the autosave.
     let mirrored = false;
-    try {
-        localStorage.setItem(GAMES_KEY, JSON.stringify(list));
-        mirrored = true;
+    if (!idbProven) {
+        try {
+            localStorage.setItem(GAMES_KEY, JSON.stringify(list));
+            mirrored = true;
+        }
+        catch (_a) { }
     }
-    catch (_a) { }
     idbWriteAll(list)
-        .then(() => { storageWarned = false; })
+        .then(() => {
+            storageWarned = false;
+            idbProven = true;
+            // IDB is authoritative now; drop the localStorage copy so it stops
+            // consuming the 5MB budget the autosave and settings share.
+            if (mirrored) {
+                try {
+                    localStorage.removeItem(GAMES_KEY);
+                }
+                catch (_c) { }
+            }
+        })
         .catch(() => {
             if (mirrored || storageWarned)
                 return; // localStorage still has it, or we've already warned
@@ -9023,6 +9068,18 @@ function DugoutScorecard() {
                         ["Rain delay", "Injury", "Lightning", "Field repair", "Darkness", "Other delay"].map((why) => React.createElement("button", { key: why, className: "dg ghost", onClick: () => { pauseClock(why); setDelayMenu(false); } }, why))),
                     React.createElement("button", { className: "dg ghost", style: { width: "100%", marginTop: 10 }, onClick: () => setDelayMenu(false) }, "Cancel")))),
             settingsOpen && (() => {
+                    const lsBytes = (() => { try {
+                        let n = 0;
+                        for (let i = 0; i < localStorage.length; i++) {
+                            const k = localStorage.key(i);
+                            n += (k || "").length + (localStorage.getItem(k) || "").length;
+                        }
+                        return n;
+                    }
+                    catch (_a) {
+                        return 0;
+                    } })();
+                    const kb = (n) => (n > 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.round(n / 1024) + " KB");
                     const PANEL_FIX = React.createElement("div", { className: "set-group" },
                         React.createElement("button", { className: "dg ghost", style: { width: "100%", marginBottom: 6 }, onClick: () => location.reload() }, "\u21BB Reload the app"),
                         React.createElement("button", { className: "dg ghost", style: { width: "100%", marginBottom: 6 }, onClick: () => {
@@ -9086,7 +9143,22 @@ function DugoutScorecard() {
                                     React.createElement("b", null, label),
                                     React.createElement("span", null, hint)),
                                 React.createElement("span", { className: "set-item-ar" }, "\u203A")))),
-                    setPane === "Fix a problem" && PANEL_FIX,
+                    setPane === "Fix a problem" && React.createElement(React.Fragment, null,
+                        PANEL_FIX,
+                        React.createElement("div", { className: "set-group" },
+                            React.createElement("div", { className: "set-sec" }, "Storage"),
+                            React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, fontSize: 13 } },
+                                "Browser storage in use: ", React.createElement("b", { style: { color: lsBytes > 4000000 ? "var(--red)" : "var(--amberw)" } }, kb(lsBytes)),
+                                " of about 5 MB. Saved games now live in a separate, much larger store \u2014 this figure covers settings, rosters and the game in progress."),
+                            lsBytes > 2000000 && React.createElement("button", { className: "dg hit", style: { width: "100%", marginTop: 6 }, onClick: () => {
+                                    if (!confirm("Free up space?\n\nThis clears the old duplicate copy of your saved games. The games themselves are kept in the larger store and are not affected."))
+                                        return;
+                                    try {
+                                        localStorage.removeItem(GAMES_KEY);
+                                    }
+                                    catch (_a) { }
+                                    location.reload();
+                                } }, "Free up space now"))),
                     setPane === "App look" && PANEL_LOOK,
                     setPane === "Backup & restore" && PANEL_BACKUP,
                     setPane === "Public games" && PANEL_PUBLIC,
