@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "243"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "244"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1857,6 +1857,41 @@ function DugoutScorecard() {
     };
     // Rebuild saved games from the hub. The relay keeps the full snapshot per
     // code, so anything that was posted can come back after a failed local save.
+    const fixSavedScore = (rec, awayR, homeR) => {
+        const a = Math.max(0, Number(awayR) || 0), h = Math.max(0, Number(homeR) || 0);
+        setGames((list) => {
+            const next = list.map((r) => {
+                if (r.id !== rec.id)
+                    return r;
+                const c = Object.assign({}, r, { awayRuns: a, homeRuns: h });
+                const g = c.snapshot && c.snapshot.game;
+                if (g && Array.isArray(g.linescore) && g.linescore.length) {
+                    // put the correction in the last inning that side batted, so
+                    // the linescore still adds up to the final score
+                    const ls = g.linescore.map((row) => Object.assign({}, row));
+                    ["away", "home"].forEach((sd) => {
+                        const want = sd === "away" ? a : h;
+                        const have = ls.reduce((t, row) => t + (row[sd] || 0), 0);
+                        const diff = want - have;
+                        if (!diff)
+                            return;
+                        let idx = -1;
+                        for (let i = ls.length - 1; i >= 0; i--) {
+                            if (ls[i][sd] != null) { idx = i; break; }
+                        }
+                        if (idx < 0)
+                            idx = ls.length - 1;
+                        ls[idx][sd] = Math.max(0, (ls[idx][sd] || 0) + diff);
+                    });
+                    c.snapshot = Object.assign({}, c.snapshot, { game: Object.assign({}, g, { linescore: ls }) });
+                }
+                return c;
+            });
+            persistGames(next);
+            return next;
+        });
+        setFixScore(null);
+    };
     const restoreFromHub = () => {
         fetch(LIVE_ENDPOINT + "?list=1", { cache: "no-store" })
             .then((r) => r.json())
@@ -4882,6 +4917,7 @@ function DugoutScorecard() {
     const [showPlayed, setShowPlayed] = useState(false); // scored fixtures hidden by default
     const [setPane, setSetPane] = useState(null); // which settings panel is open
     const [clockTick, setClockTick] = useState(Date.now()); // re-renders the game clock
+    const [fixScore, setFixScore] = useState(null); // {id, a, h} while correcting a final score
     const [delayMenu, setDelayMenu] = useState(false); // why is play stopped?
     useEffect(() => {
         const t = setInterval(() => setClockTick(Date.now()), 15000);
@@ -8311,6 +8347,13 @@ function DugoutScorecard() {
                                         React.createElement("button", { className: "rm", onClick: () => setEditDate(null), "aria-label": "Cancel" }, "\u00D7"))
                                     : React.createElement("button", { className: "replay-btn", onClick: () => setEditDate({ id: gm.id, date: (gm.date || new Date(gm.savedAt).toISOString().slice(0, 10)) }), title: "Correct the date", "aria-label": "Edit date" }, "\u270E"),
                                 !gm.resultOnly && React.createElement("button", { className: "replay-btn", onClick: () => publishSavedGameSmart(gm, (c) => { if (c) { const a = teamCrest(gm.away.name, true), h = teamCrest(gm.home.name, true); alert(`Posted to the games hub.\n\n${gm.away.name}: ${a.logo ? "crest sent" : "no crest found"}\n${gm.home.name}: ${h.logo ? "crest sent" : "no crest found"}\n\nCode ${c}`); } }), title: gm.liveCode ? "Update on the games hub" : "Post to the games hub", "aria-label": "Post to hub" }, gm.liveCode ? "\u21BB" : "\u2191"),
+                                fixScore && fixScore.id === gm.id
+                                    ? React.createElement("span", { style: { display: "inline-flex", gap: 4, alignItems: "center" } },
+                                        React.createElement("input", { className: "dg-in", type: "number", inputMode: "numeric", style: { width: 46, fontSize: 13 }, value: fixScore.a, onChange: (e) => setFixScore(Object.assign({}, fixScore, { a: e.target.value })), "aria-label": "Visiting runs" }),
+                                        React.createElement("input", { className: "dg-in", type: "number", inputMode: "numeric", style: { width: 46, fontSize: 13 }, value: fixScore.h, onChange: (e) => setFixScore(Object.assign({}, fixScore, { h: e.target.value })), "aria-label": "Home runs" }),
+                                        React.createElement("button", { className: "replay-btn", onClick: () => fixSavedScore(gm, fixScore.a, fixScore.h), title: "Save score" }, "\u2713"),
+                                        React.createElement("button", { className: "rm", onClick: () => setFixScore(null), "aria-label": "Cancel" }, "\u00D7"))
+                                    : React.createElement("button", { className: "replay-btn", onClick: () => setFixScore({ id: gm.id, a: String(gm.awayRuns), h: String(gm.homeRuns) }), title: "Correct the final score", "aria-label": "Fix score" }, "\u00B1"),
                                 (gm.resultOnly || gm.fromHub) && React.createElement("button", { className: "replay-btn", onClick: () => setResultForm({
                                         id: gm.id, code: gm.liveCode || "",
                                         awayName: gm.away.name, homeName: gm.home.name,
