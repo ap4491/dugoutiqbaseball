@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "248"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "249"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1203,26 +1203,23 @@ const persistGames = (list) => {
     // build could read it; its failure alone is not an error.
     // Only mirror to localStorage until IndexedDB has proven itself. After that
     // the mirror is pure cost: it fills the 5MB budget and starves the autosave.
+    // ALWAYS mirror to localStorage. It is the last line of defence and must
+    // never be dropped on the strength of an IndexedDB read that might be empty.
     let mirrored = false;
-    if (!idbProven) {
-        try {
-            localStorage.setItem(GAMES_KEY, JSON.stringify(list));
-            mirrored = true;
-        }
-        catch (_a) { }
+    try {
+        localStorage.setItem(GAMES_KEY, JSON.stringify(list));
+        mirrored = true;
     }
+    catch (_a) { }
+    idbWriteKV("gamesBackup", list).catch(() => { }); // independent second copy
     idbWriteAll(list)
         .then(() => {
             storageWarned = false;
             idbProven = true;
             // IDB is authoritative now; drop the localStorage copy so it stops
             // consuming the 5MB budget the autosave and settings share.
-            if (mirrored) {
-                try {
-                    localStorage.removeItem(GAMES_KEY);
-                }
-                catch (_c) { }
-            }
+            // (localStorage copy is deliberately kept as a safety net)
+
         })
         .catch(() => {
             if (mirrored || storageWarned)
@@ -1290,10 +1287,7 @@ function DugoutScorecard() {
         idbPutSave(payload)
             .then(() => {
                 idbProven = true;
-                if (!lsOk) { try {
-                    localStorage.removeItem(GAMES_KEY); // reclaim the old duplicate
-                }
-                catch (_d) { } }
+
             })
             .catch(() => {
                 if (lsOk || liveSaveWarned)
@@ -1645,13 +1639,7 @@ function DugoutScorecard() {
             if (!rows.length && local.length) {
                 // first run on this build: move what's in localStorage across,
                 // then release the space it was using
-                idbWriteAll(local).then(() => {
-                    idbProven = true;
-                    try {
-                        localStorage.removeItem(GAMES_KEY);
-                    }
-                    catch (_b) { }
-                }).catch(() => { });
+                idbWriteAll(local).catch(() => { });
                 return;
             }
             // merge, preferring whichever copy of a game was saved last
@@ -1669,13 +1657,7 @@ function DugoutScorecard() {
             setGames(merged);
             // IndexedDB has them — drop the localStorage duplicate now rather
             // than waiting for the next save, so space is freed immediately.
-            if (merged.length) {
-                idbProven = true;
-                try {
-                    localStorage.removeItem(GAMES_KEY);
-                }
-                catch (_b) { }
-            }
+
         });
         return () => { gone = true; };
     }, []);
@@ -2010,6 +1992,62 @@ function DugoutScorecard() {
             return next;
         });
         setFixScore(null);
+    };
+    // Search every store for saved games and merge whatever is found. Deliberately
+    // additive: nothing is deleted, and the largest set wins.
+    const runRecovery = () => {
+        const found = {};
+        const note = [];
+        const add = (list, where) => {
+            let n = 0;
+            (list || []).forEach((r) => {
+                if (!r || r.id == null)
+                    return;
+                const cur = found[r.id];
+                if (!cur || (r.savedAt || 0) > (cur.savedAt || 0))
+                    found[r.id] = r;
+                n += 1;
+            });
+            note.push(`${where}: ${n}`);
+        };
+        add(games, "in the app");
+        try {
+            add(JSON.parse(localStorage.getItem(GAMES_KEY) || "[]"), "browser storage");
+        }
+        catch (_a) {
+            note.push("browser storage: unreadable");
+        }
+        idbAll().then((rows) => {
+            add(rows || [], "main store");
+            return idbReadKV("gamesBackup");
+        }).then((bk) => {
+            add(bk || [], "backup slot");
+            const all = Object.keys(found).map((k) => found[k])
+                .sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
+            if (!all.length) {
+                try {
+                    alert("No saved games found in any store.\n\n" + note.join("\n"));
+                }
+                catch (_b) { }
+                return;
+            }
+            if (all.length <= games.length) {
+                try {
+                    alert(`Nothing extra found.\n\n${note.join("\n")}\n\nYou already have ${games.length}.`);
+                }
+                catch (_b) { }
+                return;
+            }
+            if (!confirm(`Found ${all.length} games.\n\n${note.join("\n")}\n\nRestore all ${all.length}?`))
+                return;
+            setGames(all);
+            persistGames(all);
+            idbWriteKV("gamesBackup", all).catch(() => { }); // second copy from here on
+            try {
+                alert(`Restored ${all.length} games.`);
+            }
+            catch (_b) { }
+        });
     };
     const repairFromHub = (rec) => {
         const code = rec && rec.liveCode;
@@ -9176,15 +9214,7 @@ function DugoutScorecard() {
                             React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, fontSize: 13 } },
                                 "Browser storage in use: ", React.createElement("b", { style: { color: lsBytes > 4000000 ? "var(--red)" : "var(--amberw)" } }, kb(lsBytes)),
                                 " of about 5 MB. Saved games now live in a separate, much larger store \u2014 this figure covers settings, rosters and the game in progress."),
-                            lsBytes > 2000000 && React.createElement("button", { className: "dg hit", style: { width: "100%", marginTop: 6 }, onClick: () => {
-                                    if (!confirm("Free up space?\n\nThis clears the old duplicate copy of your saved games. The games themselves are kept in the larger store and are not affected."))
-                                        return;
-                                    try {
-                                        localStorage.removeItem(GAMES_KEY);
-                                    }
-                                    catch (_a) { }
-                                    location.reload();
-                                } }, "Free up space now"))),
+                            React.createElement("button", { className: "dg hit", style: { width: "100%", marginTop: 6 }, onClick: runRecovery }, "\uD83D\uDD0D Find my saved games"))),
                     setPane === "App look" && PANEL_LOOK,
                     setPane === "Backup & restore" && PANEL_BACKUP,
                     setPane === "Public games" && PANEL_PUBLIC,
