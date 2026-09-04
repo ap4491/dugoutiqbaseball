@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "249"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "250"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1715,10 +1715,8 @@ function DugoutScorecard() {
         // A game restored from the hub has scores and play-by-play but no box
         // score, so there is nothing to reopen. Say so rather than crashing.
         if (!record || !record.snapshot || !record.snapshot.game) {
-            try {
-                alert("This game was restored from the hub \u2014 it has the score and play-by-play, but no box score to reopen.");
-            }
-            catch (_a) { }
+            // no box score to reopen, but the narrative is worth reading
+            setArchiveView(record);
             return;
         }
         if (record && record.snapshot && record.snapshot.game)
@@ -1995,6 +1993,7 @@ function DugoutScorecard() {
     };
     // Search every store for saved games and merge whatever is found. Deliberately
     // additive: nothing is deleted, and the largest set wins.
+    const viewRestored = (rec) => setArchiveView(rec);
     const runRecovery = () => {
         const found = {};
         const note = [];
@@ -2148,8 +2147,17 @@ function DugoutScorecard() {
                         awayRuns: e.sA || 0, homeRuns: e.sH || 0,
                         liveCode: e.code, gameTime: e.gtime || "", fieldName: e.gfield || "",
                         gnum: e.gnum || "", stage: e.stage || "",
-                        fromHub: true, // play-by-play only — no box score behind it
-                        snapshot: null,
+                        fromHub: !snap.full, // a full snapshot IS a complete game
+                        snapshotFull: snap.full || null,
+                        hits: { away: (snap.away && snap.away.hits) || 0, home: (snap.home && snap.home.hits) || 0 },
+                        errors: { away: (snap.away && snap.away.errors) || 0, home: (snap.home && snap.home.errors) || 0 },
+                        linescore: (snap.linescore || []).map((r) => ({ away: r.away, home: r.home })),
+                        relayLog: snap.log || [],
+                        // a full broadcast rebuilds the real game, box score and all
+                        snapshot: snap.full
+                            ? { teams: snap.full.teams, division: snap.full.division,
+                                game: Object.assign({}, snap.full, { teams: undefined }) }
+                            : null,
                     }));
                     if (!recs.length) {
                         try {
@@ -2234,6 +2242,19 @@ function DugoutScorecard() {
             gfield: rec.fieldName || "",
             gnum: rec.gnum || "",
             stage: rec.stage || "",
+            // Full game state for recovery. The public listing ignores this; only
+            // a direct ?code= fetch sees it, so a lost device can be rebuilt.
+            full: {
+                v: 1,
+                lineup: g.lineup, stats: g.stats, card: g.card, subs: g.subs,
+                pitchers: g.pitchers, linescore: g.linescore, log: g.log,
+                inning: g.inning, half: g.half, outs: g.outs, over: !!g.over,
+                date: g.date, eventName: g.eventName, gameType: g.gameType,
+                startedAt: g.startedAt, endedAt: g.endedAt, pausedMs: g.pausedMs,
+                errors: g.errors, hits: g.hits, division: division,
+                teams: { away: { name: teams.away.name, color: teams.away.color },
+                    home: { name: teams.home.name, color: teams.home.color } },
+            },
             linescore: (g.linescore || []).map((r) => ({ away: r.away, home: r.home })),
             log: (g.log || []).slice(-600).map((e) => e.type === "pa"
                 ? {
@@ -5165,6 +5186,7 @@ function DugoutScorecard() {
         return () => { gone = true; };
     }, []);
     const [fixScore, setFixScore] = useState(null); // {id, a, h} while correcting a final score
+    const [archiveView, setArchiveView] = useState(null); // a restored game being read
     const [delayMenu, setDelayMenu] = useState(false); // why is play stopped?
     useEffect(() => {
         const t = setInterval(() => setClockTick(Date.now()), 15000);
@@ -9124,6 +9146,44 @@ function DugoutScorecard() {
                                 React.createElement("button", { className: "dg ghost", onClick: copyText }, "Copy table"),
                                 React.createElement("button", { className: "dg ghost", onClick: () => setSeasonOpen(false) }, "Done")))));
                 })(),
+            archiveView && (() => {
+                const r = archiveView;
+                const ls = r.linescore || (r.snapshot && r.snapshot.game && r.snapshot.game.linescore) || [];
+                const log = r.relayLog || (r.snapshot && r.snapshot.game && r.snapshot.game.relayLog) || [];
+                const ord = (n) => n + (["th", "st", "nd", "rd"][(n % 100 - 20) % 10] || ["th", "st", "nd", "rd"][n % 100] || "th");
+                return (React.createElement("div", { className: "modal-back", onClick: () => setArchiveView(null) },
+                    React.createElement("div", { className: "modal set-modal", onClick: (e) => e.stopPropagation() },
+                        React.createElement("h3", null, `${r.away.name} ${r.awayRuns} \u2014 ${r.homeRuns} ${r.home.name}`),
+                        React.createElement("p", { style: { textTransform: "none", letterSpacing: 0 } },
+                            [r.date, r.gnum ? `Game ${r.gnum}` : "", r.fieldName, r.eventName].filter(Boolean).join(" \u00b7 ")),
+                        ls.length > 0 && React.createElement("table", { className: "linescore", style: { marginBottom: 10 } },
+                            React.createElement("thead", null, React.createElement("tr", null,
+                                React.createElement("th", null, ""),
+                                ls.map((_, i) => React.createElement("th", { key: i }, i + 1)),
+                                React.createElement("th", null, "R"), React.createElement("th", null, "H"), React.createElement("th", null, "E"))),
+                            React.createElement("tbody", null, ["away", "home"].map((sd) => React.createElement("tr", { key: sd },
+                                React.createElement("td", { className: "tm" }, (r[sd].name || "").slice(0, 12)),
+                                ls.map((row, i) => React.createElement("td", { key: i }, row[sd] == null ? "\u00b7" : row[sd])),
+                                React.createElement("td", null, sd === "away" ? r.awayRuns : r.homeRuns),
+                                React.createElement("td", null, (r.hits && r.hits[sd]) || 0),
+                                React.createElement("td", null, (r.errors && r.errors[sd]) || 0))))),
+                        React.createElement("div", { className: "sit-sec" }, `Play-by-play \u00b7 ${log.length} events`),
+                        log.length === 0
+                            ? React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--powder)" } }, "No play-by-play was recovered for this game.")
+                            : React.createElement("div", { className: "plog", style: { textAlign: "left", maxHeight: "46vh", overflowY: "auto" } },
+                                log.slice().reverse().map((e, i) => React.createElement("div", { className: "plog-row", key: i },
+                                    React.createElement("span", { className: "plog-inn" }, `${e.h === "bottom" ? "B" : "T"}${e.i || ""}`),
+                                    React.createElement("span", null,
+                                        e.p
+                                            ? React.createElement("span", null,
+                                                React.createElement("b", null, e.b || ""), " ",
+                                                e.q ? React.createElement("span", { style: { color: "var(--powder)" } }, e.q.split(" ").join("-"), " ") : null,
+                                                (e.m || []).map((m, mi) => React.createElement("i", { key: mi, style: { color: "var(--amberw)", display: "block" } }, m.t || m)),
+                                                e.r || "")
+                                            : React.createElement("i", { style: { color: e.k === "half" ? "var(--amberw)" : "var(--powder)" } }, e.t || ""))))),
+                        React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--powder)", fontSize: 11, marginTop: 8 } },
+                            "Recovered from the live relay. Per-player box score wasn\u2019t part of the broadcast, so it isn\u2019t here."),
+                        React.createElement("button", { className: "dg ghost", style: { width: "100%", marginTop: 8 }, onClick: () => setArchiveView(null) }, "Close")))); })(),
             delayMenu && game && (React.createElement("div", { className: "modal-back", onClick: () => setDelayMenu(false) },
                 React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
                     React.createElement("h3", null, "Stop the clock"),
