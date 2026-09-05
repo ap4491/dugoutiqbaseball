@@ -1,7 +1,7 @@
 /* DugoutIQ service worker — offline-capable app shell.
    Strategy: NETWORK-FIRST for code & pages (always fresh when online,
    cache fallback offline). CACHE-FIRST for static assets (icons, fonts, CDN). */
-const CACHE = "dugoutiq-v252";
+const CACHE = "dugoutiq-v253";
 const ASSETS = [
   "./",
   "./index.html",

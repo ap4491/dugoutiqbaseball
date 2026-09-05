@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "252"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "253"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1956,6 +1956,40 @@ function DugoutScorecard() {
     };
     // Rebuild saved games from the hub. The relay keeps the full snapshot per
     // code, so anything that was posted can come back after a failed local save.
+    // Build a run of weekly fixtures. A league season is a pattern, not twenty
+    // separate entries: same opponent slot, same night, alternating home/away.
+    const makeRun = (f) => {
+        const n = Math.max(1, Math.min(60, Number(f.count) || 0));
+        const every = Math.max(1, Number(f.every) || 1);
+        const start = Date.parse((f.start || gameDate) + "T12:00:00");
+        if (isNaN(start))
+            return;
+        const want = Number(f.day);
+        const d0 = new Date(start);
+        // roll forward to the first matching weekday
+        while (d0.getDay() !== want)
+            d0.setDate(d0.getDate() + 1);
+        const opps = (f.opp || "").split(",").map((x) => x.trim()).filter(Boolean);
+        const rows = [];
+        for (let i = 0; i < n; i++) {
+            const d = new Date(d0.getTime());
+            d.setDate(d.getDate() + i * 7 * every);
+            const opp = opps.length ? opps[i % opps.length] : "";
+            const home = f.homeFirst ? (i % 2 === 0) : (i % 2 === 1);
+            rows.push({
+                id: Date.now() + i * 7 + Math.floor(Math.random() * 999),
+                code: "S" + Math.random().toString(36).slice(2, 7).toUpperCase(),
+                gnum: String(i + 1),
+                away: home ? opp : (f.us || ""),
+                home: home ? (f.us || "") : opp,
+                date: d.toISOString().slice(0, 10),
+                time: f.time || "", field: (f.field || "").trim(),
+                stage: "", event: schedEvent.trim(), played: false,
+            });
+        }
+        saveSchedule(schedule.concat(rows));
+        setBulkAdd(null);
+    };
     const retagGame = (rec, ev, type, stage, gnum) => {
         const evn = (ev || "").trim();
         setGames((list) => {
@@ -5213,6 +5247,7 @@ function DugoutScorecard() {
     const [archiveView, setArchiveView] = useState(null); // a restored game being read
     const [retag, setRetag] = useState(null); // {id, ev, type, stage, gnum} while retagging
     const [rowMenu, setRowMenu] = useState(null); // which saved game has its actions open
+    const [bulkAdd, setBulkAdd] = useState(null); // weekly run of fixtures for a season
     const [delayMenu, setDelayMenu] = useState(false); // why is play stopped?
     useEffect(() => {
         const t = setInterval(() => setClockTick(Date.now()), 15000);
@@ -9199,6 +9234,37 @@ function DugoutScorecard() {
                                 React.createElement("button", { className: "dg ghost", onClick: copyText }, "Copy table"),
                                 React.createElement("button", { className: "dg ghost", onClick: () => setSeasonOpen(false) }, "Done")))));
                 })(),
+            bulkAdd && (() => {
+                const f = bulkAdd;
+                const set = (k, v) => setBulkAdd(Object.assign({}, f, { [k]: v }));
+                const days = [["0", "Sun"], ["1", "Mon"], ["2", "Tue"], ["3", "Wed"], ["4", "Thu"], ["5", "Fri"], ["6", "Sat"]];
+                return (React.createElement("div", { className: "modal-back", onClick: () => setBulkAdd(null) },
+                    React.createElement("div", { className: "modal set-modal", onClick: (e) => e.stopPropagation() },
+                        React.createElement("h3", null, "Add a run of games"),
+                        React.createElement("p", { style: { textTransform: "none", letterSpacing: 0 } }, "Builds a weekly league schedule in one go. Edit any of them afterwards."),
+                        React.createElement("div", { className: "limitrow" },
+                            React.createElement("input", { className: "dg-in", placeholder: "Your team", value: f.us, onChange: (e) => set("us", e.target.value), "aria-label": "Your team" }),
+                            React.createElement("span", { className: "limithint" }, "home and away alternate")),
+                        React.createElement("input", { className: "dg-in", style: { width: "100%", marginBottom: 6 }, placeholder: "Opponents, comma separated", value: f.opp, onChange: (e) => set("opp", e.target.value), "aria-label": "Opponents" }),
+                        React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--powder)", fontSize: 11, margin: "0 0 8px" } }, "They rotate in order. Leave blank to fill the names in later."),
+                        React.createElement("div", { className: "limitrow" },
+                            React.createElement("select", { className: "dg-sel", value: f.day, onChange: (e) => set("day", e.target.value), "aria-label": "Day of the week" },
+                                days.map(([v, l]) => React.createElement("option", { key: v, value: v }, l))),
+                            React.createElement("input", { className: "dg-in", type: "time", value: f.time, onChange: (e) => set("time", e.target.value), "aria-label": "Start time" })),
+                        React.createElement("div", { className: "limitrow" },
+                            React.createElement("input", { className: "dg-in", type: "date", value: f.start, onChange: (e) => set("start", e.target.value), "aria-label": "First game on or after" }),
+                            React.createElement("input", { className: "dg-in", placeholder: "Field", value: f.field, onChange: (e) => set("field", e.target.value), "aria-label": "Field" })),
+                        React.createElement("div", { className: "limitrow" },
+                            React.createElement("input", { className: "dg-in", type: "number", inputMode: "numeric", value: f.count, onChange: (e) => set("count", e.target.value), "aria-label": "How many games" }),
+                            React.createElement("select", { className: "dg-sel", value: f.every, onChange: (e) => set("every", e.target.value), "aria-label": "How often" },
+                                React.createElement("option", { value: "1" }, "every week"),
+                                React.createElement("option", { value: "2" }, "every 2 weeks"))),
+                        React.createElement("label", { className: "togglerow" },
+                            React.createElement("input", { type: "checkbox", checked: !!f.homeFirst, onChange: (e) => set("homeFirst", e.target.checked), "aria-label": "First game at home" }),
+                            React.createElement("span", null, "First game at home")),
+                        React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr", marginTop: 10 } },
+                            React.createElement("button", { className: "dg hit", disabled: !schedEvent.trim(), onClick: () => makeRun(f) }, `Create ${Math.max(1, Math.min(60, Number(f.count) || 0))} games`),
+                            React.createElement("button", { className: "dg ghost", onClick: () => setBulkAdd(null) }, "Cancel"))))); })(),
             retag && (() => {
                 const f = retag;
                 const set = (k, v) => setRetag(Object.assign({}, f, { [k]: v }));
@@ -9666,6 +9732,10 @@ function DugoutScorecard() {
                                 away: "", home: "", date: gameDate, time: "", field: "",
                                 event: schedEvent.trim() || (eventName || "").trim(), played: false,
                             }])) }, "+ Add a game"),
+                        React.createElement("button", { className: "dg ghost", style: { width: "100%", marginTop: 6 }, onClick: () => setBulkAdd({
+                                opp: "", us: (teams.home.name || "").trim(), day: "2", time: "18:30",
+                                field: "", start: gameDate, count: "10", every: "1", homeFirst: true,
+                            }) }, "\u2795 Add a run of games (weekly)"),
                         React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr", marginTop: 10 } },
                             React.createElement("button", { className: "dg hit", onClick: publishAllFixtures }, "Publish all to hub"),
                             React.createElement("button", { className: "dg ghost", onClick: loadScheduleFromHub }, "Load from hub")),
