@@ -884,7 +884,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "253"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "254"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1984,7 +1984,7 @@ function DugoutScorecard() {
                 home: home ? (f.us || "") : opp,
                 date: d.toISOString().slice(0, 10),
                 time: f.time || "", field: (f.field || "").trim(),
-                stage: "", event: schedEvent.trim(), played: false,
+                stage: "", event: schedEvent.trim(), played: false, kind: schedMode,
             });
         }
         saveSchedule(schedule.concat(rows));
@@ -5211,6 +5211,7 @@ function DugoutScorecard() {
     const [editDate, setEditDate] = useState(null); // {id, date} while correcting a saved game's date
     const [schedule, setSchedule] = useState(() => loadSchedule()); // tournament fixtures
     const [schedOpen, setSchedOpen] = useState(false);
+    const [schedMode, setSchedMode] = useState("tournament"); // which kind of schedule is open
     const [schedRename, setSchedRename] = useState(false);
     const [showPlayed, setShowPlayed] = useState(false); // scored fixtures hidden by default
     const [setPane, setSetPane] = useState(null); // which settings panel is open
@@ -8635,7 +8636,9 @@ function DugoutScorecard() {
                             pitchers: [{ side: "away", name: "", pitches: "" }, { side: "home", name: "", pitches: "" }],
                             share: !!(eventName || "").trim(),
                         }) }, "\u002B Add a result (game you didn\u2019t score)"),
-                    React.createElement("button", { className: "dg ghost", style: { width: "100%", marginBottom: 10 }, onClick: () => setSchedOpen(true) }, "\uD83D\uDCC5 Tournament schedule"),
+                    React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr", marginBottom: 10 } },
+                        React.createElement("button", { className: "dg ghost", onClick: () => { setSchedMode("season"); setSchedOpen(true); } }, "\u26BE Season schedule"),
+                        React.createElement("button", { className: "dg ghost", onClick: () => { setSchedMode("tournament"); setSchedOpen(true); } }, "\uD83C\uDFC6 Tournament schedule")),
                     React.createElement("button", { className: "dg ghost", style: { width: "100%", marginBottom: 10 }, onClick: loadHubList }, "\uD83D\uDCE1 What\u2019s on the games hub"),
                     React.createElement("button", { className: "dg ghost", style: { width: "100%", marginBottom: 10 }, onClick: restoreFromHub }, "\u2B07 Restore missing games from the hub"),
                     hubList && React.createElement("div", { style: { border: "1px solid var(--line)", borderRadius: 12, padding: 10, marginBottom: 10 } },
@@ -9619,7 +9622,10 @@ function DugoutScorecard() {
                         React.createElement("button", { className: "dg ghost", onClick: () => { const f = errKind.onPick; setErrKind(null); f(""); } }, "Skip \u2014 just E"),
                         React.createElement("button", { className: "dg ghost", onClick: () => setErrKind(null) }, "Cancel"))))),
             schedOpen && (() => {
-                const inEvent = schedule.filter((r) => !schedEvent.trim() || lc(r.event) === lc(schedEvent));
+                const isSeason = schedMode === "season";
+                const kindOf = (r) => r.kind || "tournament"; // anything older is a tournament
+                const mine = schedule.filter((r) => kindOf(r) === schedMode);
+                const inEvent = mine.filter((r) => !schedEvent.trim() || lc(r.event) === lc(schedEvent));
                 const doneN = inEvent.filter((r) => r.played).length;
                 // scored games drop out of the list so the next one to score is
                 // at the top, rather than buried under everything already played
@@ -9629,8 +9635,10 @@ function DugoutScorecard() {
                 const upd = (id, k, v) => saveSchedule(schedule.map((r) => (r.id === id ? Object.assign({}, r, { [k]: v }) : r)));
                 return (React.createElement("div", { className: "modal-back", onClick: () => setSchedOpen(false) },
                     React.createElement("div", { className: "modal set-modal", onClick: (e) => e.stopPropagation() },
-                        React.createElement("h3", null, "Tournament schedule"),
-                        React.createElement("p", { style: { textTransform: "none", letterSpacing: 0 } }, "Fixtures show on the games hub as upcoming, then turn live and final as you score them."),
+                        React.createElement("h3", null, isSeason ? "\u26BE Season schedule" : "\uD83C\uDFC6 Tournament schedule"),
+                        React.createElement("p", { style: { textTransform: "none", letterSpacing: 0 } }, isSeason
+                            ? "Your league games. They show on the games hub as upcoming, then turn live and final as you score them."
+                            : "Fixtures show on the games hub as upcoming, then turn live and final as you score them."),
                         // The event name is what groups these games on the hub and
                         // what parents filter by, so it belongs to the schedule as a
                         // whole rather than being inherited silently per fixture.
@@ -9638,7 +9646,7 @@ function DugoutScorecard() {
                         // schedules never share the screen.
                         (() => {
                             const evs = [];
-                            schedule.forEach((r) => { const e = (r.event || "").trim(); if (e && !evs.some((x) => lc(x) === lc(e))) evs.push(e); });
+                            mine.forEach((r) => { const e = (r.event || "").trim(); if (e && !evs.some((x) => lc(x) === lc(e))) evs.push(e); });
                             evs.sort((a, b) => a.localeCompare(b));
                             const known = evs.find((x) => lc(x) === lc(schedEvent));
                             return React.createElement(React.Fragment, null,
@@ -9649,11 +9657,11 @@ function DugoutScorecard() {
                                             else { setSchedEvent(v); setSchedRename(false); }
                                         }, "aria-label": "Which tournament" },
                                         evs.map((n) => React.createElement("option", { key: n, value: n }, n)),
-                                        React.createElement("option", { value: "__new" }, "+ New tournament\u2026")),
+                                        React.createElement("option", { value: "__new" }, isSeason ? "+ New season\u2026" : "+ New tournament\u2026")),
                                     React.createElement("span", { className: "limithint" }, evs.length === 1 ? "1 tournament" : `${evs.length} tournaments`)),
                                 // naming box: shown for a new tournament, or when renaming
                                 (!evs.length || !known || schedRename) && React.createElement("div", { className: "limitrow", style: { marginBottom: 4 } },
-                                    React.createElement("input", { className: "dg-in", placeholder: "Tournament name", value: schedEvent, onChange: (e) => {
+                                    React.createElement("input", { className: "dg-in", placeholder: isSeason ? "Season name (e.g. 2026 Season)" : "Tournament name", value: schedEvent, onChange: (e) => {
                                             const v = e.target.value;
                                             const was = schedEvent.trim();
                                             setSchedEvent(v);
@@ -9662,7 +9670,7 @@ function DugoutScorecard() {
                                                 saveSchedule(schedule.map((r) => (lc(r.event) === lc(was) ? Object.assign({}, r, { event: v.trim() }) : r)));
                                         }, "aria-label": "Tournament name" }),
                                     React.createElement("span", { className: "limithint" }, "groups these games on the hub")),
-                                evs.length > 0 && known && !schedRename && React.createElement("button", { className: "dg ghost", style: { width: "100%", marginBottom: 6, fontSize: 12, padding: "6px 0" }, onClick: () => setSchedRename(true) }, "Rename this tournament"));
+                                evs.length > 0 && known && !schedRename && React.createElement("button", { className: "dg ghost", style: { width: "100%", marginBottom: 6, fontSize: 12, padding: "6px 0" }, onClick: () => setSchedRename(true) }, isSeason ? "Rename this season" : "Rename this tournament"));
                         })(),
                         !schedEvent.trim() && rows.length > 0 && React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--red)", fontSize: 12, margin: "0 0 8px" } }, "Name the tournament \u2014 without it these games can\u2019t be filtered on the hub."),
                         React.createElement("div", { className: "limitrow", style: { marginBottom: 4 } },
@@ -9697,7 +9705,7 @@ function DugoutScorecard() {
                                 React.createElement("span", { className: "limithint", title: "Crest found for both teams?" },
                                     (teamCrest(r.away).logo ? "\u25CF" : "\u25CB"), " ",
                                     (teamCrest(r.home).logo ? "\u25CF" : "\u25CB")),
-                                React.createElement("select", { className: "dg-sel", value: r.stage || "", onChange: (e) => upd(r.id, "stage", e.target.value), "aria-label": "Stage" },
+                                !isSeason && React.createElement("select", { className: "dg-sel", value: r.stage || "", onChange: (e) => upd(r.id, "stage", e.target.value), "aria-label": "Stage" },
                                     React.createElement("option", { value: "" }, "Round robin"),
                                     React.createElement("option", { value: "Tiebreaker" }, "Tiebreaker"),
                                     React.createElement("option", { value: "Quarter-final" }, "Quarter"),
@@ -9717,6 +9725,8 @@ function DugoutScorecard() {
                             }));
                             if (!teams2.length)
                                 return null;
+                            if (isSeason)
+                                return null; // pools are a tournament thing
                             return React.createElement("div", { style: { marginTop: 12 } },
                                 React.createElement("div", { className: "sit-sec" }, "Pools"),
                                 React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--powder)", fontSize: 11, margin: "0 0 6px" } }, "Optional \u2014 leave blank for a single table. Republish after changing."),
@@ -9730,9 +9740,9 @@ function DugoutScorecard() {
                                 id: Date.now() + Math.floor(Math.random() * 999),
                                 code: "S" + Math.random().toString(36).slice(2, 7).toUpperCase(),
                                 away: "", home: "", date: gameDate, time: "", field: "",
-                                event: schedEvent.trim() || (eventName || "").trim(), played: false,
+                                event: schedEvent.trim() || (eventName || "").trim(), played: false, kind: schedMode,
                             }])) }, "+ Add a game"),
-                        React.createElement("button", { className: "dg ghost", style: { width: "100%", marginTop: 6 }, onClick: () => setBulkAdd({
+                        React.createElement("button", { className: `dg ${isSeason ? "hit" : "ghost"}`, style: { width: "100%", marginTop: 6 }, onClick: () => setBulkAdd({
                                 opp: "", us: (teams.home.name || "").trim(), day: "2", time: "18:30",
                                 field: "", start: gameDate, count: "10", every: "1", homeFirst: true,
                             }) }, "\u2795 Add a run of games (weekly)"),
