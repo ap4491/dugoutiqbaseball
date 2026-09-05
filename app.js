@@ -22,6 +22,7 @@ const freshPitcher = (name, num) => ({
     outs: 0, // outs recorded -> IP
     k: 0,
     bb: 0,
+    hbp: 0, // hit batsmen — tracked separately from walks
     h: 0,
     r: 0,
     hr: 0,
@@ -884,7 +885,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "254"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "255"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -2788,12 +2789,13 @@ function DugoutScorecard() {
                         return;
                     if ((p.outs || 0) === 0 && (p.bf || 0) === 0)
                         return;
-                    const q = pit[k] || (pit[k] = { name: (p.name || "").trim(), team: sideTeam, app: 0, outs: 0, h: 0, r: 0, er: 0, bb: 0, k: 0, hr: 0 });
+                    const q = pit[k] || (pit[k] = { name: (p.name || "").trim(), team: sideTeam, app: 0, outs: 0, h: 0, r: 0, er: 0, bb: 0, hbp: 0, k: 0, hr: 0 });
                     q.app += 1;
                     q.outs += p.outs || 0;
                     q.h += p.h || 0;
                     q.r += p.r || 0;
                     q.bb += p.bb || 0;
+                    q.hbp += p.hbp || 0;
                     q.k += p.k || 0;
                     q.hr += p.hr || 0;
                     q.er += Math.max(0, (p.r || 0) - (p.uer || 0));
@@ -3461,8 +3463,13 @@ function DugoutScorecard() {
     };
     // charge a stat to the current pitcher of the fielding team
     const chargeP = (g, field, n = 1) => {
-        if (n > 0)
-            curP(g, fieldingSide)[field] += n;
+        if (n <= 0)
+            return;
+        const p = curP(g, fieldingSide);
+        // a field added after this game was saved would otherwise go NaN
+        if (typeof p[field] !== "number")
+            p[field] = 0;
+        p[field] += n;
     };
     // sets the ticker AND appends to the play-by-play log
     // kind: "pitch" (count events, shown dim) | "play" | "info"
@@ -3879,9 +3886,8 @@ function DugoutScorecard() {
         g.openTag = null;
         const bIdx = g.batter[battingSide];
         const st = g.stats[battingSide][bIdx];
-        st.bb += 1; // HBP counted with walks in the BB column
         st.hbp = (st.hbp || 0) + 1;
-        chargeP(g, "bb");
+        chargeP(g, "hbp"); // NOT "bb" — a hit batsman is not a base on balls
         cardMark(g, bIdx, "HP", 1);
         const runs = forceAdvance(g, bIdx);
         addRuns(g, runs, "hbp");
@@ -9172,7 +9178,7 @@ function DugoutScorecard() {
                     const teamCol = seasonTeam === "*" ? [["team", "Team", "t"]] : [];
                     const cols = seasonTab === "bat"
                         ? [["name", "Player", "l"]].concat(teamCol, [["gp", "GP"], ["ab", "AB"], ["r", "R"], ["h", "H"], ["x2b", "2B"], ["x3b", "3B"], ["xhr", "HR"], ["rbi", "RBI"], ["bb", "BB"], ["k", "K"], ["avg", "AVG"], ["obp", "OBP"]])
-                        : [["name", "Player", "l"]].concat(teamCol, [["app", "APP"], ["ip", "IP"], ["h", "H"], ["r", "R"], ["er", "ER"], ["bb", "BB"], ["k", "K"], ["era", "ERA"]]);
+                        : [["name", "Player", "l"]].concat(teamCol, [["app", "APP"], ["ip", "IP"], ["h", "H"], ["r", "R"], ["er", "ER"], ["bb", "BB"], ["hbp", "HBP"], ["k", "K"], ["era", "ERA"]]);
                     const cellVal = (row, col) => {
                         if (col === "name")
                             return `${row.num ? `#${row.num} ` : ""}${row.name}`;
