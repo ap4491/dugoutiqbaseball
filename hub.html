@@ -75,6 +75,27 @@
   .brand{ display:flex; align-items:center; gap:11px; }
   .brand img{ width:42px; height:42px; object-fit:contain; flex:none; }
   .brand h1{ margin:0; }
+  .tgrid{ display:grid; grid-template-columns:1fr 1fr; gap:8px; padding:0 12px; }
+  .tcard{ display:flex; align-items:center; gap:9px; padding:11px 12px; background:var(--card);
+    border:1px solid var(--line); border-radius:12px; cursor:pointer; font-family:inherit;
+    color:#fff; text-align:left; }
+  .tcard-n{ flex:1; min-width:0; font-size:14px; font-weight:700; overflow:hidden;
+    text-overflow:ellipsis; white-space:nowrap; }
+  .tcard-r{ font-size:13px; color:var(--muted); font-variant-numeric:tabular-nums; }
+  .tback{ background:none; border:0; color:var(--muted); font-family:inherit; font-size:12px;
+    letter-spacing:.14em; text-transform:uppercase; cursor:pointer; padding:0; }
+  .trec{ margin:0 12px 12px; padding:12px 14px; background:var(--card); border:1px solid var(--line);
+    border-radius:12px; display:flex; flex-direction:column; gap:5px; }
+  .trec b{ font-size:17px; }
+  .trec span{ font-size:13px; color:var(--muted); }
+  .tform{ display:flex; gap:5px; }
+  .tform i{ font-style:normal; width:20px; height:20px; border-radius:5px; display:grid;
+    place-items:center; font-size:11px; font-weight:800; }
+  .tform .fW{ background:#2e7d4f; color:#fff; } .tform .fL{ background:#7d2e2e; color:#fff; }
+  .tform .fT{ background:#4a5878; color:#fff; }
+  .seeall{ display:block; width:calc(100% - 24px); margin:6px 12px 20px; padding:12px 0;
+    background:rgba(255,255,255,.05); border:1px solid var(--line); border-radius:12px;
+    color:var(--muted); font-family:inherit; font-size:13px; letter-spacing:.06em; cursor:pointer; }
 </style>
 </head>
 <body>
@@ -85,6 +106,7 @@
   <div class="tabs" id="tabs">
     <button data-v="sched" class="on">Schedule</button>
     <button data-v="stand">Standings</button>
+    <button data-v="teams">Teams</button>
   </div>
 </div>
 
@@ -231,6 +253,21 @@
         'They appear here while a scorer has the live link switched on.</div>';
       return;
     }
+    // A season can run to a hundred games. Open on what's near today and offer
+    // the rest, rather than making a parent scroll past April to find tonight.
+    let shown = list, hiddenN = 0;
+    if (!seeAll && list.length > 14) {
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      const near = (g) => {
+        const t = Date.parse(String(g.gdate || "") + "T00:00:00");
+        if (isNaN(t)) return true;
+        const d = Math.round((t - today.getTime()) / 86400000);
+        return d >= -10 && d <= 21;           // last two weeks, next three
+      };
+      const cut = list.filter((g) => near(g) || !g.over);
+      if (cut.length && cut.length < list.length) { hiddenN = list.length - cut.length; shown = cut; }
+    }
+    list = shown;
     // group by the day the game was played, newest first; live games lead each day
     const byDay = {};
     list.forEach((g) => { const k = g.gdate || ""; (byDay[k] = byDay[k] || []).push(g); });
@@ -250,7 +287,11 @@
         return String(a.gtime || "").localeCompare(String(b.gtime || ""));
       }).forEach((g) => { html += card(g); });
     });
+    if (hiddenN)
+      html += `<button class="seeall">Show the other ${hiddenN} game${hiddenN === 1 ? "" : "s"} this season</button>`;
     $("content").innerHTML = html;
+    const sa = document.querySelector(".seeall");
+    if (sa) sa.onclick = () => { seeAll = true; route(lastGames); };
   }
   function drawTabs(){
     const bar = document.getElementById("tabs");
@@ -261,6 +302,74 @@
     });
   }
   let lastGames = null;
+  let seeAll = false; // season view opens on recent + upcoming
+  let teamPick = "";  // when set, the Teams tab shows just this club
+  function teamList(list){
+    const seen = {};
+    list.forEach((g) => {
+      [g.away, g.home].forEach((n) => { const k = String(n || "").trim(); if (k) seen[k] = (seen[k] || 0) + 1; });
+    });
+    return Object.keys(seen).sort((a, b) => a.localeCompare(b));
+  }
+  function teamRecord(list, name){
+    const k = String(name || "").toLowerCase();
+    let w = 0, l = 0, t = 0, rf = 0, ra = 0;
+    const form = [];
+    list.filter((g) => g.over && !g.sched)
+      .sort((a, b) => String(a.gdate || "").localeCompare(String(b.gdate || "")))
+      .forEach((g) => {
+        const home = String(g.home || "").toLowerCase() === k;
+        const away = String(g.away || "").toLowerCase() === k;
+        if (!home && !away) return;
+        const us = home ? Number(g.sH || 0) : Number(g.sA || 0);
+        const them = home ? Number(g.sA || 0) : Number(g.sH || 0);
+        rf += us; ra += them;
+        if (us > them) { w++; form.push("W"); }
+        else if (them > us) { l++; form.push("L"); }
+        else { t++; form.push("T"); }
+      });
+    return { w, l, t, rf, ra, form: form.slice(-5) };
+  }
+  function renderTeams(list){
+    const names = teamList(list);
+    if (!names.length){ $("content").innerHTML = '<div class="msg">No teams yet.</div>'; return; }
+    if (!teamPick){
+      let html = '<div class="sec">Follow a team</div><div class="tgrid">';
+      names.forEach((n) => {
+        const r = teamRecord(list, n);
+        const c = crestOf(n, "", "");
+        html += `<button class="tcard" data-team="${esc(n)}">`
+          + (c.logo ? `<img class="chip logo" src="${esc(c.logo)}" alt="">`
+                    : `<span class="chip" style="background:${esc(c.color) || "#22345f"}"></span>`)
+          + `<span class="tcard-n">${esc(n)}</span>`
+          + `<span class="tcard-r">${r.w}-${r.l}${r.t ? "-" + r.t : ""}</span></button>`;
+      });
+      html += "</div>";
+      $("content").innerHTML = html;
+      Array.prototype.forEach.call(document.querySelectorAll(".tcard"), (b) => {
+        b.onclick = () => { teamPick = b.getAttribute("data-team"); route(lastGames); };
+      });
+      return;
+    }
+    const r = teamRecord(list, teamPick);
+    const mine = list.filter((g) => String(g.away || "").toLowerCase() === teamPick.toLowerCase()
+      || String(g.home || "").toLowerCase() === teamPick.toLowerCase());
+    let html = `<div class="sec"><button class="tback">\u2039 All teams</button></div>`
+      + `<div class="trec"><b>${esc(teamPick)}</b>`
+      + `<span>${r.w}-${r.l}${r.t ? "-" + r.t : ""} \u00b7 ${r.rf} for, ${r.ra} against `
+      + `\u00b7 ${r.rf - r.ra > 0 ? "+" : ""}${r.rf - r.ra}</span>`
+      + (r.form.length ? `<span class="tform">${r.form.map((x) => `<i class="f${x}">${x}</i>`).join("")}</span>` : "")
+      + "</div>";
+    const byDay = {};
+    mine.forEach((g) => { const k = g.gdate || ""; (byDay[k] = byDay[k] || []).push(g); });
+    Object.keys(byDay).sort((a, b) => (a < b ? -1 : 1)).forEach((d) => {
+      html += `<div class="sec">${esc(dayLabel(d))}</div>`;
+      byDay[d].forEach((g) => { html += card(g); });
+    });
+    $("content").innerHTML = html;
+    const back = document.querySelector(".tback");
+    if (back) back.onclick = () => { teamPick = ""; route(lastGames); };
+  }
   function route(games){
     lastGames = games;
     const list = evName
@@ -268,6 +377,7 @@
       : games;
     drawTabs();
     if (view === "stand") renderStandings(list);
+    else if (view === "teams") renderTeams(list);
     else render(games);
   }
 
