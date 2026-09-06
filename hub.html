@@ -245,7 +245,7 @@
   function render(games){
     // ?event=NAME pins the hub to one tournament; matches the event the scorer
     // tagged the game with, not the team names
-    const list = evName
+    let list = evName
       ? games.filter((g) => String(g.ev || "").toLowerCase().includes(evName.toLowerCase()))
       : games;
     if (!list.length){
@@ -383,7 +383,13 @@
 
   async function poll(){
     try{
-      const r = await fetch("/.netlify/functions/game?list=1", { cache:"no-store" });
+      const ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
+      const killer = setTimeout(() => { try { ctl && ctl.abort(); } catch(e){} }, 9000);
+      let r;
+      try {
+        r = await fetch("/.netlify/functions/game?list=1",
+          ctl ? { cache:"no-store", signal: ctl.signal } : { cache:"no-store" });
+      } finally { clearTimeout(killer); }
       const d = await r.json();
       if (d && d.teams) CRESTS = d.teams;   // crests sent once per listing, not per game
       if (d && !d.ok && !lastGames)
