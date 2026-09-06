@@ -885,7 +885,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "256"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "257"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -2378,14 +2378,22 @@ function DugoutScorecard() {
         }).catch(() => { });
     };
     const publishAllFixtures = () => {
-        const named = schedule.filter((r) => !r.played && (r.event || "").trim()
-            && (!schedEvent.trim() || lc(r.event) === lc(schedEvent)));
-        named.forEach((r) => publishFixture(r, false));
+        const ev = schedEvent.trim();
+        const mineHere = schedule.filter((r) => (r.event || "").trim()
+            && (!ev || lc(r.event) === lc(ev)));
+        // upcoming fixtures
+        const fixtures = mineHere.filter((r) => !r.played);
+        fixtures.forEach((r) => publishFixture(r, false));
+        // ...and the games you've actually scored for this event, which is what
+        // people expect "publish all" to mean
+        const scored = games.filter((r) => ev && lc(recEvent(r)) === lc(ev) && !r.resultOnly);
+        scored.forEach((r) => publishSavedGameSmart(r, () => { }));
         const skipped = schedule.filter((r) => !r.played && !(r.event || "").trim()).length;
         try {
-            alert(skipped
-                ? `Posted ${named.length}. Skipped ${skipped} with no tournament name.`
-                : `Posted ${named.length} game${named.length === 1 ? "" : "s"} to the hub.`);
+            alert(`Posted to the hub:\n\n${fixtures.length} upcoming fixture${fixtures.length === 1 ? "" : "s"}\n`
+                + `${scored.length} scored game${scored.length === 1 ? "" : "s"}`
+                + (skipped ? `\n\nSkipped ${skipped} fixture${skipped === 1 ? "" : "s"} with no event name.` : "")
+                + (!fixtures.length && !scored.length ? "\n\nNothing to post \u2014 add fixtures, or score a game tagged to this event." : ""));
         }
         catch (_a) { }
     };
@@ -9755,7 +9763,7 @@ function DugoutScorecard() {
                                 field: "", start: gameDate, count: "10", every: "1", homeFirst: true,
                             }) }, "\u2795 Add a run of games (weekly)"),
                         React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr", marginTop: 10 } },
-                            React.createElement("button", { className: "dg hit", onClick: publishAllFixtures }, "Publish all to hub"),
+                            React.createElement("button", { className: "dg hit", onClick: publishAllFixtures }, "Publish everything to hub"),
                             React.createElement("button", { className: "dg ghost", onClick: loadScheduleFromHub }, "Load from hub")),
                         React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--powder)", fontSize: 11, margin: "8px 0 0" } }, "\u201CLoad from hub\u201D pulls a schedule published from another device, so you can build it on one and score on another."),
                         React.createElement("button", { className: "dg ghost", style: { width: "100%", marginTop: 8 }, onClick: () => setSchedOpen(false) }, "Close")))); })(),
