@@ -157,6 +157,10 @@ exports.handler = async (event) => {
         settled.forEach(({ k, e }) => {
           if (!e) return;
           if (now > expiresAt(e)) { stale.push(k); return; }
+          // legacy per-game crests: superseded by the crest table and far too
+          // heavy to ship for every game
+          if (e.al) delete e.al;
+          if (e.hl) delete e.hl;
           games.push(e);
         });
         // clean up expired entries without making the caller wait for it
@@ -181,7 +185,17 @@ exports.handler = async (event) => {
             crests.get(k, { type: "json" }).then((c) => ({ k, c })).catch(() => ({ k, c: null }))));
           got.forEach(({ k, c }) => { if (c) teams[k] = { color: c.color || "", logo: c.logo || "" }; });
         } catch (e) { teams = {}; }
-        return json(200, { ok: true, games, teams });
+        // never let the payload approach the function's response limit
+        let bytes = 0;
+        const trimmed = {};
+        Object.keys(teams).forEach((k) => {
+          const t = teams[k];
+          const n = (t.logo || "").length;
+          if (bytes + n > 1500000) { trimmed[k] = { color: t.color || "", logo: "" }; return; }
+          bytes += n;
+          trimmed[k] = t;
+        });
+        return json(200, { ok: true, games, teams: trimmed });
       }
 
       const code = String(q.code || "").trim().toUpperCase();
