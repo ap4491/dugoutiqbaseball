@@ -85,14 +85,16 @@ exports.handler = async (event) => {
   if (!siteID || !token)
     return json(500, { ok: false, message: "Missing BLOBS_SITE_ID or BLOBS_TOKEN env var" });
 
-  let store, pub, crests;
+  let store, pub, crests = null;
   try {
     store = getStore({ name: "dugoutiq-live", siteID, token });
     pub = getStore({ name: "dugoutiq-public", siteID, token });
-    crests = getStore({ name: "dugoutiq-crests", siteID, token });
   } catch (e) {
     return json(500, { ok: false, message: "Store init failed: " + e.message });
   }
+
+  // Crests are a nicety: if this store is unavailable the hub must still work.
+  try { crests = getStore({ name: "dugoutiq-crests", siteID, token }); } catch (e) { crests = null; }
 
   try {
     if (event.httpMethod === "POST") {
@@ -110,6 +112,7 @@ exports.handler = async (event) => {
         try {
           // upsert each team's crest once, keyed by name
           for (const sd of ["away", "home"]) {
+            if (!crests) break;
             const t = snap[sd];
             if (!t || !t.name) continue;
             const logo = String(t.logo || "");
@@ -148,22 +151,23 @@ exports.handler = async (event) => {
         const keys = (listing && listing.blobs ? listing.blobs : []).map((b) => b.key);
         const now = Date.now();
         const games = [];
-        for (const k of keys) {
-          let e;
-          try { e = await pub.get(k, { type: "json" }); } catch { e = null; }
-          if (!e) continue;
-          if (now > expiresAt(e)) {
-            try { await pub.delete(k); } catch {}
-            continue;
-          }
+        const settled = await Promise.all(keys.map((k) =>
+          pub.get(k, { type: "json" }).then((e) => ({ k, e })).catch(() => ({ k, e: null }))));
+        const stale = [];
+        settled.forEach(({ k, e }) => {
+          if (!e) return;
+          if (now > expiresAt(e)) { stale.push(k); return; }
           games.push(e);
-        }
+        });
+        // clean up expired entries without making the caller wait for it
+        stale.forEach((k) => { try { pub.delete(k); } catch (err) {} });
         // live games first, then most-recently updated
         games.sort((a, b) =>
           (a.over === b.over ? (b.updated || 0) - (a.updated || 0) : a.over ? 1 : -1)
         );
         let teams = {};
         try {
+          if (!crests) throw new Error("no crest store");
           const cl = await crests.list();
           const keys = (cl && cl.blobs ? cl.blobs : []).map((b) => b.key);
           // only the teams actually appearing in the listed games
@@ -172,13 +176,10 @@ exports.handler = async (event) => {
             if (g2.away) wanted.add(String(g2.away).trim().toLowerCase());
             if (g2.home) wanted.add(String(g2.home).trim().toLowerCase());
           });
-          for (const k of keys) {
-            if (!wanted.has(k)) continue;
-            try {
-              const c = await crests.get(k, { type: "json" });
-              if (c) teams[k] = { color: c.color || "", logo: c.logo || "" };
-            } catch (e) {}
-          }
+          const want = keys.filter((k) => wanted.has(k));
+          const got = await Promise.all(want.map((k) =>
+            crests.get(k, { type: "json" }).then((c) => ({ k, c })).catch(() => ({ k, c: null }))));
+          got.forEach(({ k, c }) => { if (c) teams[k] = { color: c.color || "", logo: c.logo || "" }; });
         } catch (e) { teams = {}; }
         return json(200, { ok: true, games, teams });
       }
