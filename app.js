@@ -885,7 +885,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "255"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "256"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -2789,7 +2789,9 @@ function DugoutScorecard() {
                         return;
                     if ((p.outs || 0) === 0 && (p.bf || 0) === 0)
                         return;
-                    const q = pit[k] || (pit[k] = { name: (p.name || "").trim(), team: sideTeam, app: 0, outs: 0, h: 0, r: 0, er: 0, bb: 0, hbp: 0, k: 0, hr: 0 });
+                    const q = pit[k] || (pit[k] = { name: (p.name || "").trim(), num: p.num || "", team: sideTeam, app: 0, outs: 0, h: 0, r: 0, er: 0, bb: 0, hbp: 0, k: 0, hr: 0 });
+                    if (!q.num && p.num)
+                        q.num = p.num; // an early game may not have had it set
                     q.app += 1;
                     q.outs += p.outs || 0;
                     q.h += p.h || 0;
