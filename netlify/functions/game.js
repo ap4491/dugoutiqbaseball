@@ -153,18 +153,18 @@ exports.handler = async (event) => {
         const games = [];
         const settled = await Promise.all(keys.map((k) =>
           pub.get(k, { type: "json" }).then((e) => ({ k, e })).catch(() => ({ k, e: null }))));
-        const stale = [];
         settled.forEach(({ k, e }) => {
           if (!e) return;
-          if (now > expiresAt(e)) { stale.push(k); return; }
+          // Expired entries are HIDDEN, not deleted. Deleting on a read path
+          // means one bad expiry calculation empties the whole hub.
+          if (now > expiresAt(e)) return;
           // legacy per-game crests: superseded by the crest table and far too
           // heavy to ship for every game
           if (e.al) delete e.al;
           if (e.hl) delete e.hl;
           games.push(e);
         });
-        // clean up expired entries without making the caller wait for it
-        stale.forEach((k) => { try { pub.delete(k); } catch (err) {} });
+
         // live games first, then most-recently updated
         games.sort((a, b) =>
           (a.over === b.over ? (b.updated || 0) - (a.updated || 0) : a.over ? 1 : -1)
