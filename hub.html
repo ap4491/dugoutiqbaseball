@@ -386,6 +386,9 @@
       const r = await fetch("/.netlify/functions/game?list=1", { cache:"no-store" });
       const d = await r.json();
       if (d && d.teams) CRESTS = d.teams;   // crests sent once per listing, not per game
+      if (d && !d.ok && !lastGames)
+        $("content").innerHTML = '<div class="msg">The scores service returned an error.<br><br>'
+          + '<span style="font-size:11px;opacity:.7">' + esc(String(d.message || "unknown")) + '</span></div>';
       if (d && d.ok && Array.isArray(d.games)){
         lastUpdated = Date.now();
         route(d.games);
@@ -413,7 +416,13 @@
         }
         $("dot").classList.remove("stale");
       }
-    }catch(e){ /* keep the last view */ }
+    }catch(e){
+      // never sit on "Loading..." — say what went wrong
+      if (!lastGames)
+        $("content").innerHTML = '<div class="msg">Couldn\'t load the games.<br><br>'
+          + '<span style="font-size:11px;opacity:.7">' + esc(String((e && e.message) || e)) + '</span><br><br>'
+          + '<button class="seeall" style="width:auto;padding:10px 22px" onclick="location.reload()">Try again</button></div>';
+    }
     if (lastUpdated && Date.now() - lastUpdated > 30000){
       $("dot").classList.add("stale");
       $("status").textContent = "Paused — reopen to refresh";
