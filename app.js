@@ -885,7 +885,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "260"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "261"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -5392,6 +5392,8 @@ function DugoutScorecard() {
     const [rowMenu, setRowMenu] = useState(null); // which saved game has its actions open
     const [teams2, setTeams2] = useState(() => loadTeamsLS()); // PHASE 1: club records
     const [teamLinks, setTeamLinks] = useState(() => loadLinksLS());
+    const [teamPage, setTeamPage] = useState(null); // club id whose page is open
+    const [teamTab, setTeamTab] = useState("schedule");
     const [homeMode, setHomeMode] = useState(() => { try {
         return localStorage.getItem("dugoutiq-home-v1") === "1";
     }
@@ -8279,6 +8281,28 @@ function DugoutScorecard() {
         .sg-act.danger { color: #ff9a9a; }
         .sg-inline { display: flex; gap: 6px; align-items: center; }
         .sg-inline .dg-in { flex: 1; min-width: 0; }
+        /* team page */
+        .tp-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+        .tp-head b { font-size: 18px; }
+        .tp-rec { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+        .tp-rec b { font-size: 22px; font-variant-numeric: tabular-nums; }
+        .tp-rec span { font-size: 12.5px; color: var(--powder); }
+        .tp-tabs { display: flex; gap: 16px; border-bottom: 1px solid var(--line); margin-bottom: 10px; }
+        .tp-tabs button { background: none; border: 0; padding: 0 0 8px; cursor: pointer;
+          font-family: 'Saira Condensed', sans-serif; font-size: 13.5px; font-weight: 700;
+          color: var(--powder); border-bottom: 2px solid transparent; }
+        .tp-tabs button.on { color: var(--white); border-bottom-color: var(--amberw); }
+        .tp-row { display: flex; align-items: center; gap: 10px; padding: 9px 2px;
+          border-bottom: 1px solid rgba(169,197,232,.1); }
+        .tp-when { flex: 0 0 74px; font-size: 12px; color: var(--powder); display: flex;
+          flex-direction: column; }
+        .tp-when i { font-style: normal; font-size: 10.5px; opacity: .75; }
+        .tp-opp { flex: 1; min-width: 0; font-size: 14px; display: flex; flex-direction: column; }
+        .tp-opp i { font-style: normal; font-size: 11px; color: var(--powder); }
+        .tp-res { flex: 0 0 auto; font-size: 13.5px; font-weight: 700; font-variant-numeric: tabular-nums; }
+        .tp-res.W { color: #3FB950; } .tp-res.L { color: #E5484D; }
+        button.tm-top { width: 100%; background: none; border: 0; padding: 0; cursor: pointer;
+          text-align: left; font-family: 'Saira Condensed', sans-serif; color: var(--white); }
         /* PuckLink-style home: the club is the front door, not the game. */
         .home-wrap { padding: 4px 0 20px; }
         .home-empty { color: var(--powder); font-size: 13px; line-height: 1.55; margin: 0 0 12px;
@@ -8411,7 +8435,7 @@ function DugoutScorecard() {
                             const opp = nx ? (lcName(nx.home) === k ? nx.away : nx.home) : "";
                             const atHome = nx ? lcName(nx.home) === k : false;
                             return React.createElement("div", { className: "tm-card", key: t.id },
-                                React.createElement("div", { className: "tm-top" },
+                                React.createElement("button", { className: "tm-top", onClick: () => { setTeamPage(t.id); setTeamTab("schedule"); } },
                                     t.logo
                                         ? React.createElement("img", { className: "tm-logo", src: t.logo, alt: "" })
                                         : React.createElement("span", { className: "tm-logo blank", style: t.color ? { background: t.color } : null }),
@@ -8429,6 +8453,7 @@ function DugoutScorecard() {
                                     React.createElement("button", { className: "dg ghost", onClick: () => { setSeasonTeam(t.name); setSeasonOpen(true); } }, "Stats")));
                         }),
                         React.createElement("button", { className: "dg ghost", style: { width: "100%", marginTop: 8 }, onClick: () => setHomeMode(false) }, "+ Add a team"),
+                        null,
                         React.createElement("button", { className: "dg ghost", style: { width: "100%", marginTop: 6 }, onClick: () => setHomeMode(false) }, "Score a game without a team"),
                         React.createElement("button", { className: "dg ghost", style: { width: "100%", marginTop: 14, fontSize: 12 }, onClick: () => { setHomeMode(false); try { localStorage.setItem("dugoutiq-home-v1", "0"); } catch (_a) { } } }, "Use the old setup screen")));
             })(),
@@ -9563,6 +9588,84 @@ function DugoutScorecard() {
                         React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr", marginTop: 10 } },
                             React.createElement("button", { className: "dg hit", onClick: () => retagGame(rec, f.ev, f.type, f.stage, f.gnum) }, "Save tag"),
                             React.createElement("button", { className: "dg ghost", onClick: () => setRetag(null) }, "Cancel"))))); })(),
+            teamPage && (() => {
+                const t = teams2.find((x) => x.id === teamPage);
+                if (!t)
+                    return null;
+                const k = lcName(t.name);
+                const mineGame = (g) => lcName(g.away && g.away.name) === k || lcName(g.home && g.home.name) === k;
+                const played = games.filter(mineGame)
+                    .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+                const fixtures = schedule.filter((r) => !r.played && (lcName(r.away) === k || lcName(r.home) === k))
+                    .sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
+                let w = 0, l = 0, rf = 0, ra = 0;
+                played.forEach((g) => {
+                    const home = lcName(g.home && g.home.name) === k;
+                    const us = home ? g.homeRuns : g.awayRuns, them = home ? g.awayRuns : g.homeRuns;
+                    rf += us; ra += them;
+                    if (us > them) w += 1; else if (them > us) l += 1;
+                });
+                const when = (r) => {
+                    const d = r.date ? new Date(r.date + "T12:00:00") : null;
+                    return d ? d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) : "";
+                };
+                const oppOf = (r) => (lcName(r.home) === k ? r.away : r.home);
+                const line = (g) => {
+                    const home = lcName(g.home && g.home.name) === k;
+                    const us = home ? g.homeRuns : g.awayRuns, them = home ? g.awayRuns : g.homeRuns;
+                    const opp = home ? g.away.name : g.home.name;
+                    const res = us > them ? "W" : us < them ? "L" : "T";
+                    return { opp, res, score: `${us}\u2013${them}`, home };
+                };
+                return (React.createElement("div", { className: "modal-back", onClick: () => setTeamPage(null) },
+                    React.createElement("div", { className: "modal set-modal", onClick: (e) => e.stopPropagation() },
+                        React.createElement("div", { className: "tp-head" },
+                            React.createElement("button", { className: "dg ghost", style: { padding: "5px 12px", fontSize: 12 }, onClick: () => setTeamPage(null) }, "\u2039 Home"),
+                            React.createElement("b", null, t.name)),
+                        React.createElement("div", { className: "tp-rec" },
+                            React.createElement("b", null, `${w}\u2013${l}`),
+                            React.createElement("span", null, `${rf} for, ${ra} against \u00b7 ${rf - ra > 0 ? "+" : ""}${rf - ra}`)),
+                        React.createElement("div", { className: "tp-tabs" },
+                            [["schedule", "Schedule"], ["stats", "Stats"], ["roster", "Roster"], ["share", "Share"]]
+                                .map(([v, lbl]) => React.createElement("button", { key: v, className: teamTab === v ? "on" : "", onClick: () => setTeamTab(v) }, lbl))),
+                        teamTab === "schedule" && React.createElement(React.Fragment, null,
+                            React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr", marginBottom: 10 } },
+                                React.createElement("button", { className: "dg ghost", onClick: () => { setTeamPage(null); setSchedMode("season"); setSchedOpen(true); } }, "Add a game"),
+                                React.createElement("button", { className: "dg ghost", onClick: () => { setTeamPage(null); setSchedMode("season"); setSchedOpen(true); setBulkAdd({ opp: "", us: t.name, day: "2", time: "18:30", field: "", start: gameDate, count: "10", every: "1", homeFirst: true }); } }, "Add weekly games")),
+                            fixtures.length > 0 && React.createElement("div", { className: "sit-sec" }, "Upcoming"),
+                            fixtures.slice(0, 12).map((r) => React.createElement("div", { className: "tp-row", key: r.id },
+                                React.createElement("span", { className: "tp-when" }, when(r), r.time ? React.createElement("i", null, r.time) : null),
+                                React.createElement("span", { className: "tp-opp" }, lcName(r.home) === k ? "vs " : "at ", oppOf(r) || "TBD",
+                                    r.field ? React.createElement("i", null, r.field) : null),
+                                React.createElement("button", { className: "dg hit", style: { padding: "6px 10px", fontSize: 12 }, onClick: () => { setTeamPage(null); scoreFixture(r); } }, "Score"))),
+                            played.length > 0 && React.createElement("div", { className: "sit-sec", style: { marginTop: 12 } }, "Results"),
+                            played.slice(0, 30).map((g) => { const L = line(g);
+                                return React.createElement("div", { className: "tp-row", key: g.id },
+                                    React.createElement("span", { className: "tp-when" }, g.date ? new Date(g.date + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : ""),
+                                    React.createElement("span", { className: "tp-opp" }, L.home ? "vs " : "at ", L.opp),
+                                    React.createElement("span", { className: `tp-res ${L.res}` }, L.res, " ", L.score)); }),
+                            !fixtures.length && !played.length && React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--powder)" } }, "No games yet. Add a schedule and they'll appear here.")),
+                        teamTab === "stats" && React.createElement("div", null,
+                            React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--powder)" } }, `${played.length} games scored.`),
+                            React.createElement("button", { className: "dg hit", style: { width: "100%" }, onClick: () => { setTeamPage(null); setSeasonTeam(t.name); setSeasonOpen(true); } }, "Open season stats")),
+                        teamTab === "roster" && React.createElement("div", null,
+                            t.roster.length === 0
+                                ? React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--powder)" } }, "No roster saved. Save one from the lineup screen and it'll live here.")
+                                : t.roster.map((p, i) => React.createElement("div", { className: "tp-row", key: i },
+                                    React.createElement("span", { className: "tp-when" }, p.num ? "#" + p.num : ""),
+                                    React.createElement("span", { className: "tp-opp" }, p.name),
+                                    React.createElement("span", { className: "tp-res" }, p.pos || ""))),
+                            React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--powder)", fontSize: 11, marginTop: 8 } }, `${t.roster.length} players`)),
+                        teamTab === "share" && React.createElement("div", null,
+                            React.createElement("p", { style: { textTransform: "none", letterSpacing: 0 } }, "The page parents can follow:"),
+                            React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, wordBreak: "break-all", color: "var(--amberw)" } },
+                                `${location.origin}/hub.html?event=${encodeURIComponent((t.seasons[t.seasons.length - 1] || {}).label || t.name)}`),
+                            React.createElement("button", { className: "dg ghost", style: { width: "100%", marginTop: 8 }, onClick: () => { try {
+                                    navigator.clipboard.writeText(`${location.origin}/hub.html?event=${encodeURIComponent((t.seasons[t.seasons.length - 1] || {}).label || t.name)}`);
+                                    alert("Link copied.");
+                                }
+                                catch (_a) { } } }, "Copy the link")),
+                        React.createElement("button", { className: "dg ghost", style: { width: "100%", marginTop: 12 }, onClick: () => setTeamPage(null) }, "Done")))); })(),
             archiveView && (() => {
                 const r = archiveView;
                 const ls = r.linescore || (r.snapshot && r.snapshot.game && r.snapshot.game.linescore) || [];
