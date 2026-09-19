@@ -885,7 +885,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "261"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "262"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -8287,11 +8287,35 @@ function DugoutScorecard() {
         .tp-rec { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
         .tp-rec b { font-size: 22px; font-variant-numeric: tabular-nums; }
         .tp-rec span { font-size: 12.5px; color: var(--powder); }
-        .tp-tabs { display: flex; gap: 16px; border-bottom: 1px solid var(--line); margin-bottom: 10px; }
-        .tp-tabs button { background: none; border: 0; padding: 0 0 8px; cursor: pointer;
-          font-family: 'Saira Condensed', sans-serif; font-size: 13.5px; font-weight: 700;
-          color: var(--powder); border-bottom: 2px solid transparent; }
-        .tp-tabs button.on { color: var(--white); border-bottom-color: var(--amberw); }
+        .tp-season { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+          margin-bottom: 4px; }
+        .tp-season b { font-size: 19px; }
+        .tp-rec { font-size: 13px; color: var(--powder); margin-bottom: 12px; }
+        /* fixed along the bottom, the way a phone app does it */
+        .tp-tabs { position: sticky; bottom: 0; display: grid; grid-template-columns: repeat(4,1fr);
+          gap: 4px; padding: 10px 0 2px; margin-top: 14px; background: var(--navy);
+          border-top: 1px solid var(--line); }
+        .tp-tabs button { background: none; border: 0; padding: 8px 0; cursor: pointer;
+          font-family: 'Saira Condensed', sans-serif; font-size: 14px; font-weight: 700;
+          color: var(--powder); letter-spacing: .03em; }
+        .tp-tabs button.on { color: var(--amberw); }
+        /* a game row, crest and all */
+        .gcard { display: flex; align-items: center; gap: 10px; padding: 11px 12px;
+          border: 1px solid var(--line); border-radius: 12px; margin-bottom: 8px;
+          background: rgba(255,255,255,.035); }
+        .gc-when { flex: 0 0 76px; font-size: 12.5px; font-weight: 700; display: flex;
+          flex-direction: column; }
+        .gc-when i { font-style: normal; font-size: 11px; color: var(--powder); font-weight: 500; }
+        .gc-logo { width: 30px; height: 30px; object-fit: contain; border-radius: 50%;
+          background: rgba(255,255,255,.07); flex: none; }
+        .gc-logo.blank { background: #22345f; }
+        .gc-opp { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+        .gc-opp b { font-size: 14.5px; font-weight: 700; overflow: hidden; text-overflow: ellipsis;
+          white-space: nowrap; }
+        .gc-opp i { font-style: normal; font-size: 11.5px; color: var(--powder); }
+        .gc-time { flex: none; font-size: 13px; color: var(--powder); }
+        .gc-res { flex: none; font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; }
+        .gc-res.W { color: var(--amberw); } .gc-res.L { color: var(--white); opacity: .75; }
         .tp-row { display: flex; align-items: center; gap: 10px; padding: 9px 2px;
           border-bottom: 1px solid rgba(169,197,232,.1); }
         .tp-when { flex: 0 0 74px; font-size: 12px; color: var(--powder); display: flex;
@@ -8307,8 +8331,9 @@ function DugoutScorecard() {
         .home-wrap { padding: 4px 0 20px; }
         .home-empty { color: var(--powder); font-size: 13px; line-height: 1.55; margin: 0 0 12px;
           text-transform: none; letter-spacing: 0; }
-        .tm-card { border: 1px solid var(--line); border-radius: 14px; padding: 13px 14px;
-          margin-bottom: 10px; background: rgba(255,255,255,.04); }
+        .tm-card { border: 1px solid var(--line); border-top: 3px solid var(--amberw);
+          border-radius: 14px; padding: 14px 15px 15px; margin-bottom: 12px;
+          background: rgba(255,255,255,.04); }
         .tm-top { display: flex; align-items: center; gap: 11px; }
         .tm-logo { width: 42px; height: 42px; object-fit: contain; border-radius: 50%;
           background: rgba(255,255,255,.07); flex: none; }
@@ -8316,9 +8341,9 @@ function DugoutScorecard() {
         .tm-id { flex: 1; min-width: 0; }
         .tm-id b { display: block; font-size: 17px; font-weight: 700; }
         .tm-id span { display: block; font-size: 12px; color: var(--powder); margin-top: 2px; }
-        .tm-next { margin-top: 10px; font-size: 13.5px; color: var(--white); display: flex;
-          flex-direction: column; gap: 2px; }
-        .tm-field { font-size: 11.5px; color: var(--powder); }
+        .tm-sub { margin-top: 8px; font-size: 13px; color: var(--powder); }
+        .tm-next { margin-top: 9px; font-size: 14.5px; color: var(--white); }
+        .tm-go { width: 100%; margin-top: 11px; font-size: 16px; padding: 14px 0; }
         .set-menu { display: flex; flex-direction: column; gap: 8px; margin-bottom: 4px; }
         .set-item { display: flex; align-items: center; gap: 12px; width: 100%;
           padding: 13px 14px; background: rgba(255,255,255,.05);
@@ -8440,17 +8465,12 @@ function DugoutScorecard() {
                                         ? React.createElement("img", { className: "tm-logo", src: t.logo, alt: "" })
                                         : React.createElement("span", { className: "tm-logo blank", style: t.color ? { background: t.color } : null }),
                                     React.createElement("div", { className: "tm-id" },
-                                        React.createElement("b", null, t.name),
-                                        React.createElement("span", null, `${recOf(t)} \u00b7 ${t.roster.length} players`))),
-                                nx
-                                    ? React.createElement("div", { className: "tm-next" },
-                                        React.createElement("span", null, `Next: ${fmtWhen(nx)}, ${atHome ? "vs" : "at"} ${opp || "TBD"}`),
-                                        nx.field ? React.createElement("span", { className: "tm-field" }, nx.field) : null)
-                                    : React.createElement("div", { className: "tm-next" }, React.createElement("span", null, "No games scheduled")),
-                                nx && React.createElement("button", { className: "dg hit", style: { width: "100%", marginTop: 8 }, onClick: () => scoreFixture(nx) }, "Score this game"),
-                                React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr", marginTop: 6 } },
-                                    React.createElement("button", { className: "dg ghost", onClick: () => { setSchedMode("season"); setSchedEvent(""); setSchedOpen(true); } }, "Schedule"),
-                                    React.createElement("button", { className: "dg ghost", onClick: () => { setSeasonTeam(t.name); setSeasonOpen(true); } }, "Stats")));
+                                        React.createElement("b", null, t.name))),
+                                React.createElement("div", { className: "tm-sub" },
+                                    `${(t.seasons[t.seasons.length - 1] || {}).label || "Season"}, ${recOf(t)}, ${t.roster.length} players`),
+                                React.createElement("div", { className: "tm-next" },
+                                    nx ? `Next: ${fmtWhen(nx)}, ${atHome ? "vs" : "at"} ${opp || "TBD"}` : "No games scheduled"),
+                                nx && React.createElement("button", { className: "dg hit tm-go", onClick: () => scoreFixture(nx) }, "Score this game"));
                         }),
                         React.createElement("button", { className: "dg ghost", style: { width: "100%", marginTop: 8 }, onClick: () => setHomeMode(false) }, "+ Add a team"),
                         null,
@@ -9622,29 +9642,76 @@ function DugoutScorecard() {
                         React.createElement("div", { className: "tp-head" },
                             React.createElement("button", { className: "dg ghost", style: { padding: "5px 12px", fontSize: 12 }, onClick: () => setTeamPage(null) }, "\u2039 Home"),
                             React.createElement("b", null, t.name)),
+                        React.createElement("div", { className: "tp-season" },
+                            React.createElement("b", null, (t.seasons[t.seasons.length - 1] || {}).label || "Season"),
+                            React.createElement("button", { className: "dg ghost", style: { padding: "6px 12px", fontSize: 12 }, onClick: () => {
+                                    const yr = new Date().getFullYear() + 1;
+                                    const lbl = prompt("New season name", yr + " Season");
+                                    if (!lbl)
+                                        return;
+                                    const next = teams2.map((x) => (x.id === t.id
+                                        ? Object.assign({}, x, { seasons: x.seasons.concat([{ id: "s" + Date.now(), label: lbl.trim() }]) })
+                                        : x));
+                                    setTeams2(next);
+                                    persistTeams(next);
+                                } }, "New season")),
                         React.createElement("div", { className: "tp-rec" },
-                            React.createElement("b", null, `${w}\u2013${l}`),
-                            React.createElement("span", null, `${rf} for, ${ra} against \u00b7 ${rf - ra > 0 ? "+" : ""}${rf - ra}`)),
-                        React.createElement("div", { className: "tp-tabs" },
-                            [["schedule", "Schedule"], ["stats", "Stats"], ["roster", "Roster"], ["share", "Share"]]
-                                .map(([v, lbl]) => React.createElement("button", { key: v, className: teamTab === v ? "on" : "", onClick: () => setTeamTab(v) }, lbl))),
-                        teamTab === "schedule" && React.createElement(React.Fragment, null,
+                            `Record ${w}\u2013${l} \u00b7 ${rf} for, ${ra} against \u00b7 ${rf - ra > 0 ? "+" : ""}${rf - ra}`),
+
+                        teamTab === "schedule" && (() => {
+                            const crest = (n) => teamCrest(n, true);
+                            const gcard = (key, dateStr, timeStr, opp, atHome, venue, right, onGo) =>
+                                React.createElement("div", { className: "gcard", key },
+                                    React.createElement("span", { className: "gc-when" }, dateStr,
+                                        timeStr ? React.createElement("i", null, timeStr) : null),
+                                    (() => { const c = crest(opp);
+                                        return c.logo
+                                            ? React.createElement("img", { className: "gc-logo", src: c.logo, alt: "" })
+                                            : React.createElement("span", { className: "gc-logo blank", style: c.color ? { background: c.color } : null }); })(),
+                                    React.createElement("span", { className: "gc-opp" },
+                                        React.createElement("b", null, atHome ? "vs " : "at ", opp || "TBD"),
+                                        venue ? React.createElement("i", null, venue) : null),
+                                    right,
+                                    onGo ? React.createElement("button", { className: "dg hit", style: { padding: "7px 11px", fontSize: 12, marginLeft: 8 }, onClick: onGo }, "Score") : null);
+                            const monthOf = (d) => { const x = d ? new Date(d + "T12:00:00") : null;
+                                return x ? x.toLocaleDateString(undefined, { month: "long", year: "numeric" }) : "Unscheduled"; };
+                            const dayOf = (d) => { const x = d ? new Date(d + "T12:00:00") : null;
+                                return x ? x.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) : ""; };
+                            const t12 = (v) => { const p = String(v || "").split(":");
+                                if (p.length < 2) return "";
+                                let hh = parseInt(p[0], 10); const ap = hh >= 12 ? "PM" : "AM";
+                                hh = hh % 12 || 12; return `${hh}:${p[1]} ${ap}`; };
+                            // everything for this club on one timeline, newest month first
+                            const all = fixtures.map((r) => ({ d: r.date, t: r.time, opp: oppOf(r),
+                                    home: lcName(r.home) === k, venue: r.field, fx: r }))
+                                .concat(played.map((g) => { const L = line(g);
+                                    return { d: g.date, t: g.gameTime, opp: L.opp, home: L.home,
+                                        venue: g.fieldName, res: L }; }));
+                            const byMonth = {};
+                            all.forEach((x) => { const m = monthOf(x.d); (byMonth[m] = byMonth[m] || []).push(x); });
+                            const months = Object.keys(byMonth).sort((a, b) => {
+                                const pa = byMonth[a][0].d || "", pb = byMonth[b][0].d || "";
+                                return pb.localeCompare(pa);
+                            });
+                            return React.createElement(React.Fragment, null,
                             React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr", marginBottom: 10 } },
                                 React.createElement("button", { className: "dg ghost", onClick: () => { setTeamPage(null); setSchedMode("season"); setSchedOpen(true); } }, "Add a game"),
                                 React.createElement("button", { className: "dg ghost", onClick: () => { setTeamPage(null); setSchedMode("season"); setSchedOpen(true); setBulkAdd({ opp: "", us: t.name, day: "2", time: "18:30", field: "", start: gameDate, count: "10", every: "1", homeFirst: true }); } }, "Add weekly games")),
-                            fixtures.length > 0 && React.createElement("div", { className: "sit-sec" }, "Upcoming"),
-                            fixtures.slice(0, 12).map((r) => React.createElement("div", { className: "tp-row", key: r.id },
-                                React.createElement("span", { className: "tp-when" }, when(r), r.time ? React.createElement("i", null, r.time) : null),
-                                React.createElement("span", { className: "tp-opp" }, lcName(r.home) === k ? "vs " : "at ", oppOf(r) || "TBD",
-                                    r.field ? React.createElement("i", null, r.field) : null),
-                                React.createElement("button", { className: "dg hit", style: { padding: "6px 10px", fontSize: 12 }, onClick: () => { setTeamPage(null); scoreFixture(r); } }, "Score"))),
-                            played.length > 0 && React.createElement("div", { className: "sit-sec", style: { marginTop: 12 } }, "Results"),
-                            played.slice(0, 30).map((g) => { const L = line(g);
-                                return React.createElement("div", { className: "tp-row", key: g.id },
-                                    React.createElement("span", { className: "tp-when" }, g.date ? new Date(g.date + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : ""),
-                                    React.createElement("span", { className: "tp-opp" }, L.home ? "vs " : "at ", L.opp),
-                                    React.createElement("span", { className: `tp-res ${L.res}` }, L.res, " ", L.score)); }),
-                            !fixtures.length && !played.length && React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--powder)" } }, "No games yet. Add a schedule and they'll appear here.")),
+                            fixtures[0] && React.createElement(React.Fragment, null,
+                                React.createElement("div", { className: "sit-sec" }, "Next game"),
+                                gcard("next", dayOf(fixtures[0].date), t12(fixtures[0].time),
+                                    oppOf(fixtures[0]), lcName(fixtures[0].home) === k, fixtures[0].field,
+                                    React.createElement("span", { className: "gc-time" }, t12(fixtures[0].time)),
+                                    () => { setTeamPage(null); scoreFixture(fixtures[0]); })),
+                            months.map((m) => React.createElement(React.Fragment, { key: m },
+                                React.createElement("div", { className: "sit-sec", style: { marginTop: 12 } }, m),
+                                byMonth[m].sort((a, b) => String(a.d || "").localeCompare(String(b.d || "")))
+                                    .map((x, i) => gcard(m + i, dayOf(x.d), t12(x.t), x.opp, x.home, x.venue,
+                                        x.res
+                                            ? React.createElement("span", { className: `gc-res ${x.res.res}` }, x.res.res, " ", x.res.score)
+                                            : React.createElement("span", { className: "gc-time" }, t12(x.t)),
+                                        x.fx ? () => { setTeamPage(null); scoreFixture(x.fx); } : null)))),
+                            !fixtures.length && !played.length && React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--powder)" } }, "No games yet. Add a schedule and they'll appear here.")); })(),
                         teamTab === "stats" && React.createElement("div", null,
                             React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--powder)" } }, `${played.length} games scored.`),
                             React.createElement("button", { className: "dg hit", style: { width: "100%" }, onClick: () => { setTeamPage(null); setSeasonTeam(t.name); setSeasonOpen(true); } }, "Open season stats")),
@@ -9665,7 +9732,9 @@ function DugoutScorecard() {
                                     alert("Link copied.");
                                 }
                                 catch (_a) { } } }, "Copy the link")),
-                        React.createElement("button", { className: "dg ghost", style: { width: "100%", marginTop: 12 }, onClick: () => setTeamPage(null) }, "Done")))); })(),
+                        React.createElement("div", { className: "tp-tabs" },
+                            [["schedule", "Schedule"], ["stats", "Stats"], ["roster", "Roster"], ["share", "Share"]]
+                                .map(([v, lbl]) => React.createElement("button", { key: v, className: teamTab === v ? "on" : "", onClick: () => setTeamTab(v) }, lbl)))))); })(),
             archiveView && (() => {
                 const r = archiveView;
                 const ls = r.linescore || (r.snapshot && r.snapshot.game && r.snapshot.game.linescore) || [];
