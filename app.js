@@ -885,7 +885,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "262"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "263"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -8287,14 +8287,19 @@ function DugoutScorecard() {
         .tp-rec { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
         .tp-rec b { font-size: 22px; font-variant-numeric: tabular-nums; }
         .tp-rec span { font-size: 12.5px; color: var(--powder); }
+        /* the club page owns the screen rather than floating in a card */
+        .tp-screen { position: fixed; inset: 0; z-index: 60; background: var(--navy);
+          display: flex; flex-direction: column; padding-top: env(safe-area-inset-top); }
+        .tp-body { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
+          padding: 14px 16px 16px; }
         .tp-season { display: flex; align-items: center; justify-content: space-between; gap: 10px;
           margin-bottom: 4px; }
         .tp-season b { font-size: 19px; }
         .tp-rec { font-size: 13px; color: var(--powder); margin-bottom: 12px; }
         /* fixed along the bottom, the way a phone app does it */
-        .tp-tabs { position: sticky; bottom: 0; display: grid; grid-template-columns: repeat(4,1fr);
-          gap: 4px; padding: 10px 0 2px; margin-top: 14px; background: var(--navy);
-          border-top: 1px solid var(--line); }
+        .tp-tabs { flex: none; display: grid; grid-template-columns: repeat(4,1fr); gap: 4px;
+          padding: 11px 8px calc(11px + env(safe-area-inset-bottom));
+          background: rgba(10,20,48,.96); border-top: 1px solid var(--line); }
         .tp-tabs button { background: none; border: 0; padding: 8px 0; cursor: pointer;
           font-family: 'Saira Condensed', sans-serif; font-size: 14px; font-weight: 700;
           color: var(--powder); letter-spacing: .03em; }
@@ -9637,8 +9642,8 @@ function DugoutScorecard() {
                     const res = us > them ? "W" : us < them ? "L" : "T";
                     return { opp, res, score: `${us}\u2013${them}`, home };
                 };
-                return (React.createElement("div", { className: "modal-back", onClick: () => setTeamPage(null) },
-                    React.createElement("div", { className: "modal set-modal", onClick: (e) => e.stopPropagation() },
+                return (React.createElement("div", { className: "tp-screen" },
+                    React.createElement("div", { className: "tp-body" },
                         React.createElement("div", { className: "tp-head" },
                             React.createElement("button", { className: "dg ghost", style: { padding: "5px 12px", fontSize: 12 }, onClick: () => setTeamPage(null) }, "\u2039 Home"),
                             React.createElement("b", null, t.name)),
@@ -9732,9 +9737,10 @@ function DugoutScorecard() {
                                     alert("Link copied.");
                                 }
                                 catch (_a) { } } }, "Copy the link")),
-                        React.createElement("div", { className: "tp-tabs" },
-                            [["schedule", "Schedule"], ["stats", "Stats"], ["roster", "Roster"], ["share", "Share"]]
-                                .map(([v, lbl]) => React.createElement("button", { key: v, className: teamTab === v ? "on" : "", onClick: () => setTeamTab(v) }, lbl)))))); })(),
+                        null),
+                    React.createElement("div", { className: "tp-tabs" },
+                        [["schedule", "Schedule"], ["stats", "Stats"], ["roster", "Roster"], ["share", "Share"]]
+                            .map(([v, lbl]) => React.createElement("button", { key: v, className: teamTab === v ? "on" : "", onClick: () => setTeamTab(v) }, lbl))))); })(),
             archiveView && (() => {
                 const r = archiveView;
                 const ls = r.linescore || (r.snapshot && r.snapshot.game && r.snapshot.game.linescore) || [];
