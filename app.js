@@ -885,7 +885,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "257"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "259"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -1175,6 +1175,127 @@ const persistPools = (m) => { try {
     localStorage.setItem(POOLS_KEY, JSON.stringify(m));
 }
 catch (_p) { } };
+/* ===== PHASE 1: the team model ==========================================
+   Today a game is the root object and a team is a convenience. That inversion
+   is why games get mistagged and lineups get retyped. Here the team becomes a
+   real record that games point at.
+
+   This phase is deliberately invisible: it builds the records and a link map
+   and changes nothing on screen. The migration is ADDITIVE — it never edits or
+   deletes a game, so a wrong guess costs a corrected link, not a season.
+========================================================================= */
+const lcName = (x) => String(x || "").trim().toLowerCase().replace(/\s+/g, " ");
+const TEAMS_KEY = "dugoutiq-teams-v1";
+const TEAMLINK_KEY = "dugoutiq-teamlink-v1"; // { gameId: teamId } — kept apart
+                                             // from the games so they stay untouched
+const newTeamId = () => "t" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+// A club, persisting across seasons. Rosters turn over; the club does not.
+const freshTeam = (name) => ({
+    id: newTeamId(),
+    name: (name || "").trim(),
+    color: "", logo: "",
+    roster: [],           // [{name, num, pos}]
+    seasons: [],          // [{id, label, from, to}]
+    isMine: false,        // a club you score for, vs an opponent you only play
+    createdAt: Date.now(),
+});
+const loadTeamsLS = () => { try {
+    return JSON.parse(localStorage.getItem(TEAMS_KEY) || "[]") || [];
+}
+catch (_a) {
+    return [];
+} };
+const loadLinksLS = () => { try {
+    return JSON.parse(localStorage.getItem(TEAMLINK_KEY) || "{}") || {};
+}
+catch (_a) {
+    return {};
+} };
+const persistTeams = (list) => {
+    idbWriteKV("teams", list).catch(() => { });
+    try {
+        localStorage.setItem(TEAMS_KEY, JSON.stringify(list));
+    }
+    catch (_a) { }
+};
+const persistLinks = (map) => {
+    idbWriteKV("teamlinks", map).catch(() => { });
+    try {
+        localStorage.setItem(TEAMLINK_KEY, JSON.stringify(map));
+    }
+    catch (_a) { }
+};
+// Build team records from what already exists. Runs on everything every time;
+// re-running it can only add, never duplicate or remove.
+const inferTeams = (games, rosters, schedule, existing) => {
+    const byName = {};
+    const out = (existing || []).map((t) => Object.assign({}, t));
+    out.forEach((t) => { byName[lcName(t.name)] = t; });
+    const touch = (name) => {
+        const k = lcName(name);
+        if (!k)
+            return null;
+        if (!byName[k]) {
+            const t = freshTeam(name);
+            byName[k] = t;
+            out.push(t);
+        }
+        return byName[k];
+    };
+    // saved games: both sides, plus whatever crest they carried
+    (games || []).forEach((rec) => {
+        ["away", "home"].forEach((sd) => {
+            const side = rec && rec[sd];
+            if (!side || !side.name)
+                return;
+            const t = touch(side.name);
+            if (!t)
+                return;
+            if (!t.color && side.color)
+                t.color = side.color;
+            if (!t.logo && side.logo)
+                t.logo = side.logo;
+            // a season label, taken from the year the game was played
+            const yr = String(rec.date || "").slice(0, 4);
+            if (yr && !t.seasons.some((x) => x.label === yr + " Season"))
+                t.seasons.push({ id: "s" + yr, label: yr + " Season", from: yr + "-01-01", to: yr + "-12-31" });
+        });
+    });
+    // My Teams: these are the clubs you actually score for, and they carry rosters
+    (rosters || []).forEach((r) => {
+        const t = touch(r.name);
+        if (!t)
+            return;
+        t.isMine = true;
+        if (!t.color && r.color)
+            t.color = r.color;
+        if (!t.logo && r.logo)
+            t.logo = r.logo;
+        if (!t.roster.length && Array.isArray(r.lineup))
+            t.roster = r.lineup.map((p) => ({ name: p.name, num: p.num || "", pos: p.pos || "" }));
+    });
+    // fixtures name teams that may not have played yet
+    (schedule || []).forEach((r) => { touch(r.away); touch(r.home); });
+    out.forEach((t) => t.seasons.sort((a, b) => String(a.label).localeCompare(String(b.label))));
+    return out;
+};
+// Which team does a saved game belong to? Stored apart from the game itself.
+const linkGames = (games, teams, existing) => {
+    const map = Object.assign({}, existing || {});
+    const byName = {};
+    (teams || []).forEach((t) => { byName[lcName(t.name)] = t.id; });
+    (games || []).forEach((rec) => {
+        if (!rec || rec.id == null || map[rec.id])
+            return; // never re-link: a correction the user made must stick
+        const mine = (teams || []).filter((t) => t.isMine).map((t) => lcName(t.name));
+        const a = lcName(rec.away && rec.away.name), h = lcName(rec.home && rec.home.name);
+        // prefer a club you score for; otherwise the home side
+        const pick = mine.indexOf(h) >= 0 ? h : mine.indexOf(a) >= 0 ? a : h || a;
+        if (pick && byName[pick])
+            map[rec.id] = byName[pick];
+    });
+    return map;
+};
 const SCHED_KEY = "dugoutiq-schedule-v1";
 const loadSchedule = () => { try {
     return JSON.parse(localStorage.getItem(SCHED_KEY) || "[]") || [];
@@ -1304,6 +1425,7 @@ function DugoutScorecard() {
     const [fcMenu, setFcMenu] = useState(false);
     const [fieldPick, setFieldPick] = useState(null); // {label, isK} | null — fielder picker for batted outs
     const [fieldSeq, setFieldSeq] = useState([]); // positions tapped, e.g. [6,3]
+    const [hitTraj, setHitTraj] = useState(""); // optional: ground / line / fly on a hit
     const [sacMenu, setSacMenu] = useState(false);
     const [dpMenu, setDpMenu] = useState(false);
     const [tagMenu, setTagMenu] = useState(false);
@@ -4127,9 +4249,13 @@ function DugoutScorecard() {
     const openFieldSeq = (title, instr, onRecord) => { setFieldSeq([]); setFieldPick({ label: "seq", isK: false, title, instr, onRecord }); };
     // one tap, records immediately — used for charging an error to a fielder
     const openFieldOne = (title, instr, onRecord) => { setFieldSeq([]); setFieldPick({ label: "one", isK: false, single: true, title, instr, onRecord }); };
-    const cancelFieldPick = () => { setFieldPick(null); setFieldSeq([]); };
+    // Same picker, plus an optional ground / liner / fly row — used for hits.
+    const openFieldHit = (title, instr, onRecord) => { setFieldSeq([]); setHitTraj(""); setFieldPick({ label: "one", isK: false, single: true, hitType: true, title, instr, onRecord }); };
+    const cancelFieldPick = () => { setFieldPick(null); setFieldSeq([]); setHitTraj(""); };
     const finishFieldPick = (note) => {
         const fp = fieldPick;
+        if (fp && fp.hitType && hitTraj)
+            note = `${hitTraj} ${note}`; // "line to LF", "ground to SS"
         if (!fp)
             return;
         if (fp.onRecord)
@@ -5264,6 +5390,24 @@ function DugoutScorecard() {
     const [archiveView, setArchiveView] = useState(null); // a restored game being read
     const [retag, setRetag] = useState(null); // {id, ev, type, stage, gnum} while retagging
     const [rowMenu, setRowMenu] = useState(null); // which saved game has its actions open
+    const [teams2, setTeams2] = useState(() => loadTeamsLS()); // PHASE 1: club records
+    const [teamLinks, setTeamLinks] = useState(() => loadLinksLS());
+    // Build/refresh the team model from what already exists. Additive only, and
+    // it runs after the games have loaded so it sees the full picture.
+    useEffect(() => {
+        if (!games.length && !rosters.length && !schedule.length)
+            return;
+        const built = inferTeams(games, rosters, schedule, teams2);
+        const linked = linkGames(games, built, teamLinks);
+        if (built.length !== teams2.length) {
+            setTeams2(built);
+            persistTeams(built);
+        }
+        if (Object.keys(linked).length !== Object.keys(teamLinks).length) {
+            setTeamLinks(linked);
+            persistLinks(linked);
+        }
+    }, [games, rosters, schedule]);
     const [bulkAdd, setBulkAdd] = useState(null); // weekly run of fixtures for a season
     const [delayMenu, setDelayMenu] = useState(false); // why is play stopped?
     useEffect(() => {
@@ -8500,9 +8644,9 @@ function DugoutScorecard() {
                         React.createElement("button", { className: "dg count", onClick: tapHBP }, "HBP"),
                         React.createElement("button", { className: "dg count", onClick: tapIBB }, "IBB")),
                     React.createElement("div", { className: "btnrow r4" },
-                        React.createElement("button", { className: "dg hit", onClick: () => openFieldOne("Single", "Tap where the ball was hit.", (loc) => playHit(1, "single", loc)) }, "1B"),
-                        React.createElement("button", { className: "dg hit", onClick: () => openFieldOne("Double", "Tap where the ball was hit.", (loc) => playHit(2, "double", loc)) }, "2B"),
-                        React.createElement("button", { className: "dg hit", onClick: () => openFieldOne("Triple", "Tap where the ball was hit.", (loc) => playHit(3, "triple", loc)) }, "3B"),
+                        React.createElement("button", { className: "dg hit", onClick: () => openFieldHit("Single", "Tap where the ball was hit.", (loc) => playHit(1, "single", loc)) }, "1B"),
+                        React.createElement("button", { className: "dg hit", onClick: () => openFieldHit("Double", "Tap where the ball was hit.", (loc) => playHit(2, "double", loc)) }, "2B"),
+                        React.createElement("button", { className: "dg hit", onClick: () => openFieldHit("Triple", "Tap where the ball was hit.", (loc) => playHit(3, "triple", loc)) }, "3B"),
                         React.createElement("button", { className: "dg hit", onClick: () => setHrMenu(true) }, "HR")),
                     React.createElement("div", { className: "btnrow r5" },
                         React.createElement("button", { className: "dg outb", onClick: () => openFieldPick("groundout", false) }, "Gnd"),
@@ -8657,6 +8801,19 @@ function DugoutScorecard() {
                         React.createElement("button", { className: "dg ghost", onClick: () => { setSchedMode("tournament"); setSchedOpen(true); } }, "\uD83C\uDFC6 Tournament schedule")),
                     React.createElement("button", { className: "dg ghost", style: { width: "100%", marginBottom: 10 }, onClick: loadHubList }, "\uD83D\uDCE1 What\u2019s on the games hub"),
                     React.createElement("button", { className: "dg ghost", style: { width: "100%", marginBottom: 10 }, onClick: restoreFromHub }, "\u2B07 Restore missing games from the hub"),
+                    teams2.length > 0 && React.createElement("button", { className: "dg ghost", style: { width: "100%", marginBottom: 10 }, onClick: () => {
+                            const mine = teams2.filter((t) => t.isMine);
+                            const opp = teams2.filter((t) => !t.isMine);
+                            const linked = Object.keys(teamLinks).length;
+                            try {
+                                alert(`Clubs found: ${teams2.length}\n\n`
+                                    + `Yours (${mine.length}):\n${mine.map((t) => `  ${t.name} \u00b7 ${t.roster.length} players \u00b7 ${t.seasons.map((x) => x.label).join(", ") || "no seasons"}`).join("\n") || "  none"}\n\n`
+                                    + `Opponents (${opp.length}):\n${opp.slice(0, 12).map((t) => "  " + t.name).join("\n")}${opp.length > 12 ? `\n  …and ${opp.length - 12} more` : ""}\n\n`
+                                    + `${linked} of ${games.length} saved games linked to a club.\n\n`
+                                    + `Nothing has changed \u2014 this is groundwork for the new layout.`);
+                            }
+                            catch (_a) { }
+                        } }, "\uD83C\uDFDF Clubs found (preview)"),
                     hubList && React.createElement("div", { style: { border: "1px solid var(--line)", borderRadius: 12, padding: 10, marginBottom: 10 } },
                         React.createElement("div", { className: "sit-sec" }, "Listed on the hub"),
                         hubList.loading
@@ -9927,6 +10084,15 @@ function DugoutScorecard() {
                     React.createElement("p", null, fieldPick.instr || (isAirOut(fieldPick.label)
                         ? "Tap the fielder who made the catch."
                         : "Tap the fielders in order (e.g. SS then 1B = 6-3).")),
+                    // Optional trajectory for hits. Skip it and nothing changes;
+                    // set it and the notation and the spectator trail improve.
+                    fieldPick.hitType && React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "repeat(4,1fr)", marginBottom: 8 } },
+                        [["", "\u2014"], ["ground", "Ground"], ["line", "Liner"], ["fly", "Fly"]].map(([v, l]) => React.createElement("button", {
+                            key: v || "none",
+                            className: `dg ${(hitTraj || "") === v ? "" : "ghost"}`,
+                            style: { fontSize: 12, padding: "8px 2px" },
+                            onClick: () => setHitTraj(v),
+                        }, l))),
                     !isAirOut(fieldPick.label) && !fieldPick.single && (React.createElement("div", { style: { textAlign: "center", fontFamily: "'Saira Condensed', sans-serif", fontSize: "26px", fontWeight: 700, color: "#F5C518", letterSpacing: ".05em", margin: "4px 0 10px", minHeight: "30px" } }, fieldNote(fieldPick.label, fieldSeq) || "\u2014")),
                     React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "8px", marginBottom: "12px" } }, FPOS.map((p) => React.createElement("button", { key: p.n, className: "dg outb", onClick: () => pickField(p.n) },
                         p.l,

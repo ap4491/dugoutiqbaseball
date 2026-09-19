@@ -66,15 +66,16 @@
   .watchlink:active{ filter:brightness(.94); }
 
   /* ---- field view ---- */
-  .field{ display:flex; align-items:center; gap:8px; }
-  .fld-l{ flex:1; display:flex; flex-direction:column; gap:11px; }
+  .field{ display:flex; align-items:flex-start; gap:10px; }
+  .fld-l{ flex:0 0 auto; display:flex; flex-direction:column; gap:11px; padding-top:6px; }
   .crow{ display:flex; align-items:center; gap:7px; }
   .crow span{ font-family:"Saira Condensed",sans-serif; font-size:13px; color:var(--muted); width:14px; }
   .crow i{ width:13px; height:13px; border-radius:50%; background:rgba(255,255,255,.07); }
   /* balls and strikes are white in the scoring app; outs stay red */
   .crow i.on{ background:#fff; box-shadow:0 0 12px rgba(255,255,255,.7); }
   .crow.o i.on{ background:var(--red); box-shadow:0 0 12px rgba(232,41,28,.7); }
-  .dia{ width:198px; height:138px; flex:0 0 auto; filter:drop-shadow(0 10px 22px rgba(0,0,0,.45)); }
+  .dia{ width:100%; max-width:230px; aspect-ratio:200/240; height:auto; flex:1 1 auto;
+    border-radius:12px; overflow:hidden; filter:drop-shadow(0 10px 22px rgba(0,0,0,.45)); }
   .dia .rn{ font-family:"Saira Condensed",sans-serif; font-weight:700; font-size:13px; letter-spacing:.03em;
             fill:var(--white); stroke:rgba(10,17,40,.85); stroke-width:3px; paint-order:stroke; }
   .dia .bs{ fill:rgba(255,255,255,.08); stroke:rgba(169,197,232,.5); stroke-width:1.4; }
@@ -133,6 +134,27 @@
   .vidhide{ display:block; width:100%; margin-top:6px; padding:7px 0; background:none;
     border:0; color:var(--muted); font-family:inherit; font-size:11.5px; letter-spacing:.12em;
     text-transform:uppercase; cursor:pointer; }
+  .stabs{ display:flex; gap:20px; padding:10px 16px 0; border-bottom:1px solid var(--line);
+    position:sticky; top:0; z-index:9; background:var(--bg,#0E1A3A); }
+  .stabs button{ background:none; border:0; padding:0 0 9px; cursor:pointer;
+    font-family:inherit; font-size:14px; font-weight:700; color:var(--muted);
+    border-bottom:3px solid transparent; }
+  .stabs button.on{ color:#fff; border-bottom-color:var(--amber); }
+  .bx{ width:100%; border-collapse:collapse; margin:4px 0 16px; }
+  .bx th,.bx td{ padding:7px 8px; font-size:13px; text-align:right;
+    font-variant-numeric:tabular-nums; }
+  .bx th{ font-size:10.5px; letter-spacing:.12em; text-transform:uppercase;
+    color:var(--muted); border-bottom:1px solid var(--line); }
+  .bx td.l,.bx th.l{ text-align:left; }
+  .bx tbody tr:nth-child(odd){ background:rgba(255,255,255,.03); }
+  .bxh{ padding:14px 16px 4px; color:var(--amber); font-size:11px; letter-spacing:.16em;
+    text-transform:uppercase; font-weight:700; }
+  .trail{ fill:none; stroke:var(--amber); stroke-width:2.2; stroke-linecap:round;
+    stroke-dasharray:240; stroke-dashoffset:240; opacity:.9;
+    animation:fly .75s cubic-bezier(.3,.7,.4,1) forwards; }
+  .tball{ fill:#fff; opacity:0; animation:land .3s .6s forwards; }
+  @keyframes fly{ to{ stroke-dashoffset:0; } }
+  @keyframes land{ to{ opacity:1; } }
 </style>
 </head>
 <body>
@@ -154,6 +176,11 @@
 </div>
 
 <div class="wrap">
+  <div class="stabs" id="stabs">
+    <button data-t="live" class="on">Live</button>
+    <button data-t="plays">Plays</button>
+    <button data-t="box">Box score</button>
+  </div>
   <div id="video"></div>
   <div id="content"><div class="msg">Loading the game…</div></div>
   <div class="foot">Live view · updates automatically · powered by DugoutIQ</div>
@@ -203,18 +230,89 @@
   }
 
   function rname(x){ return (x && typeof x === "object" && x.n) ? String(x.n).slice(0,12) : ""; }
-  function diamond(b){
-    const on=(x)=>x?'on':'';
-    const lbl=(x,y,a,n)=> n?`<text class="rn" x="${x}" y="${y}" text-anchor="${a}">${esc(n)}</text>`:"";
-    return `<svg class="dia" viewBox="0 0 200 140" aria-label="Bases">
-      <path class="ln" d="M100 120 L55 75 L100 30 L145 75 Z"/>
-      <rect class="bs ${on(b.second)}" x="93" y="23" width="14" height="14" rx="2" transform="rotate(45 100 30)"/>
-      <rect class="bs ${on(b.first)}"  x="138" y="68" width="14" height="14" rx="2" transform="rotate(45 145 75)"/>
-      <rect class="bs ${on(b.third)}"  x="48" y="68" width="14" height="14" rx="2" transform="rotate(45 55 75)"/>
-      <polygon class="hp" points="93,116 107,116 107,123 100,129 93,123"/>
-      ${lbl(100,16,"middle",rname(b.second))}
-      ${lbl(156,79,"start",rname(b.first))}
-      ${lbl(44,79,"end",rname(b.third))}
+  /* --- ball trail --------------------------------------------------------
+     The result text names the fielder ("groundout 6-3", "single to LF",
+     "flyout F8"), so the landing spot can be read straight off it. Positions
+     are laid out on the same 200x140 grid as the diamond.
+  ------------------------------------------------------------------------ */
+  const POS_XY = { 1:[100,176], 2:[100,226], 3:[147,160], 4:[128,144], 5:[53,160],
+    6:[72,144], 7:[42,102], 8:[100,90], 9:[158,102] };
+  const HOME_XY = [100, 214];
+  const BASE_XY = { first:[149,168], second:[100,132], third:[51,168] };
+  const NAME_POS = { P:1, C:2, "1B":3, "2B":4, "3B":5, SS:6, LF:7, CF:8, RF:9 };
+  function ballSpot(text){
+    const t = String(text || "");
+    // "to LF" / "to SS"
+    let m = t.match(/\bto ([1-3]B|SS|[LCR]F|P|C)\b/);
+    if (m && NAME_POS[m[1]]) return POS_XY[NAME_POS[m[1]]];
+    // "F8", "P4", "L6", "IF4"
+    m = t.match(/\bIF([1-9])\b/) || t.match(/\b[FPLG]([1-9])\b/);
+    if (m) return POS_XY[+m[1]];
+    // a throw chain: the first fielder touched it
+    m = t.match(/\b([1-9])(?:-[1-9])+\b/);
+    if (m) return POS_XY[+m[1]];
+    // an error names the fielder who misplayed it
+    m = t.match(/\bE([1-9])(?:f|th)?\b/);
+    if (m) return POS_XY[+m[1]];
+    // over the fence
+    if (/home run|over the/i.test(t)) {
+      if (/\bLF\b|left/i.test(t)) return [30, 8];
+      if (/\bRF\b|right/i.test(t)) return [170, 8];
+      return [100, 4];
+    }
+    return null;
+  }
+  function trail(text){
+    const p = ballSpot(text);
+    if (!p) return "";
+    const [x, y] = p;
+    // the scorer may have stated the trajectory ("line to LF", "ground to SS");
+    // otherwise infer it from the result as before
+    const stated = /\bground\b/i.test(text) ? "ground"
+      : /\bline\b|lineout|\bL[1-9]\b/i.test(text) ? "line"
+      : /\bfly\b|flyout|\bF[1-9]\b|\bpop\b|\bP[1-9]\b/i.test(text) ? "fly" : "";
+    const grounder = stated ? stated === "ground"
+      : (/ground|GO\b|\b[1-9]-[1-9]/i.test(text) && !/fly|pop|line|home run/i.test(text));
+    // a grounder skips along the dirt; anything else arcs above it
+    const [hx, hy] = HOME_XY;
+    const liner = stated === "line";
+    const lift = grounder ? 5 : liner ? Math.max(9, (hy - y) * 0.16) : Math.max(16, (hy - y) * 0.36);
+    const mx = (hx + x) / 2, my = (hy + y) / 2 - lift;
+    return `<path class="trail" d="M${hx} ${hy} Q${mx.toFixed(1)} ${my.toFixed(1)} ${x} ${y}"/>`
+      + `<circle class="tball" cx="${x}" cy="${y}" r="4"/>`;
+  }
+  function diamond(b, lastPlay){
+    const on = (x) => (x ? "on" : "");
+    const lbl = (x, y, a, n) => (n ? `<text class="rn" x="${x}" y="${y}" text-anchor="${a}">${esc(n)}</text>` : "");
+    const pad = (p, k) => {
+      const [x, y] = BASE_XY[k];
+      return `<rect class="bs ${on(b[k])}" x="${x - 7}" y="${y - 7}" width="14" height="14" rx="2" transform="rotate(45 ${x} ${y})"/>`;
+    };
+    // Same perspective the in-app replay uses: the view from behind home plate,
+    // so a ball to left field goes up and away rather than sideways.
+    return `<svg class="dia" viewBox="0 0 200 240" aria-label="Field">
+      <defs>
+        <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#0d1f45"/><stop offset="1" stop-color="#16305f"/>
+        </linearGradient>
+        <linearGradient id="turf" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#1c5f33"/><stop offset="1" stop-color="#2a7d45"/>
+        </linearGradient>
+      </defs>
+      <rect x="0" y="0" width="200" height="74" fill="url(#sky)"/>
+      <path d="M0 74 L200 74 L200 240 L0 240 Z" fill="url(#turf)"/>
+      <path d="M-6 74 Q100 58 206 74 L206 84 Q100 68 -6 84 Z" fill="#0b1c3c" opacity=".85"/>
+      <path d="M${HOME_XY[0]} ${HOME_XY[1]} L18 112 Q100 80 182 112 Z" fill="#2f8a4c" opacity=".35"/>
+      <path d="M100 214 L149 168 L100 132 L51 168 Z" fill="#8a5a33"/>
+      <path d="M100 214 L149 168 L100 132 L51 168 Z" fill="none" stroke="rgba(255,255,255,.22)"/>
+      <ellipse cx="100" cy="176" rx="13" ry="7" fill="#8a5a33"/>
+      <path class="ln" d="M100 214 L18 112 M100 214 L182 112" stroke-opacity=".5"/>
+      ${pad(b, "second")}${pad(b, "first")}${pad(b, "third")}
+      <polygon class="hp" points="94,210 106,210 106,216 100,221 94,216"/>
+      ${lbl(100, 124, "middle", rname(b.second))}
+      ${lbl(160, 172, "start", rname(b.first))}
+      ${lbl(40, 172, "end", rname(b.third))}
+      ${trail(lastPlay)}
     </svg>`;
   }
 
@@ -260,7 +358,75 @@
     lastVidKey = key;
     $("video").innerHTML = videoBlock(sv);
   }
+  let stab = "live";
+  let lastSnap = null;
+  function ipOf(outs){ return Math.floor((outs||0)/3) + "." + ((outs||0)%3); }
+  function avg3(h, ab){ return ab > 0 ? (h/ab).toFixed(3).replace(/^0/, "") : ".000"; }
+  function boxHTML(s){
+    const f = s.full;
+    if (!f || !f.stats || !f.lineup)
+      return '<div class="msg">The box score isn\'t part of this broadcast.<br>'
+        + '<span style="font-size:11px;opacity:.7">Games shared with an older version of the app only send the live view.</span></div>';
+    let out = "";
+    ["away","home"].forEach((sd) => {
+      const nm = (f.teams && f.teams[sd] && f.teams[sd].name) || (s[sd] && s[sd].name) || sd;
+      const lu = f.lineup[sd] || [], st = f.stats[sd] || [];
+      out += `<div class="bxh">${esc(nm)} — batting</div>`
+        + '<table class="bx"><thead><tr><th class="l">Batter</th><th>AB</th><th>R</th><th>H</th>'
+        + '<th>RBI</th><th>BB</th><th>K</th><th>AVG</th></tr></thead><tbody>';
+      lu.forEach((p, i) => {
+        const b = st[i] || {};
+        if (!p || !p.name) return;
+        out += `<tr><td class="l">${p.num ? "#" + esc(p.num) + " " : ""}${esc(p.name)}</td>`
+          + `<td>${b.ab||0}</td><td>${b.r||0}</td><td>${b.h||0}</td><td>${b.rbi||0}</td>`
+          + `<td>${b.bb||0}</td><td>${b.k||0}</td><td>${avg3(b.h||0, b.ab||0)}</td></tr>`;
+      });
+      out += "</tbody></table>";
+      const ps = (f.pitchers && f.pitchers[sd]) || [];
+      if (ps.length){
+        out += `<div class="bxh">${esc(nm)} — pitching</div>`
+          + '<table class="bx"><thead><tr><th class="l">Pitcher</th><th>IP</th><th>H</th><th>R</th>'
+          + '<th>ER</th><th>BB</th><th>K</th><th>P</th></tr></thead><tbody>';
+        ps.forEach((p) => {
+          out += `<tr><td class="l">${p.num ? "#" + esc(p.num) + " " : ""}${esc(p.name||"")}</td>`
+            + `<td>${ipOf(p.outs)}</td><td>${p.h||0}</td><td>${p.r||0}</td><td>${p.er||0}</td>`
+            + `<td>${p.bb||0}</td><td>${p.k||0}</td><td>${p.pitches||0}</td></tr>`;
+        });
+        out += "</tbody></table>";
+      }
+    });
+    return out;
+  }
+  function drawTabs(){
+    const bar = document.getElementById("stabs");
+    if (!bar) return;
+    Array.prototype.forEach.call(bar.children, (b) => {
+      b.classList.toggle("on", b.getAttribute("data-t") === stab);
+      b.onclick = () => { stab = b.getAttribute("data-t"); if (lastSnap) render(lastSnap); };
+    });
+  }
   function render(s){
+    lastSnap = s;
+    drawTabs();
+    const vid = document.getElementById("video");
+    if (vid) vid.style.display = stab === "live" ? "" : "none";
+    if (stab === "box"){ $("content").innerHTML = boxHTML(s); tickStatus(); return; }
+    if (stab === "plays"){
+      const log = s.log || [];
+      $("content").innerHTML = log.length
+        ? '<div class="plays">' + log.slice().reverse().map((e) => e.p
+            ? `<div class="pl"><div class="b">${esc(e.b||"")}</div>`
+              + (e.q ? `<div class="q">${esc(e.q.split(" ").join(" · "))}</div>` : "")
+              + `<div class="r">${esc(e.r||"")}</div></div>`
+            : `<div class="pl ev ${e.k==="half"?"half":""}"><div class="r">${esc(e.t||"")}</div></div>`).join("")
+          + "</div>"
+        : '<div class="msg">No plays yet.</div>';
+      tickStatus();
+      return;
+    }
+    renderLive(s);
+  }
+  function renderLive(s){
     scorebar(s);
     updateVideo(s.video);
     const fw0 = $("feedwrap");
@@ -273,7 +439,7 @@
       <div class="card">
         <div class="field">
           <div class="fld-l">${dots(s.balls,3,'')}${dots(s.strikes,2,'s')}${dots(s.outs,2,'o')}</div>
-          ${diamond(s.bases||{})}
+          ${diamond(s.bases||{}, s.lastPlay || "")}
           <div class="fld-r">PITCHES<b>${s.pitches!=null?s.pitches:0}</b></div>
         </div>
         ${s.lastPlay?`<div class="lastplay">${esc(s.lastPlay)}</div>`:""}
