@@ -885,7 +885,7 @@ const fieldNote = (label, seq) => {
     catch (e) { }
 })();
 const SAVE_KEY = "dugoutiq-save-v1";
-const APP_VERSION = "259"; // shown in Settings; keep in step with the sw.js cache version
+const APP_VERSION = "260"; // shown in Settings; keep in step with the sw.js cache version
 // ---- Backup & restore ----
 const BACKUP_META_KEY = "dugoutiq-backup-meta-v1"; // {code, t} of the last cloud backup
 const collectBackup = () => {
@@ -5392,6 +5392,12 @@ function DugoutScorecard() {
     const [rowMenu, setRowMenu] = useState(null); // which saved game has its actions open
     const [teams2, setTeams2] = useState(() => loadTeamsLS()); // PHASE 1: club records
     const [teamLinks, setTeamLinks] = useState(() => loadLinksLS());
+    const [homeMode, setHomeMode] = useState(() => { try {
+        return localStorage.getItem("dugoutiq-home-v1") === "1";
+    }
+    catch (_a) {
+        return false;
+    } });
     // Build/refresh the team model from what already exists. Additive only, and
     // it runs after the games have loaded so it sees the full picture.
     useEffect(() => {
@@ -8273,6 +8279,22 @@ function DugoutScorecard() {
         .sg-act.danger { color: #ff9a9a; }
         .sg-inline { display: flex; gap: 6px; align-items: center; }
         .sg-inline .dg-in { flex: 1; min-width: 0; }
+        /* PuckLink-style home: the club is the front door, not the game. */
+        .home-wrap { padding: 4px 0 20px; }
+        .home-empty { color: var(--powder); font-size: 13px; line-height: 1.55; margin: 0 0 12px;
+          text-transform: none; letter-spacing: 0; }
+        .tm-card { border: 1px solid var(--line); border-radius: 14px; padding: 13px 14px;
+          margin-bottom: 10px; background: rgba(255,255,255,.04); }
+        .tm-top { display: flex; align-items: center; gap: 11px; }
+        .tm-logo { width: 42px; height: 42px; object-fit: contain; border-radius: 50%;
+          background: rgba(255,255,255,.07); flex: none; }
+        .tm-logo.blank { background: #22345f; }
+        .tm-id { flex: 1; min-width: 0; }
+        .tm-id b { display: block; font-size: 17px; font-weight: 700; }
+        .tm-id span { display: block; font-size: 12px; color: var(--powder); margin-top: 2px; }
+        .tm-next { margin-top: 10px; font-size: 13.5px; color: var(--white); display: flex;
+          flex-direction: column; gap: 2px; }
+        .tm-field { font-size: 11.5px; color: var(--powder); }
         .set-menu { display: flex; flex-direction: column; gap: 8px; margin-bottom: 4px; }
         .set-item { display: flex; align-items: center; gap: 12px; width: 100%;
           padding: 13px 14px; background: rgba(255,255,255,.05);
@@ -8346,7 +8368,71 @@ function DugoutScorecard() {
                 licenseErr && React.createElement("div", { className: "license-err" }, licenseErr),
                 React.createElement("button", { className: "dg hit", style: { width: "100%", fontSize: 17, padding: "12px 0", marginTop: 10 }, onClick: activate, disabled: licenseBusy || !licenseKey.trim() }, licenseBusy ? "Verifying…" : "Activate"),
                 React.createElement("p", { className: "license-foot" }, "Your license key is in your purchase receipt \u2014 activate once, works offline forever"))),
-            licensed && phase === "setup" && (React.createElement(React.Fragment, null,
+            licensed && phase === "setup" && homeMode && (() => {
+                const mine = teams2.filter((t) => t.isMine);
+                const nextFor = (t) => {
+                    const k = lcName(t.name);
+                    return schedule.filter((r) => !r.played
+                        && (lcName(r.away) === k || lcName(r.home) === k))
+                        .sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")))[0] || null;
+                };
+                const recOf = (t) => {
+                    const k = lcName(t.name);
+                    let w = 0, l = 0;
+                    games.forEach((g) => {
+                        const home = lcName(g.home && g.home.name) === k;
+                        const away = lcName(g.away && g.away.name) === k;
+                        if (!home && !away)
+                            return;
+                        const us = home ? g.homeRuns : g.awayRuns;
+                        const them = home ? g.awayRuns : g.homeRuns;
+                        if (us > them) w += 1; else if (them > us) l += 1;
+                    });
+                    return `${w}-${l}`;
+                };
+                const fmtWhen = (r) => {
+                    if (!r) return "";
+                    const d = r.date ? new Date(r.date + "T12:00:00") : null;
+                    const day = d ? d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) : "";
+                    const t12 = (() => { const p = String(r.time || "").split(":");
+                        if (p.length < 2) return "";
+                        let hh = parseInt(p[0], 10); const ap = hh >= 12 ? "PM" : "AM";
+                        hh = hh % 12 || 12; return ` ${hh}:${p[1]} ${ap}`; })();
+                    const k = lcName(r.away), opp = lcName(r.home) === k ? r.away : r.home;
+                    return `${day}${t12}`;
+                };
+                return React.createElement(React.Fragment, null,
+                    React.createElement("div", { className: "home-wrap" },
+                        mine.length === 0 && React.createElement("p", { className: "home-empty" },
+                            "Add the club you score for. Its roster, crest and schedule live together, and every game you score belongs to it."),
+                        mine.map((t) => {
+                            const nx = nextFor(t);
+                            const k = lcName(t.name);
+                            const opp = nx ? (lcName(nx.home) === k ? nx.away : nx.home) : "";
+                            const atHome = nx ? lcName(nx.home) === k : false;
+                            return React.createElement("div", { className: "tm-card", key: t.id },
+                                React.createElement("div", { className: "tm-top" },
+                                    t.logo
+                                        ? React.createElement("img", { className: "tm-logo", src: t.logo, alt: "" })
+                                        : React.createElement("span", { className: "tm-logo blank", style: t.color ? { background: t.color } : null }),
+                                    React.createElement("div", { className: "tm-id" },
+                                        React.createElement("b", null, t.name),
+                                        React.createElement("span", null, `${recOf(t)} \u00b7 ${t.roster.length} players`))),
+                                nx
+                                    ? React.createElement("div", { className: "tm-next" },
+                                        React.createElement("span", null, `Next: ${fmtWhen(nx)}, ${atHome ? "vs" : "at"} ${opp || "TBD"}`),
+                                        nx.field ? React.createElement("span", { className: "tm-field" }, nx.field) : null)
+                                    : React.createElement("div", { className: "tm-next" }, React.createElement("span", null, "No games scheduled")),
+                                nx && React.createElement("button", { className: "dg hit", style: { width: "100%", marginTop: 8 }, onClick: () => scoreFixture(nx) }, "Score this game"),
+                                React.createElement("div", { className: "btnrow", style: { gridTemplateColumns: "1fr 1fr", marginTop: 6 } },
+                                    React.createElement("button", { className: "dg ghost", onClick: () => { setSchedMode("season"); setSchedEvent(""); setSchedOpen(true); } }, "Schedule"),
+                                    React.createElement("button", { className: "dg ghost", onClick: () => { setSeasonTeam(t.name); setSeasonOpen(true); } }, "Stats")));
+                        }),
+                        React.createElement("button", { className: "dg ghost", style: { width: "100%", marginTop: 8 }, onClick: () => setHomeMode(false) }, "+ Add a team"),
+                        React.createElement("button", { className: "dg ghost", style: { width: "100%", marginTop: 6 }, onClick: () => setHomeMode(false) }, "Score a game without a team"),
+                        React.createElement("button", { className: "dg ghost", style: { width: "100%", marginTop: 14, fontSize: 12 }, onClick: () => { setHomeMode(false); try { localStorage.setItem("dugoutiq-home-v1", "0"); } catch (_a) { } } }, "Use the old setup screen")));
+            })(),
+            licensed && phase === "setup" && !homeMode && (React.createElement(React.Fragment, null,
                 React.createElement("div", { className: "btnrow", style: { marginBottom: 14, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" } },
                     React.createElement("button", { className: "dg ghost", onClick: () => setGamesOpen(true) },
                         "\uD83D\uDCC1 Saved games",
@@ -9536,6 +9622,18 @@ function DugoutScorecard() {
                     } })();
                     const kb = (n) => (n > 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.round(n / 1024) + " KB");
                     const PANEL_FIX = React.createElement("div", { className: "set-group" },
+                        React.createElement("button", { className: "dg hit", style: { width: "100%", marginBottom: 6 }, onClick: () => {
+                                const on = !homeMode;
+                                setHomeMode(on);
+                                try {
+                                    localStorage.setItem("dugoutiq-home-v1", on ? "1" : "0");
+                                }
+                                catch (_a) { }
+                                setSettingsOpen(false);
+                                setSetPane(null);
+                            } }, homeMode ? "\u21A9 Back to the old setup screen" : "\u2728 Try the new team home screen"),
+                        React.createElement("p", { style: { textTransform: "none", letterSpacing: 0, color: "var(--powder)", fontSize: 11, margin: "0 0 10px" } },
+                            "Your clubs, their schedules and one tap to score the next game. Switch back any time \u2014 nothing is lost either way."),
                         React.createElement("button", { className: "dg ghost", style: { width: "100%", marginBottom: 6 }, onClick: () => location.reload() }, "\u21BB Reload the app"),
                         React.createElement("button", { className: "dg ghost", style: { width: "100%", marginBottom: 6 }, onClick: () => {
                                 if (!confirm("Close the game in progress and go back to setup?\n\nSaved games, rosters and schedules are NOT affected."))
